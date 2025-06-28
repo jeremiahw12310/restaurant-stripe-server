@@ -45,15 +45,7 @@ if (!process.env.OPENAI_API_KEY) {
       const imagePath = req.file.path;
       const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
 
-      const prompt = `
-You are a receipt parser. Extract the following fields from the receipt image:
-- orderNumber: The order or transaction number (if present)
-- orderTotal: The total amount paid (as a number, e.g. 23.45)
-- orderDate: The date of the order (in MM/DD/YYYY or YYYY-MM-DD format)
-
-Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderDate": "..."}
-If a field is missing, use null.
-`;
+      const prompt = `\nYou are a receipt parser. Extract the following fields from the receipt image:\n- orderNumber: Look for the largest number on the receipt that appears as white text inside a black container/box. This is typically located under \"Nashville, TN\" and next to \"Walk In\". This is the order number.\n- orderTotal: The total amount paid (as a number, e.g. 23.45)\n- orderDate: The date of the order (in MM/DD/YYYY or YYYY-MM-DD format)\n\nRespond ONLY as a JSON object: {\"orderNumber\": \"...\", \"orderTotal\": ..., \"orderDate\": \"...\"}\nIf a field is missing, use null.\n`;
 
       console.log('🤖 Sending request to OpenAI...');
       
