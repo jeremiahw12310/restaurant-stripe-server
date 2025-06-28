@@ -6,6 +6,7 @@ const fs = require('fs');
 const { OpenAI } = require('openai');
 
 // Updated for Render deployment with latest OpenAI model
+// ROOT SERVER.JS - USING GPT-4O MODEL
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 app.use(cors());
@@ -17,7 +18,8 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running!', 
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    server: 'ROOT server.js with gpt-4o'
   });
 });
 
