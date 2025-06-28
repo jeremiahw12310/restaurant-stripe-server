@@ -1,0 +1,18 @@
+{
+  "name": "stripe-server",
+  "version": "1.0.0",
+  "description": "Simple Stripe checkout server for restaurant app",
+  "main": "simple-stripe-server.js",
+  "scripts": {
+    "start": "node simple-stripe-server.js",
+    "dev": "nodemon simple-stripe-server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "stripe": "^14.0.0",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+} 
