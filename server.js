@@ -5,9 +5,12 @@ const cors = require('cors');
 const fs = require('fs');
 const { OpenAI } = require('openai');
 
+// Updated for Render deployment with latest OpenAI model
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 app.use(cors());
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Health check endpoint
 app.get('/', (req, res) => {
@@ -28,8 +31,6 @@ if (!process.env.OPENAI_API_KEY) {
     });
   });
 } else {
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
   app.post('/analyze-receipt', upload.single('image'), async (req, res) => {
     try {
       console.log('📥 Received receipt analysis request');
