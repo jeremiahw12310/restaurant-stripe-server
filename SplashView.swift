@@ -8,8 +8,16 @@ struct SplashView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                // We show a solid black background that will be covered by the video.
-                Color.white.ignoresSafeArea()
+                // Beautiful gradient background
+                LinearGradient(
+                                    gradient: Gradient(colors: [
+                                        Color(red: 0.95, green: 0.97, blue: 1.0),
+                                        Color(red: 1.0, green: 0.98, blue: 0.95)
+                                    ]),
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                                .ignoresSafeArea()
                 
                 // ✅ FIX: The video is added to the view hierarchy as soon as the launch animation
                 // begins, and it appears instantly without its own fade effect.
@@ -20,18 +28,44 @@ struct SplashView: View {
                         .transition(.identity)
                 }
                 
-                // The overlay content (Text and Button).
+                // The overlay content with beautiful design
                 VStack {
                     Spacer()
                     
-             
+                    // Welcome Text with Glass Effect
+                
+            
                     
                     Spacer()
                     
+                    // Beautiful Login Button
                     NavigationLink(destination: AuthFlowView()) {
-                        Text("Login or Sign Up")
+                        HStack(spacing: 12) {
+                            Image(systemName: "person.circle.fill")
+                                .font(.system(size: 20, weight: .semibold))
+                            Text("Get Started")
+                                .font(.system(size: 18, weight: .bold, design: .rounded))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.vertical, 18)
+                        .padding(.horizontal, 30)
+                        .frame(maxWidth: .infinity)
+                        .background(
+                            RoundedRectangle(cornerRadius: 20)
+                                .fill(
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [
+                                            Color(red: 0.2, green: 0.6, blue: 0.9),
+                                            Color(red: 0.3, green: 0.7, blue: 1.0)
+                                        ]),
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .shadow(color: Color(red: 0.2, green: 0.6, blue: 0.9).opacity(0.3), radius: 15, x: 0, y: 8)
+                        )
                     }
-                    .buttonStyle(PrimaryButtonStyle(backgroundColor: .green))
+                    .buttonStyle(PlainButtonStyle())
                     .padding(.horizontal, 40)
                     .padding(.bottom, 60)
                 }

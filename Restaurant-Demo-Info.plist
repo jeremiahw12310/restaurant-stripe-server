@@ -35,5 +35,7 @@
 		<string>fetch</string>
 		<string>processing</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>This app uses the camera to scan receipts and earn loyalty points.</string>
 </dict>
 </plist>

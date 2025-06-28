@@ -3,12 +3,24 @@
 // Import necessary tools
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
+const express = require('express');
+const multer = require('multer');
+const cors = require('cors');
+const fs = require('fs');
+const { OpenAI } = require('openai');
+require('dotenv').config();
 
 // Initialize the Firebase Admin SDK
 admin.initializeApp();
 
 // Get your Stripe secret key (we'll set this in the next step)
 const stripe = require("stripe")(functions.config().stripe.secret);
+
+const app = express();
+const upload = multer({ dest: 'uploads/' });
+app.use(cors());
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 /**
  * Creates a Stripe Payment Intent.
@@ -131,4 +143,54 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
 
   res.json({ received: true });
 });
+
+app.post('/analyze-receipt', upload.single('image'), async (req, res) => {
+  try {
+    const imagePath = req.file.path;
+    const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
+
+    // Compose the prompt
+    const prompt = `
+You are a receipt parser. Extract the following fields from the receipt image:
+- orderNumber: The order or transaction number (if present)
+- orderTotal: The total amount paid (as a number, e.g. 23.45)
+- orderDate: The date of the order (in MM/DD/YYYY or YYYY-MM-DD format)
+
+Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderDate": "..."}
+If a field is missing, use null.
+`;
+
+    // Call OpenAI Vision
+    const response = await openai.chat.completions.create({
+      model: "gpt-4-vision-preview", // or "gpt-4o"
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageData}` } }
+          ]
+        }
+      ],
+      max_tokens: 300
+    });
+
+    fs.unlinkSync(imagePath);
+
+    // Extract JSON from the response
+    const text = response.choices[0].message.content;
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return res.status(422).json({ error: "Could not extract JSON from response", raw: text });
+    }
+    const data = JSON.parse(jsonMatch[0]);
+    // TODO: Check for duplicate orderNumber in your DB here if you want
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.listen(3001, () => console.log('Server running on port 3001'));
 

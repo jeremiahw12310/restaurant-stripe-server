@@ -42,5 +42,22 @@ class CartManager: ObservableObject {
     func clearCart() {
         items.removeAll()
     }
+    
+    /// Updates the quantity of a specific item in the cart.
+    func updateQuantity(for item: CartItem, quantity: Int) {
+        if let index = items.firstIndex(where: { $0.id == item.id }) {
+            items[index].quantity = quantity
+        }
+    }
+    
+    /// Removes a specific item from the cart.
+    func removeFromCart(_ item: CartItem) {
+        items.removeAll { $0.id == item.id }
+    }
+    
+    /// Calculates the total price including tax.
+    var total: Double {
+        subtotal * 1.09 // 9% tax
+    }
 }
 

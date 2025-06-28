@@ -14,6 +14,7 @@ class UserViewModel: ObservableObject {
     // MARK: - Published Properties
     @Published var firstName: String = ""
     @Published var points: Int = 0
+    @Published var lifetimePoints: Int = 0 // Total points earned (not spent)
     // ✅ NEW: Added properties to hold the user's avatar customization.
     @Published var avatarEmoji: String = "👤" // Default emoji
     @Published var avatarColorName: String = "gray" // Default color
@@ -60,6 +61,7 @@ class UserViewModel: ObservableObject {
             // Assign fetched data to our properties.
             self.firstName = data["firstName"] as? String ?? "User"
             self.points = data["points"] as? Int ?? 0
+            self.lifetimePoints = data["lifetimePoints"] as? Int ?? self.points // Initialize with current points if not set
             self.avatarEmoji = data["avatarEmoji"] as? String ?? "👤"
             self.avatarColorName = data["avatarColor"] as? String ?? "gray"
             self.isLoading = false

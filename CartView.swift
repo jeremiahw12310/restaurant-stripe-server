@@ -1,149 +1,245 @@
 import SwiftUI
 import SafariServices
+import Restaurant_Demo // If needed for TipSelectionView and SafariView
+// Add this import if TipSelectionView is in a separate file
+// import TipSelectionView
 
 struct CartView: View {
     @EnvironmentObject var cartManager: CartManager
-    @StateObject private var checkoutManager = StripeCheckoutManager()
     
     // This state controls showing the web checkout page.
-    @State private var showCheckout = false
     @State private var showSuccessAlert = false
+    @State private var showTipSelection = false
 
     var body: some View {
         NavigationStack {
-            VStack {
-                if cartManager.items.isEmpty {
-                    Spacer()
-                    VStack(spacing: 12) {
-                        Image(systemName: "cart.fill")
-                            .font(.system(size: 60))
-                            .foregroundColor(.secondary.opacity(0.5))
-                        Text("Your cart is empty").font(.headline)
+            ZStack {
+                // Beautiful gradient background
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color(red: 0.98, green: 0.98, blue: 1.0),
+                        Color(red: 1.0, green: 0.98, blue: 0.98)
+                    ]),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+                
+                VStack {
+                    if cartManager.items.isEmpty {
+                        emptyCartView
+                    } else {
+                        cartContentView
                     }
-                    Spacer()
-                } else {
-                    List {
-                        ForEach(cartManager.items) { cartItem in
-                            HStack {
-                                Text("\(cartItem.quantity)x").bold()
-                                Text(cartItem.menuItem.id)
-                                Spacer()
-                                Text(cartItem.menuItem.price * Double(cartItem.quantity), format: .currency(code: "USD"))
-                            }
-                        }
-                        .onDelete(perform: deleteItems)
-                        
-                        Section("Total") {
-                            HStack {
-                                Text("Total").bold()
-                                Spacer()
-                                Text(cartManager.subtotal, format: .currency(code: "USD")).bold()
-                            }
-                        }
-                    }
-                    
-                    VStack {
-                        if checkoutManager.isLoading {
-                            ProgressView()
-                                .padding()
-                        } else {
-                            Button("Proceed to Checkout") {
-                                // This now calls an async function.
-                                Task {
-                                    await checkoutManager.createCheckoutSession(from: cartManager.items)
-                                }
-                            }
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                            .background(Color.green)
-                            .cornerRadius(12)
-                        }
-                        
-                        // ✅ This will now show a specific error message if something goes wrong.
-                        if let errorMessage = checkoutManager.errorMessage {
-                            Text(errorMessage)
-                                .foregroundColor(.red)
-                                .padding()
-                        }
-                    }
-                    .padding()
                 }
             }
-            .navigationTitle("My Cart")
-        }
-        // This watches for the checkoutManager to get a valid URL.
-        .onReceive(checkoutManager.$checkoutURL) { url in
-            if url != nil {
-                showCheckout = true // If we get a URL, trigger the sheet to present.
-            }
-        }
-        // This watches for payment success
-        .onReceive(checkoutManager.$paymentSuccess) { success in
-            if success {
-                showSuccessAlert = true
-                // Clear the cart after successful payment
-                cartManager.items.removeAll()
-            }
-        }
-        // This sheet presents the secure Safari view with the Stripe Checkout page.
-        .sheet(isPresented: $showCheckout) {
-            if let url = checkoutManager.checkoutURL {
-                SafariView(url: url, onDismiss: {
-                    // Handle when the Safari view is dismissed
-                    if checkoutManager.paymentSuccess {
-                        checkoutManager.handlePaymentSuccess()
-                    } else {
-                        checkoutManager.handlePaymentCancellation()
+            .navigationTitle("Cart")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Clear") {
+                        cartManager.clearCart()
                     }
-                })
-                .ignoresSafeArea()
+                    .foregroundColor(.red)
+                    .disabled(cartManager.items.isEmpty)
+                    .opacity(cartManager.items.isEmpty ? 0 : 1)
+                }
             }
+        }
+        .sheet(isPresented: $showTipSelection) {
+            TipSelectionView()
+                .environmentObject(cartManager)
         }
         .alert("Payment Successful!", isPresented: $showSuccessAlert) {
             Button("OK") {
-                showSuccessAlert = false
-                checkoutManager.paymentSuccess = false
+                // Handle successful payment
             }
         } message: {
-            Text("Your order has been placed successfully. Thank you for your purchase!")
+            Text("Thank you for your order! We'll notify you when it's ready.")
         }
     }
     
-    func deleteItems(at offsets: IndexSet) {
-        cartManager.items.remove(atOffsets: offsets)
+    // MARK: - Subviews
+    
+    private var emptyCartView: some View {
+        VStack(spacing: 30) {
+            Spacer()
+            
+            Image(systemName: "cart.badge.plus")
+                .font(.system(size: 80))
+                .foregroundColor(Color(red: 0.2, green: 0.6, blue: 0.9))
+                .shadow(color: Color(red: 0.2, green: 0.6, blue: 0.9).opacity(0.3), radius: 10, x: 0, y: 5)
+            
+            VStack(spacing: 16) {
+                Text("Your Cart is Empty")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundColor(.primary)
+                
+                Text("Add some delicious items to get started")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 20)
+            
+            Spacer()
+        }
+    }
+    
+    private var cartContentView: some View {
+        VStack {
+            // Cart items list
+            ScrollView {
+                LazyVStack(spacing: 16) {
+                    ForEach(cartManager.items) { item in
+                        CartItemCard(item: item, cartManager: cartManager)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+            }
+            
+            // Beautiful order summary card
+            orderSummaryView
+        }
+    }
+    
+    private var orderSummaryView: some View {
+        VStack(spacing: 20) {
+            VStack(spacing: 12) {
+                HStack {
+                    Text("Subtotal")
+                        .font(.system(size: 16, weight: .medium))
+                    Spacer()
+                    Text("$\(cartManager.subtotal, specifier: "%.2f")")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                
+                HStack {
+                    Text("Tax")
+                        .font(.system(size: 16, weight: .medium))
+                    Spacer()
+                    Text("$\(cartManager.subtotal * 0.09, specifier: "%.2f")")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                
+                Divider()
+                    .background(.ultraThinMaterial)
+                
+                HStack {
+                    Text("Total")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                    Spacer()
+                    Text("$\(cartManager.subtotal * 1.09, specifier: "%.2f")")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(Color(red: 0.2, green: 0.6, blue: 0.9))
+                }
+            }
+            .padding(20)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(.ultraThinMaterial)
+                    .shadow(color: .black.opacity(0.1), radius: 15, x: 0, y: 8)
+            )
+            
+            // Beautiful checkout button
+            Button("Proceed to Checkout") {
+                showTipSelection = true
+            }
+            .buttonStyle(PrimaryButtonStyle())
+            .disabled(cartManager.items.isEmpty)
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 30)
+        .background(
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea()
+        )
     }
 }
 
-// This helper view is still needed to show the Safari window.
-struct SafariView: UIViewControllerRepresentable {
-    let url: URL
-    let onDismiss: () -> Void
-
-    func makeUIViewController(context: UIViewControllerRepresentableContext<SafariView>) -> SFSafariViewController {
-        let safariViewController = SFSafariViewController(url: url)
-        safariViewController.delegate = context.coordinator
-        return safariViewController
-    }
-
-    func updateUIViewController(_ uiViewController: SFSafariViewController, context: UIViewControllerRepresentableContext<SafariView>) {
-        // No update needed
-    }
+// Beautiful cart item card
+struct CartItemCard: View {
+    let item: CartItem
+    let cartManager: CartManager
     
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-    
-    class Coordinator: NSObject, SFSafariViewControllerDelegate {
-        let parent: SafariView
-        
-        init(_ parent: SafariView) {
-            self.parent = parent
+    var body: some View {
+        HStack(spacing: 16) {
+            // Item image placeholder
+            RoundedRectangle(cornerRadius: 12)
+                .fill(
+                    LinearGradient(
+                        gradient: Gradient(colors: [
+                            Color(red: 0.8, green: 0.4, blue: 0.2),
+                            Color(red: 0.9, green: 0.5, blue: 0.3)
+                        ]),
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 80, height: 80)
+                .overlay(
+                    Image(systemName: "fork.knife")
+                        .font(.system(size: 30, weight: .medium))
+                        .foregroundColor(.white)
+                )
+                .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 4)
+            
+            // Item details
+            VStack(alignment: .leading, spacing: 8) {
+                Text(item.menuItem.id)
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundColor(.primary)
+                
+                Text("$\(item.menuItem.price, specifier: "%.2f")")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(Color(red: 0.2, green: 0.6, blue: 0.9))
+                
+                // Quantity controls
+                HStack(spacing: 12) {
+                    Button(action: {
+                        if item.quantity > 1 {
+                            cartManager.updateQuantity(for: item, quantity: item.quantity - 1)
+                        } else {
+                            cartManager.removeFromCart(item)
+                        }
+                    }) {
+                        Image(systemName: "minus.circle.fill")
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundColor(.red)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    Text("\(item.quantity)")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(.primary)
+                        .frame(minWidth: 30)
+                    
+                    Button(action: {
+                        cartManager.updateQuantity(for: item, quantity: item.quantity + 1)
+                    }) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundColor(.green)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    Spacer()
+                    
+                    Text("$\(item.menuItem.price * Double(item.quantity), specifier: "%.2f")")
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundColor(.primary)
+                }
+            }
+            
+            Spacer()
         }
-        
-        func safariViewControllerDidFinish(_ controller: SFSafariViewController) {
-            parent.onDismiss()
-        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.ultraThinMaterial)
+                .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 5)
+        )
     }
 }

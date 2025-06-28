@@ -1,5 +1,6 @@
 import SwiftUI
 import FirebaseCore
+import FirebaseAuth
 
 // This is your main app entry point.
 @main
@@ -34,5 +35,27 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // This part can be expanded with more advanced state management.
         
         return true
+    }
+    
+    // MARK: - Remote Notification Methods for Firebase Auth
+    
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        // Set the APNs device token for Firebase Auth
+        Auth.auth().setAPNSToken(deviceToken, type: .prod)
+    }
+    
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        print("Failed to register for remote notifications: \(error.localizedDescription)")
+    }
+    
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        // Handle remote notification for Firebase Auth
+        if Auth.auth().canHandleNotification(userInfo) {
+            completionHandler(.noData)
+            return
+        }
+        
+        // Handle other remote notifications if needed
+        completionHandler(.noData)
     }
 }
