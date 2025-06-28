@@ -57,7 +57,7 @@ If a field is missing, use null.
       console.log('🤖 Sending request to OpenAI...');
       
       const response = await openai.chat.completions.create({
-        model: "gpt-4-vision-preview", // or "gpt-4o"
+        model: "gpt-4o",
         messages: [
           {
             role: "user",
