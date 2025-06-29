@@ -17,18 +17,13 @@ struct ReceiptScanView: View {
     @State private var errorMessage = ""
     @State private var showPermissionAlert = false
     @State private var scannedText = ""
+    @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
         ZStack {
-            LinearGradient(
-                gradient: Gradient(colors: [
-                    Color(red: 0.95, green: 0.97, blue: 1.0),
-                    Color(red: 1.0, green: 0.98, blue: 0.95)
-                ]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            // Adaptive background that works in both light and dark mode
+            Color(.systemBackground)
+                .ignoresSafeArea()
             
             if showCongratulations {
                 congratulationsView
@@ -65,8 +60,8 @@ struct ReceiptScanView: View {
             VStack(spacing: 16) {
                 Image(systemName: "doc.text.viewfinder")
                     .font(.system(size: 60))
-                    .foregroundColor(Color(red: 0.2, green: 0.6, blue: 0.9))
-                    .shadow(color: Color(red: 0.2, green: 0.6, blue: 0.9).opacity(0.3), radius: 10, x: 0, y: 5)
+                    .foregroundColor(.blue)
+                    .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
                 Text("Scan Your Receipt")
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .foregroundColor(.primary)
@@ -118,14 +113,14 @@ struct ReceiptScanView: View {
                                 .fill(
                                     LinearGradient(
                                         gradient: Gradient(colors: [
-                                            Color(red: 0.2, green: 0.6, blue: 0.9),
-                                            Color(red: 0.3, green: 0.7, blue: 1.0)
+                                            .blue,
+                                            .blue.opacity(0.8)
                                         ]),
                                         startPoint: .leading,
                                         endPoint: .trailing
                                     )
                                 )
-                                .shadow(color: Color(red: 0.2, green: 0.6, blue: 0.9).opacity(0.3), radius: 15, x: 0, y: 8)
+                                .shadow(color: .blue.opacity(0.3), radius: 15, x: 0, y: 8)
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -156,7 +151,7 @@ struct ReceiptScanView: View {
                     .foregroundColor(.primary)
                 Text("You earned \(pointsEarned) points!")
                     .font(.system(size: 24, weight: .semibold, design: .rounded))
-                    .foregroundColor(Color(red: 0.2, green: 0.6, blue: 0.9))
+                    .foregroundColor(.blue)
             }
             VStack(spacing: 16) {
                 detailRow(title: "Receipt Total", value: String(format: "$%.2f", receiptTotal))
@@ -166,8 +161,8 @@ struct ReceiptScanView: View {
             .padding(25)
             .background(
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(.ultraThinMaterial)
-                    .shadow(color: .black.opacity(0.1), radius: 15, x: 0, y: 8)
+                    .fill(Color(.secondarySystemBackground))
+                    .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.1), radius: 15, x: 0, y: 8)
             )
             .padding(.horizontal, 20)
             Spacer()
@@ -186,14 +181,14 @@ struct ReceiptScanView: View {
                             .fill(
                                 LinearGradient(
                                     gradient: Gradient(colors: [
-                                        Color(red: 0.2, green: 0.6, blue: 0.9),
-                                        Color(red: 0.3, green: 0.7, blue: 1.0)
+                                        .blue,
+                                        .blue.opacity(0.8)
                                     ]),
                                     startPoint: .leading,
                                     endPoint: .trailing
                                 )
                             )
-                            .shadow(color: Color(red: 0.2, green: 0.6, blue: 0.9).opacity(0.3), radius: 10, x: 0, y: 5)
+                            .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
                     )
             }
             .buttonStyle(PlainButtonStyle())

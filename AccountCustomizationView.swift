@@ -1,15 +1,22 @@
 import SwiftUI
 import FirebaseFirestore
+import PhotosUI
 
 struct AccountCustomizationView: View {
     let uid: String
-    // We use @EnvironmentObject to receive the ViewModel from the parent view.
-    // This is more stable than creating a new instance here.
     @EnvironmentObject var authVM: AuthenticationViewModel
+    @StateObject private var userVM = UserViewModel()
+    @Environment(\.dismiss) var dismiss
+    @Environment(\.colorScheme) var colorScheme
     
     @State private var selectedEmoji: String = "🥟"
     @State private var selectedColor: Color = .red
     @State private var showWelcomeScreen = false
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var selectedImage: UIImage?
+    @State private var showPhotoCrop = false
+    @State private var showPhotoPicker = false
+    @State private var isFromOnboarding = false
 
     let emojis = ["🥟", "🧋", "🍜", "🍣", "🍰"]
     let colorOptions: [(Color, String)] = [
@@ -19,16 +26,9 @@ struct AccountCustomizationView: View {
 
     var body: some View {
         ZStack {
-            // Beautiful gradient background
-            LinearGradient(
-                gradient: Gradient(colors: [
-                    Color(red: 0.95, green: 0.97, blue: 1.0),
-                    Color(red: 1.0, green: 0.98, blue: 0.95)
-                ]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            // Adaptive background that works in both light and dark mode
+            Color(.systemBackground)
+                .ignoresSafeArea()
             
             VStack(spacing: 20) {
                 // Beautiful header
@@ -40,6 +40,9 @@ struct AccountCustomizationView: View {
                 // ScrollView contains the customization options.
                 ScrollView {
                     VStack(spacing: 20) {
+                        // Photo selection option
+                        photoSelectionView
+                        
                         // Emoji selection with beautiful cards
                         emojiSelectionView
                         
@@ -62,6 +65,48 @@ struct AccountCustomizationView: View {
         .animation(.easeInOut(duration: 0.3), value: showWelcomeScreen)
         .animation(.easeInOut(duration: 0.2), value: selectedEmoji)
         .animation(.easeInOut(duration: 0.2), value: selectedColor)
+        .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhotoItem, matching: .images)
+        .onChange(of: selectedPhotoItem) { newItem in
+            Task {
+                if let data = try? await newItem?.loadTransferable(type: Data.self),
+                   let image = UIImage(data: data) {
+                    selectedImage = image
+                    showPhotoCrop = true
+                }
+            }
+        }
+        .sheet(isPresented: $showPhotoCrop) {
+            if let image = selectedImage {
+                PhotoCropView(selectedImage: $selectedImage, onCropComplete: { croppedImage in
+                    selectedImage = croppedImage
+                    showPhotoCrop = false
+                    
+                    // Immediately upload the cropped photo
+                    if let croppedImage = croppedImage {
+                        print("📤 Uploading cropped photo immediately")
+                        userVM.uploadProfilePhoto(croppedImage) { success in
+                            DispatchQueue.main.async {
+                                if success {
+                                    print("✅ Photo uploaded successfully after cropping")
+                                    selectedImage = nil // Clear local image so we use the latest from userVM
+                                    // Force refresh the profile image to ensure UI updates
+                                    userVM.forceRefreshProfileImage()
+                                } else {
+                                    print("❌ Failed to upload photo after cropping")
+                                }
+                            }
+                        }
+                    }
+                })
+            }
+        }
+        .interactiveDismissDisabled()
+        .onAppear {
+            // Always reload user data and image on appear
+            isFromOnboarding = authVM.shouldNavigateToCustomization
+            userVM.loadUserData()
+            selectedImage = nil // Always clear local image so we use the latest from userVM
+        }
     }
     
     // MARK: - Subviews
@@ -70,8 +115,8 @@ struct AccountCustomizationView: View {
         VStack(spacing: 12) {
             Image(systemName: "person.crop.circle.badge.plus")
                 .font(.system(size: 40))
-                .foregroundColor(Color(red: 0.2, green: 0.6, blue: 0.9))
-                .shadow(color: Color(red: 0.2, green: 0.6, blue: 0.9).opacity(0.3), radius: 10, x: 0, y: 5)
+                .foregroundColor(.blue)
+                .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
             
             Text("Customize Your Avatar")
                 .font(.system(size: 24, weight: .bold, design: .rounded))
@@ -86,22 +131,107 @@ struct AccountCustomizationView: View {
     
     private var avatarPreviewView: some View {
         ZStack {
-            Circle()
-                .fill(
-                    LinearGradient(
-                        gradient: Gradient(colors: [selectedColor, selectedColor.opacity(0.8)]),
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+            if let profileImage = selectedImage ?? userVM.profileImage {
+                // Show profile photo
+                Image(uiImage: profileImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 120, height: 120)
+                    .clipShape(Circle())
+                    .shadow(color: .black.opacity(0.2), radius: 15, x: 0, y: 8)
+            } else {
+                // Show emoji avatar
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            gradient: Gradient(colors: [selectedColor, selectedColor.opacity(0.8)]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                )
-                .frame(width: 120, height: 120)
-                .shadow(color: selectedColor.opacity(0.3), radius: 15, x: 0, y: 8)
-            
-            Text(selectedEmoji)
-                .font(.system(size: 60))
-                .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+                    .frame(width: 120, height: 120)
+                    .shadow(color: selectedColor.opacity(0.3), radius: 15, x: 0, y: 8)
+                
+                Text(selectedEmoji)
+                    .font(.system(size: 60))
+                    .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+            }
         }
         .padding(.vertical, 10)
+    }
+    
+    private var photoSelectionView: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Profile Photo")
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundColor(.primary)
+            
+            HStack(spacing: 12) {
+                // Add Photo Button
+                Button(action: {
+                    showPhotoPicker = true
+                }) {
+                    VStack(spacing: 8) {
+                        if userVM.isUploadingPhoto {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                                .tint(.blue)
+                        } else {
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 24, weight: .semibold))
+                                .foregroundColor(.blue)
+                        }
+                        Text(userVM.isUploadingPhoto ? "Uploading..." : "Add Photo")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.primary)
+                    }
+                    .frame(width: 80, height: 80)
+                    .background(
+                        RoundedRectangle(cornerRadius: 15)
+                            .fill(.ultraThinMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 15)
+                                    .stroke(.blue, lineWidth: 2)
+                            )
+                    )
+                    .shadow(color: .blue.opacity(0.2), radius: 8, x: 0, y: 4)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(userVM.isUploadingPhoto)
+                
+                // Remove Photo Button (only show if photo exists)
+                if selectedImage != nil || userVM.profileImage != nil {
+                    Button(action: {
+                        selectedImage = nil
+                        userVM.removeProfilePhoto { _ in }
+                    }) {
+                        VStack(spacing: 8) {
+                            Image(systemName: "trash.fill")
+                                .font(.system(size: 24, weight: .semibold))
+                                .foregroundColor(.red)
+                            Text("Remove")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.primary)
+                        }
+                        .frame(width: 80, height: 80)
+                        .background(
+                            RoundedRectangle(cornerRadius: 15)
+                                .fill(.ultraThinMaterial)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 15)
+                                        .stroke(.red, lineWidth: 2)
+                                )
+                        )
+                        .shadow(color: .red.opacity(0.2), radius: 8, x: 0, y: 4)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(userVM.isUploadingPhoto)
+                }
+                
+                Spacer()
+            }
+        }
+        .padding(.horizontal, 20)
     }
     
     private var emojiSelectionView: some View {
@@ -135,15 +265,15 @@ struct AccountCustomizationView: View {
             .fill(selectedEmoji == emoji ? AnyShapeStyle(selectedEmojiGradient) : AnyShapeStyle(.ultraThinMaterial))
             .overlay(
                 RoundedRectangle(cornerRadius: 15)
-                    .stroke(selectedEmoji == emoji ? Color(red: 0.2, green: 0.6, blue: 0.9) : .clear, lineWidth: 2)
+                    .stroke(selectedEmoji == emoji ? .blue : .clear, lineWidth: 2)
             )
     }
     
     private var selectedEmojiGradient: LinearGradient {
         LinearGradient(
             gradient: Gradient(colors: [
-                Color(red: 0.2, green: 0.6, blue: 0.9),
-                Color(red: 0.3, green: 0.7, blue: 1.0)
+                .blue,
+                .blue.opacity(0.8)
             ]),
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -151,7 +281,7 @@ struct AccountCustomizationView: View {
     }
     
     private func emojiShadowColor(for emoji: String) -> Color {
-        selectedEmoji == emoji ? Color(red: 0.2, green: 0.6, blue: 0.9).opacity(0.3) : .black.opacity(0.05)
+        selectedEmoji == emoji ? .blue.opacity(0.3) : .black.opacity(0.05)
     }
     
     private var colorSelectionView: some View {
@@ -203,11 +333,13 @@ struct AccountCustomizationView: View {
             .buttonStyle(PrimaryButtonStyle(backgroundColor: .green))
             .padding(.horizontal, 20)
             
-            Button("Skip For Now") { 
-                showWelcomeAndLogin() 
+            if isFromOnboarding {
+                Button("Skip For Now") { 
+                    showWelcomeAndLogin() 
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .padding(.horizontal, 20)
             }
-            .buttonStyle(SecondaryButtonStyle())
-            .padding(.horizontal, 20)
         }
         .padding(.bottom, 20)
     }
@@ -244,12 +376,23 @@ struct AccountCustomizationView: View {
         let db = Firestore.firestore()
         let colorName = colorOptions.first(where: { $0.0 == selectedColor })?.1 ?? "red"
         
+        // Save the avatar customization
         db.collection("users").document(uid).updateData([
             "avatarEmoji": selectedEmoji,
             "avatarColor": colorName
         ]) { _ in
-            // After saving, trigger the welcome animation and log in.
+            // Photo is already uploaded after cropping, so just continue
+            self.handleCompletion()
+        }
+    }
+
+    func handleCompletion() {
+        if isFromOnboarding {
+            // If from onboarding, show welcome screen and then authenticate
             showWelcomeAndLogin()
+        } else {
+            // If from within the app, just dismiss
+            dismiss()
         }
     }
 

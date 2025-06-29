@@ -37,5 +37,11 @@
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>This app uses the camera to scan receipts and earn loyalty points.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app accesses your photo library to select profile pictures and receipt images.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app uses location to show directions to our restaurant and provide location-based services.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app uses the microphone for voice input when available.</string>
 </dict>
 </plist>

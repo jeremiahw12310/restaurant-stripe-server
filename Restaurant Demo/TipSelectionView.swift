@@ -4,6 +4,7 @@ public struct TipSelectionView: View {
     @EnvironmentObject var cartManager: CartManager
     @StateObject private var checkoutManager = StripeCheckoutManager()
     @Environment(\.dismiss) var dismiss
+    @Environment(\.colorScheme) var colorScheme
     
     @State private var selectedTipPercentage: Double = 0.15 // 15% default
     @State private var customTipAmount: String = ""
@@ -37,7 +38,9 @@ public struct TipSelectionView: View {
     public var body: some View {
         NavigationStack {
             ZStack {
-                gradientBackground
+                // Adaptive background that works in both light and dark mode
+                Color(.systemBackground)
+                    .ignoresSafeArea()
                 ScrollView {
                     VStack(spacing: 30) {
                         headerSection
@@ -57,12 +60,12 @@ public struct TipSelectionView: View {
                                     RoundedRectangle(cornerRadius: 15)
                                         .fill(
                                             LinearGradient(
-                                                gradient: Gradient(colors: [Color(red: 0.2, green: 0.6, blue: 0.9), Color(red: 0.3, green: 0.7, blue: 1.0)]),
+                                                gradient: Gradient(colors: [.blue, .blue.opacity(0.8)]),
                                                 startPoint: .leading,
                                                 endPoint: .trailing
                                             )
                                         )
-                                        .shadow(color: Color(red: 0.2, green: 0.6, blue: 0.9).opacity(0.3), radius: 10, x: 0, y: 5)
+                                        .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
                                 )
                         }
                         .padding(.horizontal, 20)
@@ -79,7 +82,7 @@ public struct TipSelectionView: View {
                 Button("Cancel") {
                     dismiss()
                 }
-                .foregroundColor(Color(red: 0.2, green: 0.6, blue: 0.9))
+                .foregroundColor(.blue)
             }
         }
         .sheet(isPresented: $showCheckout, onDismiss: { showCheckout = false }) {
@@ -137,18 +140,6 @@ public struct TipSelectionView: View {
         .animation(.easeInOut(duration: 0.2), value: selectedTipPercentage)
     }
     
-    private var gradientBackground: some View {
-        LinearGradient(
-            gradient: Gradient(colors: [
-                Color(red: 0.95, green: 0.97, blue: 1.0),
-                Color(red: 1.0, green: 0.98, blue: 0.95)
-            ]),
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-        .ignoresSafeArea()
-    }
-    
     private var headerSection: some View {
         VStack(spacing: 16) {
             Image(systemName: "heart.fill")
@@ -175,26 +166,30 @@ public struct TipSelectionView: View {
                 HStack {
                     Text("Subtotal")
                         .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.primary)
                     Spacer()
                     Text("$\(subtotal, specifier: "%.2f")")
                         .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.primary)
                 }
                 HStack {
                     Text("Tip")
                         .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.primary)
                     Spacer()
                     Text("$\(tipAmount, specifier: "%.2f")")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(.pink)
                 }
-                Divider().background(.ultraThinMaterial)
+                Divider().background(Color(.separator))
                 HStack {
                     Text("Total")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(.primary)
                     Spacer()
                     Text("$\(total, specifier: "%.2f")")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundColor(Color(red: 0.2, green: 0.6, blue: 0.9))
+                        .foregroundColor(.blue)
                 }
             }
         }

@@ -8,10 +8,13 @@ struct Restaurant_DemoApp: App {
     
     // Register the custom app delegate.
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    @StateObject var authVM = AuthenticationViewModel()
 
     var body: some Scene {
         WindowGroup {
             LaunchView()
+                .environmentObject(authVM)
+                .preferredColorScheme(.dark) // Force dark mode
         }
     }
 }

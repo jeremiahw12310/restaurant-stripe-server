@@ -6,6 +6,7 @@ import Restaurant_Demo // If needed for TipSelectionView and SafariView
 
 struct CartView: View {
     @EnvironmentObject var cartManager: CartManager
+    @Environment(\.colorScheme) var colorScheme
     
     // This state controls showing the web checkout page.
     @State private var showSuccessAlert = false
@@ -14,16 +15,9 @@ struct CartView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                // Beautiful gradient background
-                LinearGradient(
-                    gradient: Gradient(colors: [
-                        Color(red: 0.98, green: 0.98, blue: 1.0),
-                        Color(red: 1.0, green: 0.98, blue: 0.98)
-                    ]),
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
+                // Adaptive background that works in both light and dark mode
+                Color(.systemBackground)
+                    .ignoresSafeArea()
                 
                 VStack {
                     if cartManager.items.isEmpty {
@@ -67,8 +61,8 @@ struct CartView: View {
             
             Image(systemName: "cart.badge.plus")
                 .font(.system(size: 80))
-                .foregroundColor(Color(red: 0.2, green: 0.6, blue: 0.9))
-                .shadow(color: Color(red: 0.2, green: 0.6, blue: 0.9).opacity(0.3), radius: 10, x: 0, y: 5)
+                .foregroundColor(.blue)
+                .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
             
             VStack(spacing: 16) {
                 Text("Your Cart is Empty")
@@ -110,36 +104,41 @@ struct CartView: View {
                 HStack {
                     Text("Subtotal")
                         .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.primary)
                     Spacer()
                     Text("$\(cartManager.subtotal, specifier: "%.2f")")
                         .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.primary)
                 }
                 
                 HStack {
                     Text("Tax")
                         .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.primary)
                     Spacer()
                     Text("$\(cartManager.subtotal * 0.09, specifier: "%.2f")")
                         .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.primary)
                 }
                 
                 Divider()
-                    .background(.ultraThinMaterial)
+                    .background(Color(.separator))
                 
                 HStack {
                     Text("Total")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(.primary)
                     Spacer()
                     Text("$\(cartManager.subtotal * 1.09, specifier: "%.2f")")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundColor(Color(red: 0.2, green: 0.6, blue: 0.9))
+                        .foregroundColor(.blue)
                 }
             }
             .padding(20)
             .background(
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(.ultraThinMaterial)
-                    .shadow(color: .black.opacity(0.1), radius: 15, x: 0, y: 8)
+                    .fill(Color(.secondarySystemBackground))
+                    .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.1), radius: 15, x: 0, y: 8)
             )
             
             // Beautiful checkout button
@@ -153,7 +152,7 @@ struct CartView: View {
         .padding(.bottom, 30)
         .background(
             Rectangle()
-                .fill(.ultraThinMaterial)
+                .fill(Color(.secondarySystemBackground))
                 .ignoresSafeArea()
         )
     }
@@ -163,6 +162,7 @@ struct CartView: View {
 struct CartItemCard: View {
     let item: CartItem
     let cartManager: CartManager
+    @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
         HStack(spacing: 16) {
@@ -171,8 +171,8 @@ struct CartItemCard: View {
                 .fill(
                     LinearGradient(
                         gradient: Gradient(colors: [
-                            Color(red: 0.8, green: 0.4, blue: 0.2),
-                            Color(red: 0.9, green: 0.5, blue: 0.3)
+                            Color.orange,
+                            Color.orange.opacity(0.8)
                         ]),
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -184,7 +184,7 @@ struct CartItemCard: View {
                         .font(.system(size: 30, weight: .medium))
                         .foregroundColor(.white)
                 )
-                .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 4)
+                .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.1), radius: 8, x: 0, y: 4)
             
             // Item details
             VStack(alignment: .leading, spacing: 8) {
@@ -194,7 +194,7 @@ struct CartItemCard: View {
                 
                 Text("$\(item.menuItem.price, specifier: "%.2f")")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(Color(red: 0.2, green: 0.6, blue: 0.9))
+                    .foregroundColor(.blue)
                 
                 // Quantity controls
                 HStack(spacing: 12) {
@@ -238,8 +238,8 @@ struct CartItemCard: View {
         .padding(20)
         .background(
             RoundedRectangle(cornerRadius: 20)
-                .fill(.ultraThinMaterial)
-                .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 5)
+                .fill(Color(.secondarySystemBackground))
+                .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.05), radius: 10, x: 0, y: 5)
         )
     }
 }

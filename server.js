@@ -66,7 +66,7 @@ If a field is missing, use null.
             role: "user",
             content: [
               { type: "text", text: prompt },
-              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageData}` } }
+              { type: "image_url", image_url: `data:image/jpeg;base64,${imageData}` }
             ]
           }
         ],

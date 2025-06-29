@@ -9,21 +9,16 @@ struct AuthFlowView: View {
     
     var body: some View {
         ZStack {
-            // Beautiful gradient background
-            LinearGradient(
-                gradient: Gradient(colors: [
-                    Color(red: 0.95, green: 0.97, blue: 1.0),
-                    Color(red: 1.0, green: 0.98, blue: 0.95)
-                ]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            // Adaptive background that works in both light and dark mode
+            Color(.systemBackground)
+                .ignoresSafeArea()
             
             // ✅ FIX: Removed the nested NavigationStack to prevent potential conflicts and crashes.
             // The view will now correctly use the NavigationStack from SplashView.
             Group {
-                if authVM.shouldNavigateToCustomization == true {
+                if authVM.isEmailMode {
+                    EmailAuthView()
+                } else if authVM.shouldNavigateToCustomization == true {
                     Text("Showing AccountCustomizationView")
                         .onAppear { print("🔵 Navigation: AccountCustomizationView") }
                     AccountCustomizationView(uid: Auth.auth().currentUser?.uid ?? "")
@@ -81,27 +76,29 @@ struct AuthFlowView: View {
 // MARK: - Screen 1: Enter Phone Number
 struct EnterPhoneView: View {
     @EnvironmentObject var authVM: AuthenticationViewModel
+    @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
-        VStack(spacing: 40) {
+        VStack(spacing: 30) {
             Spacer()
             
             // Beautiful header
             VStack(spacing: 16) {
                 Image(systemName: "phone.circle.fill")
                     .font(.system(size: 60))
-                    .foregroundColor(Color(red: 0.2, green: 0.6, blue: 0.9))
-                    .shadow(color: Color(red: 0.2, green: 0.6, blue: 0.9).opacity(0.3), radius: 10, x: 0, y: 5)
+                    .foregroundColor(.blue)
+                    .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
                 
-                Text("What's your phone number?")
+                Text("Welcome to Dumpling House!")
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .foregroundColor(.primary)
                     .multilineTextAlignment(.center)
                 
-                Text("We'll send you a verification code")
+                Text("Sign in to earn loyalty points, track your orders, and get exclusive rewards")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
             }
             .padding(.horizontal, 20)
             
@@ -118,6 +115,59 @@ struct EnterPhoneView: View {
             }
             .frame(maxHeight: 200)
             
+            // Privacy Policy Checkbox
+            VStack(spacing: 12) {
+                HStack(spacing: 12) {
+                    Button(action: {
+                        authVM.acceptedPrivacyPolicy.toggle()
+                    }) {
+                        Image(systemName: authVM.acceptedPrivacyPolicy ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 20))
+                            .foregroundColor(authVM.acceptedPrivacyPolicy ? .blue : .secondary)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("I accept the")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.primary)
+                        +
+                        Text(" Privacy Policy")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.blue)
+                        +
+                        Text(" and")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.primary)
+                        +
+                        Text(" Terms of Service")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.blue)
+                    }
+                    .multilineTextAlignment(.leading)
+                    
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                
+                // Email authentication option
+                VStack(spacing: 12) {
+                    Divider()
+                        .background(Color(.separator))
+                        .padding(.horizontal, 20)
+                    
+                    Text("Or continue with email")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.secondary)
+                    
+                    Button("Sign in with Email") {
+                        authVM.isEmailMode = true
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .padding(.horizontal, 20)
+                }
+            }
+            
             Spacer()
             
             // Action buttons
@@ -127,7 +177,7 @@ struct EnterPhoneView: View {
                         .scaleEffect(1.2)
                         .padding()
                 } else {
-                    Button("Continue") {
+                    Button("Continue with Phone") {
                         authVM.sendVerificationCode()
                     }
                     .buttonStyle(PrimaryButtonStyle())
@@ -156,6 +206,7 @@ struct EnterPhoneView: View {
 // MARK: - Screen 2: Enter SMS Code
 struct EnterCodeView: View {
     @EnvironmentObject var authVM: AuthenticationViewModel
+    @Environment(\.colorScheme) var colorScheme
     @FocusState private var codeFocused: Bool
     var body: some View {
         VStack(spacing: 40) {
@@ -163,8 +214,8 @@ struct EnterCodeView: View {
             VStack(spacing: 16) {
                 Image(systemName: "message.fill")
                     .font(.system(size: 60))
-                    .foregroundColor(Color(red: 0.2, green: 0.6, blue: 0.9))
-                    .shadow(color: Color(red: 0.2, green: 0.6, blue: 0.9).opacity(0.3), radius: 10, x: 0, y: 5)
+                    .foregroundColor(.blue)
+                    .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
                 Text("Enter the code we sent you")
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .foregroundColor(.primary)
@@ -183,10 +234,10 @@ struct EnterCodeView: View {
                     .padding()
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(.ultraThinMaterial)
+                            .fill(Color(.secondarySystemBackground))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12)
-                                    .stroke(.ultraThinMaterial, lineWidth: 1)
+                                    .stroke(Color(.separator), lineWidth: 1)
                             )
                     )
                     .focused($codeFocused)
@@ -225,6 +276,7 @@ struct EnterCodeView: View {
 // MARK: - Screen 3: Enter User Details
 struct UserDetailsEntryView: View {
     @EnvironmentObject var authVM: AuthenticationViewModel
+    @Environment(\.colorScheme) var colorScheme
     
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -241,8 +293,8 @@ struct UserDetailsEntryView: View {
             VStack(spacing: 16) {
                 Image(systemName: "person.badge.plus.fill")
                     .font(.system(size: 60))
-                    .foregroundColor(Color(red: 0.2, green: 0.6, blue: 0.9))
-                    .shadow(color: Color(red: 0.2, green: 0.6, blue: 0.9).opacity(0.3), radius: 10, x: 0, y: 5)
+                    .foregroundColor(.blue)
+                    .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
                 
                 Text("Almost done!")
                     .font(.system(size: 28, weight: .bold, design: .rounded))
@@ -286,13 +338,13 @@ struct UserDetailsEntryView: View {
                     .padding()
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(.ultraThinMaterial)
+                            .fill(Color(.secondarySystemBackground))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12)
-                                    .stroke(.ultraThinMaterial, lineWidth: 1)
+                                    .stroke(Color(.separator), lineWidth: 1)
                             )
                     )
-                    .shadow(color: .black.opacity(0.05), radius: 5, x: 0, y: 2)
+                    .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.05), radius: 5, x: 0, y: 2)
                 }
                 
                 BeautifulTextField(placeholder: "Referral Code (optional)", text: $authVM.referralCode)
@@ -333,7 +385,152 @@ struct UserDetailsEntryView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 Button("Back") { authVM.reset() }
-                    .foregroundColor(Color(red: 0.2, green: 0.6, blue: 0.9))
+                    .foregroundColor(.blue)
+            }
+        }
+    }
+}
+
+// MARK: - Email Authentication View
+struct EmailAuthView: View {
+    @EnvironmentObject var authVM: AuthenticationViewModel
+    @Environment(\.colorScheme) var colorScheme
+    @State private var isSignUp = false
+    
+    var body: some View {
+        VStack(spacing: 30) {
+            Spacer()
+            
+            // Beautiful header
+            VStack(spacing: 16) {
+                Image(systemName: "envelope.circle.fill")
+                    .font(.system(size: 60))
+                    .foregroundColor(.blue)
+                    .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
+                
+                Text(isSignUp ? "Create Account" : "Sign In")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundColor(.primary)
+                    .multilineTextAlignment(.center)
+                
+                Text("Use your email to access your account and earn loyalty points")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+            }
+            .padding(.horizontal, 20)
+            
+            // Email and Password inputs
+            VStack(spacing: 20) {
+                BeautifulTextField(placeholder: "Email address", text: $authVM.email)
+                    .textContentType(.emailAddress)
+                    .keyboardType(.emailAddress)
+                    .autocapitalization(.none)
+                
+                BeautifulTextField(placeholder: "Password", text: $authVM.password, isSecure: true)
+                    .textContentType(isSignUp ? .newPassword : .password)
+                
+                if isSignUp {
+                    Text("Password must be at least 6 characters")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 20)
+            
+            // Privacy Policy Checkbox
+            VStack(spacing: 12) {
+                HStack(spacing: 12) {
+                    Button(action: {
+                        authVM.acceptedPrivacyPolicy.toggle()
+                    }) {
+                        Image(systemName: authVM.acceptedPrivacyPolicy ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 20))
+                            .foregroundColor(authVM.acceptedPrivacyPolicy ? .blue : .secondary)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("I accept the")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.primary)
+                        +
+                        Text(" Privacy Policy")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.blue)
+                        +
+                        Text(" and")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.primary)
+                        +
+                        Text(" Terms of Service")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.blue)
+                    }
+                    .multilineTextAlignment(.leading)
+                    
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+            }
+            
+            Spacer()
+            
+            // Action buttons
+            VStack(spacing: 16) {
+                if authVM.isLoading {
+                    ProgressView()
+                        .scaleEffect(1.2)
+                        .padding()
+                } else {
+                    Button(isSignUp ? "Create Account" : "Sign In") {
+                        if isSignUp {
+                            authVM.createAccountWithEmail()
+                        } else {
+                            authVM.signInWithEmail()
+                        }
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .padding(.horizontal, 20)
+                }
+                
+                // Toggle between sign in and sign up
+                Button(isSignUp ? "Already have an account? Sign In" : "Don't have an account? Sign Up") {
+                    isSignUp.toggle()
+                    authVM.errorMessage = ""
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .padding(.horizontal, 20)
+                
+                // Back to phone option
+                Button("Back to Phone Sign In") {
+                    authVM.isEmailMode = false
+                    authVM.errorMessage = ""
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .padding(.horizontal, 20)
+                
+                if !authVM.errorMessage.isEmpty {
+                    Text(authVM.errorMessage)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.red)
+                        .padding(.horizontal, 20)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            
+            Spacer()
+        }
+        .navigationTitle(isSignUp ? "Create Account" : "Sign In")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Back") { 
+                    authVM.isEmailMode = false
+                    authVM.errorMessage = ""
+                }
+                .foregroundColor(.blue)
             }
         }
     }

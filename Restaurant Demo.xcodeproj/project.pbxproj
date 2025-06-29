@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F970F83E2E10AA7700859DD1 /* PhotoCropView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F970F83D2E10AA7500859DD1 /* PhotoCropView.swift */; };
 		F9BE29562E02D58800E3AEB1 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9BE29552E02D58500E3AEB1 /* HomeView.swift */; };
 		F9BE29582E02D5D000E3AEB1 /* OrderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9BE29572E02D5CB00E3AEB1 /* OrderView.swift */; };
 		F9BE29762E03670900E3AEB1 /* SplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9BE29752E0366FA00E3AEB1 /* SplashView.swift */; };
@@ -82,6 +83,7 @@
 		F92AB73D2E028DEB00F98574 /* Restaurant Demo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Restaurant Demo.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		F92AB74A2E028DEF00F98574 /* Restaurant DemoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Restaurant DemoTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		F92AB7542E028DEF00F98574 /* Restaurant DemoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Restaurant DemoUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		F970F83D2E10AA7500859DD1 /* PhotoCropView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCropView.swift; sourceTree = "<group>"; };
 		F9BE29552E02D58500E3AEB1 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		F9BE29572E02D5CB00E3AEB1 /* OrderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrderView.swift; sourceTree = "<group>"; };
 		F9BE29752E0366FA00E3AEB1 /* SplashView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashView.swift; sourceTree = "<group>"; };
@@ -182,6 +184,7 @@
 		F92AB7342E028DEB00F98574 = {
 			isa = PBXGroup;
 			children = (
+				F970F83D2E10AA7500859DD1 /* PhotoCropView.swift */,
 				F9C9DBFB2E0F8BE300AC6E59 /* StripeCheckoutManager.swift */,
 				F9C9DBE32E0F842300AC6E59 /* SafariView.swift */,
 				F9C9DB852E0F537300AC6E59 /* CartView.swift */,
@@ -415,6 +418,7 @@
 				F9C9DB4C2E0C85AD00AC6E59 /* AccountCustomizationView.swift in Sources */,
 				F9C9DB7E2E0EAC4900AC6E59 /* MenuModels.swift in Sources */,
 				F9BE29582E02D5D000E3AEB1 /* OrderView.swift in Sources */,
+				F970F83E2E10AA7700859DD1 /* PhotoCropView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

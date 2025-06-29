@@ -4,6 +4,7 @@ import SwiftUI
 struct OrderView: View {
     @StateObject private var menuVM = MenuViewModel()
     @EnvironmentObject var cartManager: CartManager // Access the shared cart.
+    @Environment(\.colorScheme) var colorScheme
     
     // State to manage which item detail card is being shown.
     @State private var selectedItem: MenuItem?
@@ -11,23 +12,16 @@ struct OrderView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                // Beautiful gradient background
-                LinearGradient(
-                    gradient: Gradient(colors: [
-                        Color(red: 0.98, green: 0.98, blue: 1.0),
-                        Color(red: 1.0, green: 0.98, blue: 0.98)
-                    ]),
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
+                // Adaptive background that works in both light and dark mode
+                Color(.systemBackground)
+                    .ignoresSafeArea()
                 
                 VStack {
                     if menuVM.isLoading {
                         VStack(spacing: 20) {
                             ProgressView()
                                 .scaleEffect(1.5)
-                                .tint(Color(red: 0.2, green: 0.6, blue: 0.9))
+                                .tint(.blue)
                             Text("Loading our delicious menu...")
                                 .font(.headline)
                                 .foregroundColor(.secondary)
@@ -41,6 +35,7 @@ struct OrderView: View {
                                 .font(.headline)
                                 .multilineTextAlignment(.center)
                                 .padding()
+                                .foregroundColor(.primary)
                         }
                     } else {
                         ScrollView {
@@ -68,6 +63,7 @@ struct OrderView: View {
 // A beautiful view for a row in the main category list.
 struct CategoryRow: View {
     let category: MenuCategory
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         HStack(spacing: 20) {
@@ -77,15 +73,15 @@ struct CategoryRow: View {
                     .fill(
                         LinearGradient(
                             gradient: Gradient(colors: [
-                                Color(red: 0.2, green: 0.6, blue: 0.9),
-                                Color(red: 0.3, green: 0.7, blue: 1.0)
+                                .blue,
+                                .blue.opacity(0.8)
                             ]),
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
                     .frame(width: 60, height: 60)
-                    .shadow(color: Color(red: 0.2, green: 0.6, blue: 0.9).opacity(0.3), radius: 10, x: 0, y: 5)
+                    .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
                 
                 Image(systemName: categoryIcon(for: category.id))
                     .font(.system(size: 24, weight: .semibold))
@@ -111,8 +107,8 @@ struct CategoryRow: View {
         .padding(25)
         .background(
             RoundedRectangle(cornerRadius: 20)
-                .fill(.ultraThinMaterial)
-                .shadow(color: .black.opacity(0.1), radius: 15, x: 0, y: 8)
+                .fill(Color(.secondarySystemBackground))
+                .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.1), radius: 15, x: 0, y: 8)
         )
     }
     
@@ -133,19 +129,13 @@ struct CategoryRow: View {
 struct CategoryDetailView: View {
     let category: MenuCategory
     @State private var selectedItem: MenuItem?
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         ZStack {
-            // Beautiful gradient background
-            LinearGradient(
-                gradient: Gradient(colors: [
-                    Color(red: 0.98, green: 0.98, blue: 1.0),
-                    Color(red: 1.0, green: 0.98, blue: 0.98)
-                ]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            // Adaptive background that works in both light and dark mode
+            Color(.systemBackground)
+                .ignoresSafeArea()
             
             ScrollView {
                 VStack(spacing: 25) {
@@ -179,6 +169,7 @@ struct CategoryDetailView: View {
 // Beautiful sub-category card
 struct SubCategoryCard: View {
     let subCategory: MenuSubCategory
+    @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
         HStack(spacing: 20) {
@@ -188,15 +179,15 @@ struct SubCategoryCard: View {
                     .fill(
                         LinearGradient(
                             gradient: Gradient(colors: [
-                                Color(red: 0.8, green: 0.4, blue: 0.2),
-                                Color(red: 0.9, green: 0.5, blue: 0.3)
+                                .orange,
+                                .orange.opacity(0.8)
                             ]),
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
                     .frame(width: 50, height: 50)
-                    .shadow(color: Color(red: 0.8, green: 0.4, blue: 0.2).opacity(0.3), radius: 8, x: 0, y: 4)
+                    .shadow(color: .orange.opacity(0.3), radius: 8, x: 0, y: 4)
                 
                 Image(systemName: "fork.knife.circle.fill")
                     .font(.system(size: 20, weight: .semibold))
@@ -222,8 +213,8 @@ struct SubCategoryCard: View {
         .padding(20)
         .background(
             RoundedRectangle(cornerRadius: 15)
-                .fill(.ultraThinMaterial)
-                .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 5)
+                .fill(Color(.secondarySystemBackground))
+                .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.08), radius: 10, x: 0, y: 5)
         )
     }
 }
@@ -233,19 +224,13 @@ struct MenuItemListView: View {
     let title: String
     let items: [MenuItem]
     @State private var selectedItem: MenuItem?
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         ZStack {
-            // Beautiful gradient background
-            LinearGradient(
-                gradient: Gradient(colors: [
-                    Color(red: 0.98, green: 0.98, blue: 1.0),
-                    Color(red: 1.0, green: 0.98, blue: 0.98)
-                ]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            // Adaptive background that works in both light and dark mode
+            Color(.systemBackground)
+                .ignoresSafeArea()
             
             ScrollView {
                 MenuItemGridView(items: items, selectedItem: $selectedItem)
@@ -285,6 +270,7 @@ struct MenuItemGridView: View {
 // Beautiful menu item card
 struct MenuItemCard: View {
     let item: MenuItem
+    @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
         VStack(spacing: 0) {
@@ -316,15 +302,15 @@ struct MenuItemCard: View {
                             .fill(
                                 LinearGradient(
                                     gradient: Gradient(colors: [
-                                        Color(red: 0.2, green: 0.8, blue: 0.4),
-                                        Color(red: 0.3, green: 0.9, blue: 0.5)
+                                        .green,
+                                        .green.opacity(0.8)
                                     ]),
                                     startPoint: .leading,
                                     endPoint: .trailing
                                 )
                             )
                     )
-                    .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 2)
+                    .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.2), radius: 5, x: 0, y: 2)
                     .padding(10)
             }
             
@@ -349,12 +335,12 @@ struct MenuItemCard: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 20)
-                .fill(.ultraThinMaterial)
-                .shadow(color: .black.opacity(0.1), radius: 15, x: 0, y: 8)
+                .fill(Color(.secondarySystemBackground))
+                .shadow(color: Color(.sRGBLinear, white: 0, opacity: 0.1), radius: 15, x: 0, y: 8)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 20)
-                .stroke(.ultraThinMaterial, lineWidth: 1)
+                .stroke(Color(.separator), lineWidth: 1)
         )
     }
 }
@@ -364,6 +350,7 @@ struct ItemDetailView: View {
     let item: MenuItem
     @EnvironmentObject var cartManager: CartManager
     @Environment(\.dismiss) var dismiss // To close the sheet
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         ZStack {

@@ -230,7 +230,7 @@ struct DigitInputView: View {
 
 // A beautiful custom style for our main action buttons.
 struct PrimaryButtonStyle: ButtonStyle {
-    var backgroundColor: Color = Color(red: 0.2, green: 0.6, blue: 0.9)
+    var backgroundColor: Color = .blue
     var foregroundColor: Color = .white
     
     func makeBody(configuration: Configuration) -> some View {
