@@ -14,7 +14,7 @@ struct Config {
     
     // MARK: - Current Environment
     // Change this to switch between environments
-    static let currentEnvironment: Environment = .local
+    static let currentEnvironment: Environment = .localNetwork
     
     enum Environment {
         case local
@@ -38,10 +38,15 @@ struct Config {
         return "\(currentEnvironment.baseURL)/analyze-receipt"
     }
     
+    static var chatURL: String {
+        return "\(currentEnvironment.baseURL)/chat"
+    }
+    
     // MARK: - Debug Info
     static func printCurrentConfig() {
         print("🔧 Current Environment: \(currentEnvironment)")
         print("🔗 Backend URL: \(currentEnvironment.baseURL)")
         print("📡 Receipt Analysis URL: \(analyzeReceiptURL)")
+        print("💬 Chat URL: \(chatURL)")
     }
 } 

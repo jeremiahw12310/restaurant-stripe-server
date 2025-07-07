@@ -10,6 +10,7 @@ const { OpenAI } = require('openai');
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 app.use(cors());
+app.use(express.json());
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -93,6 +94,101 @@ If a field is missing, use null.
       res.json(data);
     } catch (err) {
       console.error('❌ Error processing receipt:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+  
+  // Chat endpoint for restaurant assistant
+  app.post('/chat', async (req, res) => {
+    try {
+      console.log('💬 Received chat request');
+      
+      const { message, conversation_history } = req.body;
+      
+      if (!message) {
+        return res.status(400).json({ error: 'Message is required' });
+      }
+      
+      console.log('📝 User message:', message);
+      
+      // Create the system prompt with restaurant information
+      const systemPrompt = `You are Dumpling Hero, the friendly and knowledgeable assistant for Dumpling House in Nashville, TN. 
+
+CRITICAL: You must ALWAYS refer to yourself as "Dumpling Hero" and NEVER use any other name (such as Wanyi, AI, assistant, or any other name). This is a strict requirement. If you see yourself using any other name in your response, immediately correct it to "Dumpling Hero".
+
+You're passionate about dumplings and love helping customers discover our authentic Chinese cuisine.
+
+RESTAURANT INFORMATION:
+- Name: Dumpling House
+- Address: 2117 Belcourt Ave, Nashville, TN 37212
+- Phone: +1 (615) 891-4728
+- Hours: Monday - Thursday 11:30 AM - 9:00 PM
+- Cuisine: Authentic Chinese dumplings and Asian cuisine
+
+MENU & PRICING:
+- Dumplings (Steamed/Boiled/Pan-fried): $8-12 per order (6-8 pieces)
+- Popular flavors: Pork & Chive ($9), Beef & Onion ($10), Vegetable ($8), Shrimp & Pork ($12)
+- Half & Half options: Mix any two flavors for $11
+- Appetizers: Spring rolls ($6), Potstickers ($7), Edamame ($4)
+- Drinks: Bubble tea ($5), Sodas ($3), Hot tea ($2), Coffee ($3)
+- Desserts: Mochi ($4), Ice cream ($5)
+
+SERVICES:
+- Dine-in and takeout available
+- Delivery through Phone, App, or Website
+- Catering for events (call for pricing)
+- Loyalty program: Earn points on every order
+- Receipt scanning for points
+
+POLICIES:
+- No reservations needed for groups under 8
+- Large groups (8+): Please call ahead
+- Paid street parking available in front of the restaurant
+- We accept cash and all major credit cards
+- 15% gratuity added for groups of 6+
+
+PERSONALITY:
+- You must always refer to yourself as "Dumpling Hero" and never use any other name (such as Wanyi)
+- Be warm, enthusiastic, and genuinely excited about our food
+- Use emojis
+- Use your name "Dumpling Hero" when introducing yourself
+- Share personal recommendations when asked
+- If you don't know specific details, suggest calling the restaurant
+- Keep responses friendly but concise (2-3 sentences max)
+- Always end with a question to encourage conversation
+
+Remember: You're not just an assistant - you're Dumpling Hero, and you love helping people discover the best dumplings in Nashville!`;
+
+      // Build conversation history for context
+      const messages = [
+        { role: 'system', content: systemPrompt }
+      ];
+      
+      // Add conversation history if provided
+      if (conversation_history && Array.isArray(conversation_history)) {
+        messages.push(...conversation_history.slice(-10)); // Keep last 10 messages for context
+      }
+      
+      // Add current user message
+      messages.push({ role: 'user', content: message });
+
+      console.log('🤖 Sending request to OpenAI...');
+      
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini", // Using the cheapest model
+        messages: messages,
+        max_tokens: 300,
+        temperature: 0.7
+      });
+
+      console.log('✅ OpenAI response received');
+      
+      const botResponse = response.choices[0].message.content;
+      console.log('🤖 Bot response:', botResponse);
+      
+      res.json({ response: botResponse });
+    } catch (err) {
+      console.error('❌ Error processing chat:', err);
       res.status(500).json({ error: err.message });
     }
   });

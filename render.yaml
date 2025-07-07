@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: restaurant-stripe-server
+    name: restaurant-backend
     env: node
     buildCommand: npm install
     startCommand: node server.js
@@ -9,4 +9,5 @@ services:
       - key: NODE_ENV
         value: production
       - key: OPENAI_API_KEY
-        sync: false 
+        sync: false
+    healthCheckPath: / 
