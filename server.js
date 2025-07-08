@@ -5,6 +5,12 @@ const cors = require('cors');
 const fs = require('fs');
 const { OpenAI } = require('openai');
 
+// Initialize Stripe only if API key is available
+let stripe = null;
+if (process.env.STRIPE_SECRET_KEY) {
+  stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+}
+
 // Updated for Render deployment with latest OpenAI model
 // ROOT SERVER.JS - USING GPT-4O MODEL
 const app = express();
@@ -20,8 +26,190 @@ app.get('/', (req, res) => {
     status: 'Server is running!', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    server: 'ROOT server.js with gpt-4o'
+    server: 'ROOT server.js with gpt-4o and Stripe',
+    stripeConfigured: !!process.env.STRIPE_SECRET_KEY
   });
+});
+
+// MARK: - Stripe Checkout Endpoints
+
+// Create checkout session endpoint
+app.post('/create-checkout-session', async (req, res) => {
+  try {
+    const { line_items } = req.body;
+    
+    console.log('🛒 Received line items:', line_items);
+    
+    if (!process.env.STRIPE_SECRET_KEY || !stripe) {
+      console.error('❌ STRIPE_SECRET_KEY not configured');
+      return res.status(500).json({ error: 'Stripe not configured. Please set STRIPE_SECRET_KEY in environment variables.' });
+    }
+    
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: line_items,
+      mode: 'payment',
+      success_url: 'https://restaurant-stripe-server.onrender.com/success?session_id={CHECKOUT_SESSION_ID}',
+      cancel_url: 'https://restaurant-stripe-server.onrender.com/cancel',
+      metadata: {
+        source: 'ios_app'
+      }
+    });
+    
+    console.log('✅ Created Stripe session:', session.id);
+    
+    res.json({ 
+      url: session.url,
+      sessionId: session.id 
+    });
+  } catch (error) {
+    console.error('❌ Error creating checkout session:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Success page that auto-redirects to app
+app.get('/success', (req, res) => {
+  const sessionId = req.query.session_id;
+  console.log('🎉 Payment success for session:', sessionId);
+  
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Payment Successful</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 40px; }
+            .success { color: #28a745; font-size: 24px; margin-bottom: 20px; }
+            .button { background: #007AFF; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; display: inline-block; margin: 10px; }
+            .auto-redirect { color: #666; font-size: 14px; margin-top: 20px; }
+        </style>
+    </head>
+    <body>
+        <div class="success">✅ Payment Successful!</div>
+        <p>Your order has been placed successfully.</p>
+        <a href="restaurantdemo://success" class="button">Return to App</a>
+        <div class="auto-redirect">Redirecting to app in 2 seconds...</div>
+        <script>
+            setTimeout(function() {
+                window.location.href = 'restaurantdemo://success';
+            }, 2000);
+        </script>
+    </body>
+    </html>
+  `);
+});
+
+// Cancel page
+app.get('/cancel', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Payment Cancelled</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 40px; }
+            .cancel { color: #dc3545; font-size: 24px; margin-bottom: 20px; }
+            .button { background: #007AFF; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; display: inline-block; margin: 10px; }
+        </style>
+    </head>
+    <body>
+        <div class="cancel">❌ Payment Cancelled</div>
+        <p>Your payment was cancelled.</p>
+        <a href="restaurantdemo://cancel" class="button">Return to App</a>
+    </body>
+    </html>
+  `);
+});
+
+// MARK: - Order Management Endpoints
+
+// Create order endpoint
+app.post('/orders', async (req, res) => {
+  try {
+    console.log('📦 Received order creation request:', req.body);
+    
+    const { items, customerName, customerPhone, orderType } = req.body;
+    
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'Items array is required and must not be empty' });
+    }
+    
+    // Calculate total amount
+    const totalAmount = items.reduce((sum, item) => {
+      return sum + (item.price * item.quantity);
+    }, 0);
+    
+    // Generate order ID
+    const orderId = 'ORD-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+    
+    // Create order object
+    const order = {
+      id: orderId,
+      items: items,
+      customerName: customerName || 'Anonymous',
+      customerPhone: customerPhone || '',
+      orderType: orderType || 'takeout',
+      status: 'preparing',
+      createdAt: new Date().toISOString(),
+      estimatedReadyTime: new Date(Date.now() + 20 * 60 * 1000).toISOString(), // 20 minutes from now
+      estimatedMinutes: 20,
+      totalAmount: totalAmount,
+      statusHistory: [
+        {
+          status: 'preparing',
+          timestamp: new Date().toISOString(),
+          message: 'Order received and being prepared'
+        }
+      ]
+    };
+    
+    console.log('✅ Created order:', orderId);
+    
+    res.json({
+      success: true,
+      order: order
+    });
+    
+  } catch (error) {
+    console.error('❌ Error creating order:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get order status endpoint
+app.get('/orders/:orderId', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    console.log('📋 Requesting order status for:', orderId);
+    
+    // For now, return a mock order status
+    // In a real app, you'd fetch this from a database
+    const mockOrder = {
+      id: orderId,
+      status: 'preparing',
+      estimatedReadyTime: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      estimatedMinutes: 15,
+      statusHistory: [
+        {
+          status: 'preparing',
+          timestamp: new Date().toISOString(),
+          message: 'Order is being prepared'
+        }
+      ]
+    };
+    
+    res.json({
+      success: true,
+      order: mockOrder
+    });
+    
+  } catch (error) {
+    console.error('❌ Error fetching order status:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Check if OpenAI API key is configured
@@ -200,4 +388,5 @@ app.listen(port, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${port}`);
   console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔑 OpenAI API Key configured: ${process.env.OPENAI_API_KEY ? 'Yes' : 'No'}`);
+  console.log(`💳 Stripe configured: ${process.env.STRIPE_SECRET_KEY ? 'Yes' : 'No'}`);
 });
