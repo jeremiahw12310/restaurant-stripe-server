@@ -3,10 +3,27 @@ rules_version = '2';
 // Craft rules based on data in your Firestore database
 service firebase.storage {
   match /b/{bucket}/o {
-    // Allow users to manage their own profile photos (any extension)
-    match /profile_photos/{fileName} {
-      allow read: if request.auth != null;
-      allow write, delete: if request.auth != null && request.auth.uid == fileName.split('.')[0];
+    // Allow public read access to menu images (PNG, JPG, JPEG files) in any directory
+    match /{allPaths=**} {
+      allow read: if resource.name.matches('.*\\.png$') || 
+                     resource.name.matches('.*\\.jpg$') || 
+                     resource.name.matches('.*\\.jpeg$') ||
+                     resource.name.matches('.*\\.gif$') ||
+                     resource.name.matches('.*\\.webp$') ||
+                     resource.name.matches('.*\\.mp4$') ||
+                     resource.name.matches('.*\\.mov$') ||
+                     resource.name.matches('.*\\.avi$');
+    }
+    
+    // Allow authenticated users to upload community posts (images and videos)
+    match /community_posts/{fileName} {
+      allow read: if true; // Public read access to community posts
+      allow write: if request.auth != null; // Only authenticated users can upload
+    }
+    
+    // Allow only the owner to manage their own profile photo (must be named <UID>.jpg)
+    match /profile_photos/{userIdFile} {
+      allow read, write, delete: if request.auth != null && userIdFile.matches('^' + request.auth.uid + '\\.jpg$');
     }
     
     // Default rule - deny all other access

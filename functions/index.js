@@ -1,32 +1,33 @@
 // This is your new secure backend.
 
 // Import necessary tools
-const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs');
 const { OpenAI } = require('openai');
-require('dotenv').config();
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
+const { onCall, onRequest } = require("firebase-functions/v2/https");
+const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 
 // Initialize the Firebase Admin SDK
 admin.initializeApp();
 
 // Get your Stripe secret key (we'll set this in the next step)
-const stripe = require("stripe")(functions.config().stripe.secret);
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 app.use(cors());
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 /**
  * Creates a Stripe Payment Intent.
  * This function is called by your iOS app to securely start a payment process.
  */
-exports.createPaymentIntent = functions.https.onCall(async (data, context) => {
+exports.createPaymentIntent = onCall(async (data, context) => {
   // Ensure the user is authenticated with Firebase Auth if you want extra security
   // if (!context.auth) {
   //   throw new functions.https.HttpsError(
@@ -75,7 +76,7 @@ exports.createPaymentIntent = functions.https.onCall(async (data, context) => {
  * Creates a Stripe Checkout Session.
  * This function is called by your iOS app to create a web-based checkout session.
  */
-exports.createCheckoutSession = functions.https.onCall(async (data, context) => {
+exports.createCheckoutSession = onCall(async (data, context) => {
   // Ensure the user is authenticated with Firebase Auth if you want extra security
   // if (!context.auth) {
   //   throw new functions.https.HttpsError(
@@ -107,45 +108,10 @@ exports.createCheckoutSession = functions.https.onCall(async (data, context) => 
   }
 });
 
-/**
- * Webhook to handle successful payments
- */
-exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
-  const sig = req.headers['stripe-signature'];
-  const endpointSecret = functions.config().stripe.webhook_secret;
-
-  let event;
-
-  try {
-    event = stripe.webhooks.constructEvent(req.rawBody, sig, endpointSecret);
-  } catch (err) {
-    console.error('Webhook signature verification failed:', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  // Handle the event
-  switch (event.type) {
-    case 'checkout.session.completed':
-      const session = event.data.object;
-      console.log('Payment successful for session:', session.id);
-      // Here you would typically:
-      // 1. Update your database to mark the order as paid
-      // 2. Send confirmation emails
-      // 3. Update inventory
-      break;
-    case 'payment_intent.succeeded':
-      const paymentIntent = event.data.object;
-      console.log('Payment intent succeeded:', paymentIntent.id);
-      break;
-    default:
-      console.log(`Unhandled event type ${event.type}`);
-  }
-
-  res.json({ received: true });
-});
-
 app.post('/analyze-receipt', upload.single('image'), async (req, res) => {
   try {
+    // Initialize OpenAI client only when needed
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const imagePath = req.file.path;
     const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
 
@@ -192,5 +158,32 @@ If a field is missing, use null.
   }
 });
 
-app.listen(3001, () => console.log('Server running on port 3001'));
+/**
+ * Firestore trigger to sync menu items array on parent document
+ */
+exports.syncMenuItemsArray = onDocumentWritten(
+  'menu/{categoryId}/items/{itemId}',
+  async (event) => {
+    const admin = require('firebase-admin');
+    const categoryId = event.params.categoryId;
+    const categoryRef = admin.firestore().collection('menu').doc(categoryId);
+    const itemsCollection = categoryRef.collection('items');
+    try {
+      console.log(`[syncMenuItemsArray] Triggered for category: ${categoryId}`);
+      const snapshot = await itemsCollection.get();
+      const itemsArray = [];
+      snapshot.forEach(doc => {
+        itemsArray.push(doc.data());
+      });
+      console.log(`[syncMenuItemsArray] Found ${itemsArray.length} items for category ${categoryId}`);
+      await categoryRef.update({ items: itemsArray });
+      console.log(`[syncMenuItemsArray] Updated items array for category ${categoryId}`);
+    } catch (error) {
+      console.error(`[syncMenuItemsArray] Error for category ${categoryId}:`, error);
+    }
+    return null;
+  }
+);
+
+exports.api = onRequest(app);
 

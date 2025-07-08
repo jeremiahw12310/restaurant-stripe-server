@@ -12,6 +12,7 @@ struct CartItem: Identifiable, Equatable {
     let id = UUID()
     let menuItem: MenuItem
     var quantity: Int = 1
+    var cookingStyle: String = "Boiled" // New: Boiled, Steamed, Pan-fried
 }
 
 // Manages the state of the user's shopping cart.
@@ -29,12 +30,12 @@ class CartManager: ObservableObject {
         items.reduce(0) { $0 + $1.quantity }
     }
 
-    /// Adds a menu item to the cart. If the item already exists, it increases the quantity.
-    func addToCart(item: MenuItem) {
-        if let index = items.firstIndex(where: { $0.menuItem.id == item.id }) {
-            items[index].quantity += 1
+    /// Adds a menu item to the cart. If the item already exists with the same cooking style, it increases the quantity.
+    func addToCart(item: MenuItem, cookingStyle: String = "Boiled", quantity: Int = 1) {
+        if let index = items.firstIndex(where: { $0.menuItem.id == item.id && $0.cookingStyle == cookingStyle }) {
+            items[index].quantity += quantity
         } else {
-            items.append(CartItem(menuItem: item))
+            items.append(CartItem(menuItem: item, quantity: quantity, cookingStyle: cookingStyle))
         }
     }
     

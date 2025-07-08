@@ -6,33 +6,65 @@ import FirebaseFirestore
 import Foundation
 import UIKit
 
+extension Notification.Name {
+    static let didEarnPoints = Notification.Name("didEarnPoints")
+}
+
 struct ReceiptScanView: View {
     @StateObject private var userVM = UserViewModel()
     @State private var showCamera = false
     @State private var scannedImage: UIImage?
     @State private var isProcessing = false
     @State private var showCongratulations = false
+    @State private var showReceiptUsedScreen = false
     @State private var receiptTotal: Double = 0.0
     @State private var pointsEarned: Int = 0
     @State private var errorMessage = ""
     @State private var showPermissionAlert = false
     @State private var scannedText = ""
     @Environment(\.colorScheme) var colorScheme
+    var onPointsEarned: ((Int) -> Void)? = nil
+    @State private var showLoadingOverlay = false
+    @State private var showDumplingRain = false
+    @State private var shouldSwitchToHome = false
+    @State private var lastOrderNumber: String? = nil
+    @State private var lastOrderDate: String? = nil
+    @State private var usedReceipts: Set<String> = [] // Local cache: "orderNumber|orderDate"
     
     var body: some View {
         ZStack {
-            // Adaptive background that works in both light and dark mode
             Color(.systemBackground)
                 .ignoresSafeArea()
-            
-            if showCongratulations {
-                congratulationsView
+            if showReceiptUsedScreen {
+                receiptUsedView
+            } else if showCongratulations {
+                ZStack {
+                    if showDumplingRain {
+                        DumplingRainView()
+                    }
+                    congratulationsView
+                }
             } else {
                 mainView
+            }
+            if isProcessing || showLoadingOverlay {
+                loadingOverlay
             }
         }
         .onAppear {
             userVM.loadUserData()
+            loadUsedReceiptsFromFirestore()
+        }
+        .onChange(of: shouldSwitchToHome) { newValue in
+            if newValue {
+                switchToHomeTab()
+                // Reset all relevant state
+                showReceiptUsedScreen = false
+                showCongratulations = false
+                errorMessage = ""
+                showDumplingRain = false
+                shouldSwitchToHome = false
+            }
         }
         .alert("Camera Access Required", isPresented: $showPermissionAlert) {
             Button("Settings") {
@@ -48,10 +80,29 @@ struct ReceiptScanView: View {
             CameraViewWithOverlay(image: $scannedImage) { image in
                 showCamera = false
                 if let image = image {
+                    showLoadingOverlay = true
                     processReceiptImage(image)
                 }
             }
         }
+    }
+    
+    private var loadingOverlay: some View {
+        ZStack {
+            Color(.systemBackground).opacity(0.95).ignoresSafeArea()
+            VStack(spacing: 32) {
+                Image("logo")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 120, height: 120)
+                    .shadow(radius: 20)
+                Text("Scanning your receipt...")
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundColor(.primary)
+            }
+        }
+        .transition(.opacity)
+        .zIndex(10)
     }
     
     private var mainView: some View {
@@ -80,20 +131,7 @@ struct ReceiptScanView: View {
             Spacer()
             VStack(spacing: 16) {
                 if isProcessing {
-                    VStack(spacing: 12) {
-                        ProgressView()
-                            .scaleEffect(1.2)
-                        Text("Processing receipt...")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(.secondary)
-                        if !scannedText.isEmpty {
-                            Text("Found text: \(scannedText.prefix(100))...")
-                                .font(.system(size: 12))
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 20)
-                        }
-                    }
+                    EmptyView()
                 } else {
                     Button(action: {
                         checkCameraPermission()
@@ -166,35 +204,74 @@ struct ReceiptScanView: View {
             )
             .padding(.horizontal, 20)
             Spacer()
-            Button(action: {
-                showCongratulations = false
-                errorMessage = ""
-            }) {
-                Text("Scan Another Receipt")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                    .padding(.vertical, 16)
-                    .padding(.horizontal, 30)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 15)
-                            .fill(
-                                LinearGradient(
-                                    gradient: Gradient(colors: [
-                                        .blue,
-                                        .blue.opacity(0.8)
-                                    ]),
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
-                    )
+            
+            // Auto-dismiss message
+            VStack(spacing: 8) {
+                Text("Returning to home screen...")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.secondary)
+                
+                ProgressView()
+                    .scaleEffect(0.8)
+                    .tint(.blue)
             }
-            .buttonStyle(PlainButtonStyle())
-            .padding(.horizontal, 40)
             .padding(.bottom, 60)
         }
+        .onAppear {
+            // Auto-dismiss after 2.5 seconds for smoother transition
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                // Trigger home tab switch immediately when starting to fade out
+                shouldSwitchToHome = true
+                
+                // Post notification for HomeView to animate points
+                NotificationCenter.default.post(name: .didEarnPoints, object: nil, userInfo: ["points": pointsEarned])
+                
+                // Call the callback if provided
+                onPointsEarned?(pointsEarned)
+                
+                // Fade out the congratulations screen
+                withAnimation(.easeInOut(duration: 0.6)) {
+                    showCongratulations = false
+                    errorMessage = ""
+                    showDumplingRain = false
+                }
+            }
+        }
+    }
+    
+    private var receiptUsedView: some View {
+        VStack(spacing: 30) {
+            Spacer()
+            VStack(spacing: 20) {
+                Image(systemName: "xmark.octagon.fill")
+                    .font(.system(size: 80))
+                    .foregroundColor(.red)
+                    .shadow(color: .red.opacity(0.3), radius: 10, x: 0, y: 5)
+                Text("Receipt Already Used")
+                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .foregroundColor(.primary)
+                Text("A receipt cannot be used more than once. +0 points")
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .foregroundColor(.red)
+                if let order = lastOrderNumber, let date = lastOrderDate {
+                    Text("Order #: \(order)\nDate: \(date)")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            Spacer()
+            Button("Return to Home") {
+                shouldSwitchToHome = true
+            }
+            .font(.system(size: 18, weight: .bold))
+            .foregroundColor(.white)
+            .padding(.vertical, 16)
+            .padding(.horizontal, 40)
+            .background(RoundedRectangle(cornerRadius: 16).fill(Color.red))
+            .padding(.bottom, 60)
+        }
+        .transition(.opacity)
     }
     
     private func instructionCard(icon: String, title: String, description: String) -> some View {
@@ -233,32 +310,96 @@ struct ReceiptScanView: View {
         }
     }
     
+    private func switchToHomeTab() {
+        // Since this is a tab-based app, we need to use a different approach
+        // We'll post a notification that the main app can listen to
+        NotificationCenter.default.post(name: .switchToHomeTab, object: nil)
+    }
+    
     private func processReceiptImage(_ image: UIImage) {
         isProcessing = true
         errorMessage = ""
         scannedText = ""
+        let currentPoints = userVM.points
         uploadReceiptImage(image) { result in
-            isProcessing = false
-            switch result {
-            case .success(let json):
-                // Example: ["orderNumber": ..., "orderTotal": ..., "orderDate": ...]
-                if let orderNumber = json["orderNumber"] as? String,
-                   let orderTotal = json["orderTotal"] as? Double,
-                   let orderDate = json["orderDate"] as? String {
-                    self.scannedText = "Order #: \(orderNumber)\nDate: \(orderDate)\nTotal: $\(orderTotal)"
-                    self.receiptTotal = orderTotal
-                    self.pointsEarned = Int(orderTotal * 5)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        self.showCongratulations = true
-                        self.updateUserPoints()
+            DispatchQueue.main.async {
+                self.isProcessing = false
+                self.showLoadingOverlay = false
+                switch result {
+                case .success(let json):
+                    if let orderNumberRaw = json["orderNumber"] as? String,
+                       let orderTotal = json["orderTotal"] as? Double,
+                       let orderDateRaw = json["orderDate"] as? String {
+                        let orderNumber = orderNumberRaw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        let orderDate = extractMonthDay(from: orderDateRaw)
+                        self.scannedText = "Order #: \(orderNumber)\nDate: \(orderDate)\nTotal: $\(orderTotal)"
+                        self.receiptTotal = orderTotal
+                        self.pointsEarned = Int(orderTotal * 5)
+                        self.lastOrderNumber = orderNumber
+                        self.lastOrderDate = orderDate
+                        let receiptKey = "\(orderNumber)|\(orderDate)"
+                        if usedReceipts.contains(receiptKey) {
+                            withAnimation { self.showReceiptUsedScreen = true }
+                            return
+                        }
+                        checkReceiptDuplicate(orderNumber: orderNumber, orderDate: orderDate) { isDuplicate in
+                            if isDuplicate {
+                                withAnimation { self.showReceiptUsedScreen = true }
+                            } else {
+                                saveUsedReceipt(orderNumber: orderNumber, orderDate: orderDate) {
+                                    usedReceipts.insert(receiptKey)
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                        withAnimation {
+                                            self.showCongratulations = true
+                                            self.showDumplingRain = true
+                                        }
+                                        self.updateUserPoints()
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        self.errorMessage = "Could not extract all fields from receipt."
                     }
-                } else {
-                    self.errorMessage = "Could not extract all fields from receipt."
+                case .failure(let error):
+                    self.errorMessage = "Upload failed: \(error.localizedDescription)"
                 }
-            case .failure(let error):
-                self.errorMessage = "Upload failed: \(error.localizedDescription)"
             }
         }
+    }
+    
+    // Helper to extract MM-DD from a date string (ignoring year)
+    private func extractMonthDay(from dateString: String) -> String {
+        let trimmed = dateString.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Try to match YYYY-MM-DD or MM/DD/YYYY or MM-DD-YYYY
+        let patterns = [
+            "^(\\d{4})-(\\d{2})-(\\d{2})$", // YYYY-MM-DD
+            "^(\\d{2})/(\\d{2})/(\\d{4})$", // MM/DD/YYYY
+            "^(\\d{2})-(\\d{2})-(\\d{4})$"  // MM-DD-YYYY
+        ]
+        for pattern in patterns {
+            if let regex = try? NSRegularExpression(pattern: pattern),
+               let match = regex.firstMatch(in: trimmed, range: NSRange(location: 0, length: trimmed.utf16.count)) {
+                if pattern == patterns[0], match.numberOfRanges == 4 {
+                    // YYYY-MM-DD
+                    let mm = (trimmed as NSString).substring(with: match.range(at: 2))
+                    let dd = (trimmed as NSString).substring(with: match.range(at: 3))
+                    return "\(mm)-\(dd)"
+                } else if pattern == patterns[1], match.numberOfRanges == 4 {
+                    // MM/DD/YYYY
+                    let mm = (trimmed as NSString).substring(with: match.range(at: 1))
+                    let dd = (trimmed as NSString).substring(with: match.range(at: 2))
+                    return "\(mm)-\(dd)"
+                } else if pattern == patterns[2], match.numberOfRanges == 4 {
+                    // MM-DD-YYYY
+                    let mm = (trimmed as NSString).substring(with: match.range(at: 1))
+                    let dd = (trimmed as NSString).substring(with: match.range(at: 2))
+                    return "\(mm)-\(dd)"
+                }
+            }
+        }
+        // If no match, return the original string
+        return trimmed
     }
     
     private func updateUserPoints() {
@@ -301,6 +442,62 @@ struct ReceiptScanView: View {
             showPermissionAlert = true
         }
     }
+    
+    // Load all used receipts from global Firestore collection into the local set
+    private func loadUsedReceiptsFromFirestore() {
+        let db = Firestore.firestore()
+        db.collection("usedReceipts").getDocuments { snapshot, error in
+            if let error = error {
+                print("Error loading used receipts: \(error.localizedDescription)")
+            } else if let docs = snapshot?.documents {
+                let keys = docs.compactMap { doc -> String? in
+                    let orderNumber = (doc["orderNumber"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+                    let orderDateRaw = (doc["orderDate"] as? String) ?? ""
+                    let orderDate = extractMonthDay(from: orderDateRaw)
+                    if !orderNumber.isEmpty && !orderDate.isEmpty {
+                        return "\(orderNumber)|\(orderDate)"
+                    }
+                    return nil
+                }
+                usedReceipts = Set(keys)
+                print("Loaded used receipts: \(usedReceipts)")
+            }
+        }
+    }
+    
+    // Check global Firestore collection for duplicate receipt
+    private func checkReceiptDuplicate(orderNumber: String, orderDate: String, completion: @escaping (Bool) -> Void) {
+        let db = Firestore.firestore()
+        db.collection("usedReceipts")
+            .whereField("orderNumber", isEqualTo: orderNumber)
+            .whereField("orderDate", isEqualTo: orderDate)
+            .getDocuments { snapshot, error in
+                if let error = error {
+                    print("Error checking duplicate receipt: \(error.localizedDescription)")
+                    completion(false)
+                } else if let docs = snapshot?.documents, !docs.isEmpty {
+                    completion(true)
+                } else {
+                    completion(false)
+                }
+            }
+    }
+    
+    // Save used receipt to global Firestore collection and update local set after write
+    private func saveUsedReceipt(orderNumber: String, orderDate: String, completion: (() -> Void)? = nil) {
+        let db = Firestore.firestore()
+        let data: [String: Any] = [
+            "orderNumber": orderNumber,
+            "orderDate": orderDate,
+            "timestamp": FieldValue.serverTimestamp()
+        ]
+        db.collection("usedReceipts").addDocument(data: data) { error in
+            if let error = error {
+                print("Error saving used receipt: \(error.localizedDescription)")
+            }
+            completion?()
+        }
+    }
 }
 
 struct CameraViewWithOverlay: View {
@@ -308,9 +505,10 @@ struct CameraViewWithOverlay: View {
     var onImageCaptured: (UIImage?) -> Void
     @Environment(\.dismiss) var dismiss
     @StateObject private var cameraController = CameraController()
+    @State private var isCapturing = false
 
     var body: some View {
-            ZStack {
+        ZStack {
             // Camera preview
             CameraPreviewView(cameraController: cameraController)
                 .ignoresSafeArea()
@@ -318,144 +516,265 @@ struct CameraViewWithOverlay: View {
             // Loading overlay
             if !cameraController.isSetup {
                 Color.black.ignoresSafeArea()
-                        .overlay(
-                        VStack(spacing: 20) {
+                    .overlay(
+                        VStack(spacing: 24) {
                             ProgressView()
-                                .scaleEffect(1.5)
+                                .scaleEffect(1.8)
                                 .tint(.white)
                             Text("Setting up camera...")
-                                .font(.system(size: 18, weight: .medium))
-                        .foregroundColor(.white)
-                }
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundColor(.white)
+                        }
                     )
             }
             
             // Error overlay
             if let errorMessage = cameraController.errorMessage {
                 Color.black.ignoresSafeArea()
-            .overlay(
-                        VStack(spacing: 20) {
+                    .overlay(
+                        VStack(spacing: 24) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 50))
+                                .font(.system(size: 60))
                                 .foregroundColor(.orange)
                             Text("Camera Error")
-                                .font(.title2)
+                                .font(.title)
+                                .fontWeight(.bold)
                                 .foregroundColor(.white)
                             Text(errorMessage)
                                 .font(.body)
                                 .foregroundColor(.white.opacity(0.8))
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 40)
-                            Button("Try Again") {
-                                cameraController.errorMessage = nil
-                                cameraController.checkPermissionAndSetup()
+                            
+                            VStack(spacing: 12) {
+                                Button("Try Again") {
+                                    cameraController.errorMessage = nil
+                                    cameraController.checkPermissionAndSetup()
+                                }
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 12)
+                                .background(Color.blue)
+                                .foregroundColor(.white)
+                                .cornerRadius(12)
+                                .font(.system(size: 16, weight: .semibold))
+                                
+                                Button("Cancel") {
+                                    dismiss()
+                                }
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 12)
+                                .background(Color.gray.opacity(0.3))
+                                .foregroundColor(.white)
+                                .cornerRadius(12)
+                                .font(.system(size: 16, weight: .semibold))
                             }
-                            .padding()
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .cornerRadius(8)
-                            Button("Cancel") {
-                                dismiss()
-                            }
-                            .padding()
-                            .background(Color.gray)
-                            .foregroundColor(.white)
-                            .cornerRadius(8)
                         }
                     )
             }
             
             // Receipt guide overlay (only show when camera is ready)
             if cameraController.isSetup && cameraController.errorMessage == nil {
-                VStack {
-                    Spacer()
-                    
-                    // Receipt guide rectangle - taller for vertical receipts
-                    ZStack {
-                        // Semi-transparent overlay
-                        Color.black.opacity(0.4)
-                            .ignoresSafeArea()
-                        
-                        // Clear rectangle for receipt - taller for vertical receipts
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.white, lineWidth: 3)
-                            .frame(width: 280, height: 350) // Made taller for vertical receipts
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color.clear)
-                            )
-                            .overlay(
-                                VStack(spacing: 8) {
-                                    Image(systemName: "doc.text.viewfinder")
-                                        .font(.system(size: 30))
-                                        .foregroundColor(.white)
-                                    Text("Center your receipt here")
-                                        .font(.system(size: 16, weight: .medium))
-                                        .foregroundColor(.white)
-                                        .multilineTextAlignment(.center)
-                                }
-                            )
-                    }
-                    .frame(width: 280, height: 350) // Made taller for vertical receipts
-                    
-                    Spacer()
-                    
-                    // Instructions
-                    VStack(spacing: 12) {
-                        Text("Position your receipt within the frame")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(.white)
-                            .multilineTextAlignment(.center)
-                        
-                        Text("Make sure the entire receipt is visible")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.white.opacity(0.8))
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding(.horizontal, 40)
-                    .padding(.bottom, 40)
-                }
-                
-                // Camera controls
-                VStack {
+                VStack(spacing: 0) {
+                    // Top section with cancel button
                     HStack {
-                        Button("Cancel") {
-                            dismiss()
-                        }
-                        .foregroundColor(.white)
-                        .padding()
-                        .background(Color.black.opacity(0.5))
-                        .cornerRadius(8)
-                        
-                        Spacer()
-                    }
-                    .padding()
-                    
-                    Spacer()
-                    
-                    // Capture button
-                    HStack {
-                        Spacer()
-                        
                         Button(action: {
+                            dismiss()
+                        }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 16, weight: .semibold))
+                                Text("Cancel")
+                                    .font(.system(size: 16, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(
+                                Capsule()
+                                    .fill(Color.black.opacity(0.6))
+                            )
+                        }
+                        
+                        Spacer()
+                        
+                        // Title
+                        Text("Scan Receipt")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.white)
+                        
+                        Spacer()
+                        
+                        // Placeholder for balance
+                        Color.clear
+                            .frame(width: 80)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 60)
+                    
+                    Spacer()
+                    
+                    // Receipt guide area
+                    VStack(spacing: 24) {
+                        // Receipt guide rectangle - skinnier and taller
+                        ZStack {
+                            // Semi-transparent overlay with cutout
+                            Color.black.opacity(0.5)
+                                .ignoresSafeArea()
+                                .mask(
+                                    Rectangle()
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 16)
+                                                .frame(width: 240, height: 420)
+                                                .blendMode(.destinationOut)
+                                        )
+                                )
+                            
+                            // Receipt guide frame
+                            RoundedRectangle(cornerRadius: 16)
+                                .stroke(Color.white, lineWidth: 3)
+                                .frame(width: 240, height: 420)
+                                .shadow(color: .white.opacity(0.3), radius: 8, x: 0, y: 0)
+                                .overlay(
+                                    // Corner indicators
+                                    ZStack {
+                                        // Top-left corner
+                                        VStack {
+                                            HStack {
+                                                Rectangle()
+                                                    .fill(Color.white)
+                                                    .frame(width: 20, height: 3)
+                                                Spacer()
+                                            }
+                                            HStack {
+                                                Rectangle()
+                                                    .fill(Color.white)
+                                                    .frame(width: 3, height: 20)
+                                                Spacer()
+                                            }
+                                        }
+                                        .frame(width: 240, height: 420)
+                                        
+                                        // Top-right corner
+                                        VStack {
+                                            HStack {
+                                                Spacer()
+                                                Rectangle()
+                                                    .fill(Color.white)
+                                                    .frame(width: 20, height: 3)
+                                            }
+                                            HStack {
+                                                Spacer()
+                                                Rectangle()
+                                                    .fill(Color.white)
+                                                    .frame(width: 3, height: 20)
+                                            }
+                                        }
+                                        .frame(width: 240, height: 420)
+                                        
+                                        // Bottom-left corner
+                                        VStack {
+                                            Spacer()
+                                            HStack {
+                                                Rectangle()
+                                                    .fill(Color.white)
+                                                    .frame(width: 3, height: 20)
+                                                Spacer()
+                                            }
+                                            HStack {
+                                                Rectangle()
+                                                    .fill(Color.white)
+                                                    .frame(width: 20, height: 3)
+                                                Spacer()
+                                            }
+                                        }
+                                        .frame(width: 240, height: 420)
+                                        
+                                        // Bottom-right corner
+                                        VStack {
+                                            Spacer()
+                                            HStack {
+                                                Spacer()
+                                                Rectangle()
+                                                    .fill(Color.white)
+                                                    .frame(width: 3, height: 20)
+                                            }
+                                            HStack {
+                                                Spacer()
+                                                Rectangle()
+                                                    .fill(Color.white)
+                                                    .frame(width: 20, height: 3)
+                                            }
+                                        }
+                                        .frame(width: 240, height: 420)
+                                    }
+                                )
+                        }
+                        .frame(width: 240, height: 420)
+                        
+                        // Instructions
+                        VStack(spacing: 8) {
+                            Text("Position your receipt within the frame")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundColor(.white)
+                                .multilineTextAlignment(.center)
+                            
+                            Text("Make sure the entire receipt is visible and well-lit")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.white.opacity(0.8))
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(.horizontal, 40)
+                    }
+                    
+                    Spacer()
+                    
+                    // Bottom section with capture button
+                    VStack(spacing: 20) {
+                        // Capture button
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                                isCapturing = true
+                            }
+                            
                             cameraController.capturePhoto { capturedImage in
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                                    isCapturing = false
+                                }
+                                
                                 if let capturedImage = capturedImage {
                                     image = capturedImage
                                     onImageCaptured(capturedImage)
                                 }
                             }
                         }) {
-                            Circle()
-                                .fill(Color.white)
-                                .frame(width: 80, height: 80)
-                                .overlay(
-                                    Circle()
-                                        .stroke(Color.black, lineWidth: 4)
-                                        .frame(width: 70, height: 70)
-                                )
+                            ZStack {
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 80, height: 80)
+                                    .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 5)
+                                
+                                Circle()
+                                    .stroke(Color.black, lineWidth: 4)
+                                    .frame(width: 70, height: 70)
+                                
+                                if isCapturing {
+                                    ProgressView()
+                                        .scaleEffect(1.2)
+                                        .tint(.black)
+                                } else {
+                                    Image(systemName: "camera.fill")
+                                        .font(.system(size: 32, weight: .medium))
+                                        .foregroundColor(.black)
+                                }
+                            }
                         }
+                        .scaleEffect(isCapturing ? 0.9 : 1.0)
+                        .disabled(isCapturing)
                         
-                        Spacer()
+                        // Help text
+                        Text("Tap to capture")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white.opacity(0.7))
                     }
                     .padding(.bottom, 50)
                 }
@@ -709,4 +1028,74 @@ func uploadReceiptImage(_ image: UIImage, completion: @escaping (Result<[String:
             DispatchQueue.main.async { completion(.failure(error)) }
         }
     }.resume()
+}
+
+// Animated dumpling rain view
+struct DumplingRainView: View {
+    @State private var animating = false
+    let dumplingCount = 16
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                ForEach(0..<dumplingCount, id: \ .self) { i in
+                    DumplingEmojiView(index: i, width: geo.size.width, height: geo.size.height)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+struct DumplingEmojiView: View {
+    let index: Int
+    let width: CGFloat
+    let height: CGFloat
+    @State private var y: CGFloat = -100
+    var body: some View {
+        let x = CGFloat.random(in: 0...(width-40))
+        let delay = Double.random(in: 0...(index.isMultiple(of: 2) ? 0.5 : 1.0))
+        Text("🥟")
+            .font(.system(size: 40))
+            .position(x: x, y: y)
+            .onAppear {
+                withAnimation(.easeIn(duration: 2.0).delay(delay)) {
+                    y = height + 40
+                }
+            }
+    }
+}
+
+// Animated boba rain view
+struct BobaRainView: View {
+    @State private var animating = false
+    let bobaCount = 16
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                ForEach(0..<bobaCount, id: \.self) { i in
+                    BobaEmojiView(index: i, width: geo.size.width, height: geo.size.height)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+struct BobaEmojiView: View {
+    let index: Int
+    let width: CGFloat
+    let height: CGFloat
+    @State private var y: CGFloat = -100
+    var body: some View {
+        let x = CGFloat.random(in: 0...(width-40))
+        let delay = Double.random(in: 0...(index.isMultiple(of: 2) ? 0.5 : 1.0))
+        Text("🧋")
+            .font(.system(size: 40))
+            .position(x: x, y: y)
+            .onAppear {
+                withAnimation(.easeIn(duration: 2.0).delay(delay)) {
+                    y = height + 40
+                }
+            }
+    }
 } 

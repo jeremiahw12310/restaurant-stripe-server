@@ -1,6 +1,8 @@
 import SwiftUI
 import FirebaseCore
 import FirebaseAuth
+import FirebaseAppCheck
+import Kingfisher
 
 // This is your main app entry point.
 @main
@@ -23,9 +25,36 @@ struct Restaurant_DemoApp: App {
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
+        // Add App Check debug provider for development
+        #if DEBUG
+        AppCheck.setAppCheckProviderFactory(AppCheckDebugProviderFactory())
+        #endif
         // Configure Firebase when the app launches.
         FirebaseApp.configure()
+        
+        // Configure Kingfisher for better image loading
+        configureKingfisher()
+        
         return true
+    }
+    
+    private func configureKingfisher() {
+        // Configure Kingfisher for better performance with Firebase Storage
+        KingfisherManager.shared.defaultOptions = [
+            .cacheMemoryOnly,
+            .forceTransition,
+            .processor(DownsamplingImageProcessor(size: CGSize(width: 300, height: 300))),
+            .scaleFactor(UIScreen.main.scale),
+            .alsoPrefetchToMemory,
+            .cacheSerializer(FormatIndicatedCacheSerializer.png)
+        ]
+        
+        // Set up custom cache configuration
+        let cache = ImageCache.default
+        cache.memoryStorage.config.totalCostLimit = 50 * 1024 * 1024 // 50MB
+        cache.diskStorage.config.sizeLimit = 100 * 1024 * 1024 // 100MB
+        
+        print("✅ Kingfisher configured for Firebase Storage")
     }
     
     // This function handles the redirect URL from Stripe Checkout.
