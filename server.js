@@ -595,6 +595,126 @@ Remember: You're not just an assistant - you're Dumpling Hero, and you love help
   });
 }
 
+// Orders endpoint - handles order creation
+app.post('/orders', async (req, res) => {
+  try {
+    console.log('📦 Received order creation request');
+    console.log('Order data:', JSON.stringify(req.body, null, 2));
+    
+    const { items, totalAmount, customerInfo, paymentMethod = 'stripe' } = req.body;
+    
+    // Validate required fields
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ 
+        error: 'Items array is required and cannot be empty' 
+      });
+    }
+    
+    if (!totalAmount || typeof totalAmount !== 'number') {
+      return res.status(400).json({ 
+        error: 'Total amount is required and must be a number' 
+      });
+    }
+    
+    // Generate a mock order ID
+    const orderId = `ORDER_${Date.now()}_${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+    
+    // Create order object
+    const order = {
+      id: orderId,
+      items: items,
+      totalAmount: totalAmount,
+      customerInfo: customerInfo || {},
+      paymentMethod: paymentMethod,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      estimatedCompletionTime: new Date(Date.now() + 15 * 60 * 1000).toISOString() // 15 minutes from now
+    };
+    
+    console.log('✅ Order created successfully:', orderId);
+    
+    // In a real app, you would save this to a database
+    // For now, we'll just return the order data
+    res.status(201).json({
+      success: true,
+      order: order,
+      message: 'Order created successfully'
+    });
+    
+  } catch (err) {
+    console.error('❌ Error creating order:', err);
+    res.status(500).json({ 
+      error: 'Failed to create order',
+      details: err.message 
+    });
+  }
+});
+
+// Get order status endpoint
+app.get('/orders/:orderId', (req, res) => {
+  try {
+    const { orderId } = req.params;
+    console.log(`📋 Fetching order status for: ${orderId}`);
+    
+    // In a real app, you would fetch this from a database
+    // For now, return a mock response
+    const mockOrder = {
+      id: orderId,
+      status: 'in_progress',
+      estimatedCompletionTime: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      updates: [
+        {
+          timestamp: new Date().toISOString(),
+          status: 'confirmed',
+          message: 'Order confirmed and being prepared'
+        }
+      ]
+    };
+    
+    res.json({
+      success: true,
+      order: mockOrder
+    });
+    
+  } catch (err) {
+    console.error('❌ Error fetching order:', err);
+    res.status(500).json({ 
+      error: 'Failed to fetch order',
+      details: err.message 
+    });
+  }
+});
+
+// Stripe checkout session endpoint
+app.post('/create-checkout-session', async (req, res) => {
+  try {
+    if (!stripe) {
+      return res.status(500).json({ 
+        error: 'Stripe not configured - STRIPE_SECRET_KEY environment variable missing' 
+      });
+    }
+
+    const { line_items } = req.body;
+    console.log('🛒 Creating Stripe checkout session');
+    console.log('Line items:', line_items);
+    
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: line_items,
+      mode: 'payment',
+      success_url: 'restaurantdemo://success',
+      cancel_url: 'restaurantdemo://cancel',
+    });
+
+    console.log('✅ Stripe session created:', session.id);
+    res.json({ url: session.url });
+    
+  } catch (error) {
+    console.error('❌ Error creating checkout session:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const port = process.env.PORT || 3001;
 
 app.listen(port, '0.0.0.0', () => {
