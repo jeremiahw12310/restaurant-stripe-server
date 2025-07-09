@@ -20,7 +20,7 @@ app.get('/', (req, res) => {
     status: 'Server is running!', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    server: 'ROOT server.js with gpt-4o'
+    server: 'ROOT server.js with gpt-4o + orders endpoint'
   });
 });
 
