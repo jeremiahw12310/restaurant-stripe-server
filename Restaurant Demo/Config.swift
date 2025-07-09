@@ -15,7 +15,7 @@ struct Config {
     
     // MARK: - Current Environment
     // Change this to switch between environments
-    static let currentEnvironment: Environment = .localNetwork
+    static let currentEnvironment: Environment = .local
     
     enum Environment {
         case local
