@@ -5,6 +5,9 @@ const cors = require('cors');
 const fs = require('fs');
 const { OpenAI } = require('openai');
 
+// Add Stripe for real payment processing
+const stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
+
 // Updated for Render deployment with latest OpenAI model
 // ROOT SERVER.JS - USING GPT-4O MODEL
 const app = express();
@@ -267,18 +270,36 @@ app.post('/create-checkout-session', async (req, res) => {
       });
     }
     
-    // Since we don't have Stripe configured on this server, we'll simulate a checkout URL
-    // In a real app, you would create an actual Stripe session here
-    const mockSessionUrl = `https://checkout.stripe.com/pay/cs_test_mock_session_${Date.now()}#fidkdWxOYHwnPyd1blpxYHZxWjA0VGh1T3JEYU1oSWFWV3xBc05nT0RuPUFGaGNAa0RoQkdSR2FgUjRHfGNpdGxIUE9sXV1SZGJHRn1JdE5uSkBgUVBOdT1qdm5rYHVGZzVJTlZzYnJNUmJKXUdxRWNKdWZnTWA%3D`;
+    // Check if Stripe is configured
+    if (!stripe) {
+      console.log('⚠️ Stripe not configured - using mock checkout');
+      
+      // For development, return a mock URL that includes success/cancel callbacks
+      const devSessionUrl = `data:text/html,<html><body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;"><h2>🧪 Mock Stripe Checkout</h2><p>This is a development mock for testing without Stripe keys</p><br><button onclick="window.location.href='restaurantdemo://success'" style="background: #28a745; color: white; padding: 15px 30px; border: none; border-radius: 5px; font-size: 16px; margin: 10px; cursor: pointer;">✅ Complete Payment</button><br><br><button onclick="window.location.href='restaurantdemo://cancel'" style="background: #dc3545; color: white; padding: 15px 30px; border: none; border-radius: 5px; font-size: 16px; margin: 10px; cursor: pointer;">❌ Cancel Payment</button><br><br><small>To use real Stripe, set STRIPE_SECRET_KEY environment variable</small></body></html>`;
+      
+      return res.json({ 
+        url: devSessionUrl,
+        sessionId: `cs_test_mock_${Date.now()}`
+      });
+    }
     
-    // For development, we'll return a mock URL that includes success/cancel callbacks
-    const devSessionUrl = `data:text/html,<html><body><h2>Mock Stripe Checkout</h2><p>This is a development mock of Stripe Checkout</p><button onclick="window.location.href='restaurantdemo://success'">Complete Payment</button><br><br><button onclick="window.location.href='restaurantdemo://cancel'">Cancel Payment</button></body></html>`;
+    // Real Stripe checkout session
+    console.log('🔑 Creating real Stripe checkout session');
     
-    console.log('✅ Mock checkout session created');
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: line_items,
+      mode: 'payment',
+      success_url: 'restaurantdemo://success',
+      cancel_url: 'restaurantdemo://cancel',
+      automatic_tax: { enabled: false }, // Disable for simplicity
+    });
+    
+    console.log('✅ Real Stripe checkout session created:', session.id);
     
     res.json({ 
-      url: devSessionUrl,
-      sessionId: `cs_test_mock_${Date.now()}`
+      url: session.url,
+      sessionId: session.id
     });
     
   } catch (err) {
@@ -294,4 +315,10 @@ app.listen(port, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${port}`);
   console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔑 OpenAI API Key configured: ${process.env.OPENAI_API_KEY ? 'Yes' : 'No'}`);
+  console.log(`💳 Stripe configured: ${process.env.STRIPE_SECRET_KEY ? 'Yes (Real payments)' : 'No (Mock checkout)'}`);
+  if (stripe) {
+    console.log('✅ Ready for real Stripe payments in sandbox mode');
+  } else {
+    console.log('⚠️ Using mock checkout - set STRIPE_SECRET_KEY for real payments');
+  }
 });
