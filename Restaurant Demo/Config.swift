@@ -7,6 +7,7 @@ struct Config {
     static let localBackendURL = "http://localhost:3001"
     
     // For local development (physical device on same network)
+    // REPLACE 192.168.1.100 WITH YOUR COMPUTER'S ACTUAL IP ADDRESS
     static let localNetworkBackendURL = "http://192.168.1.100:3001"
     
     // For production (replace with your deployed URL)
@@ -33,9 +34,26 @@ struct Config {
         }
     }
     
+    // MARK: - Main Backend URL (used by StripeCheckoutManager)
+    static var backendURL: String {
+        return currentEnvironment.baseURL
+    }
+    
     // MARK: - API Endpoints
     static var analyzeReceiptURL: String {
         return "\(currentEnvironment.baseURL)/analyze-receipt"
+    }
+    
+    static var chatURL: String {
+        return "\(currentEnvironment.baseURL)/chat"
+    }
+    
+    static var ordersURL: String {
+        return "\(currentEnvironment.baseURL)/orders"
+    }
+    
+    static var createCheckoutSessionURL: String {
+        return "\(currentEnvironment.baseURL)/create-checkout-session"
     }
     
     // MARK: - Debug Info
@@ -43,5 +61,7 @@ struct Config {
         print("🔧 Current Environment: \(currentEnvironment)")
         print("🔗 Backend URL: \(currentEnvironment.baseURL)")
         print("📡 Receipt Analysis URL: \(analyzeReceiptURL)")
+        print("💬 Chat URL: \(chatURL)")
+        print("📦 Orders URL: \(ordersURL)")
     }
 } 

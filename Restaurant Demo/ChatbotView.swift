@@ -54,7 +54,7 @@ class ChatbotViewModel: ObservableObject {
         }
         
         // Send to backend
-        guard let url = URL(string: "\(Config.currentEnvironment.baseURL)/chat") else { return }
+        guard let url = URL(string: Config.chatURL) else { return }
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
