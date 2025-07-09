@@ -11,12 +11,27 @@ struct Restaurant_DemoApp: App {
     // Register the custom app delegate.
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject var authVM = AuthenticationViewModel()
+    @StateObject var stripeManager = StripeCheckoutManager.shared
+    @State private var showOrderStatus = false
 
     var body: some Scene {
         WindowGroup {
             LaunchView()
                 .environmentObject(authVM)
                 .preferredColorScheme(.dark) // Force dark mode
+                .onReceive(stripeManager.$shouldNavigateToOrderStatus) { shouldNavigate in
+                    if shouldNavigate {
+                        showOrderStatus = true
+                    }
+                }
+                .sheet(isPresented: $showOrderStatus) {
+                    if let order = stripeManager.currentOrder {
+                        OrderStatusView(order: order)
+                            .onDisappear {
+                                stripeManager.reset()
+                            }
+                    }
+                }
         }
     }
 }
@@ -59,14 +74,58 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     
     // This function handles the redirect URL from Stripe Checkout.
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
-        // You can add logic here to check if the payment was successful
-        // based on the URL returned by Stripe. For now, we just print it.
-        print("Redirected back to app with URL: \(url)")
+        print("🔗 [AppDelegate] application(_:open:options:) called with URL: \(url)")
+        print("🔗 [AppDelegate] URL scheme: \(url.scheme ?? "nil")")
+        print("🔗 [AppDelegate] URL host: \(url.host ?? "nil")")
+        print("🔗 [AppDelegate] URL path: \(url.path)")
         
-        // After payment, you might want to clear the cart or show a thank you message.
-        // This part can be expanded with more advanced state management.
+        // Handle Stripe checkout success/cancel URLs
+        if url.absoluteString.contains("restaurantdemo://success") {
+            print("✅ [AppDelegate] Payment successful! Triggering success handler...")
+            // Trigger payment success on main thread
+            DispatchQueue.main.async {
+                print("✅ [AppDelegate] Calling handlePaymentSuccess on main thread")
+                StripeCheckoutManager.shared.handlePaymentSuccess()
+            }
+            return true
+        } else if url.absoluteString.contains("restaurantdemo://cancel") {
+            print("❌ [AppDelegate] Payment cancelled! Triggering cancel handler...")
+            DispatchQueue.main.async {
+                print("❌ [AppDelegate] Calling handlePaymentCancellation on main thread")
+                StripeCheckoutManager.shared.handlePaymentCancellation()
+            }
+            return true
+        }
         
-        return true
+        print("⚠️ [AppDelegate] URL not recognized, returning false")
+        return false
+    }
+    
+    // Handle URL schemes when app is already running
+    func application(_ application: UIApplication, continue userActivity: NSUserActivity, restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void) -> Bool {
+        print("[AppDelegate] continue userActivity called")
+        
+        if userActivity.activityType == NSUserActivityTypeBrowsingWeb,
+           let url = userActivity.webpageURL {
+            print("[AppDelegate] Handling webpage URL: \(url)")
+            
+            // Check if this is a Stripe redirect
+            if url.absoluteString.contains("restaurantdemo://success") {
+                print("✅ Payment successful via user activity!")
+                DispatchQueue.main.async {
+                    StripeCheckoutManager.shared.handlePaymentSuccess()
+                }
+                return true
+            } else if url.absoluteString.contains("restaurantdemo://cancel") {
+                print("❌ Payment cancelled via user activity")
+                DispatchQueue.main.async {
+                    StripeCheckoutManager.shared.handlePaymentCancellation()
+                }
+                return true
+            }
+        }
+        
+        return false
     }
     
     // MARK: - Remote Notification Methods for Firebase Auth

@@ -2,7 +2,7 @@ import SwiftUI
 
 public struct TipSelectionView: View {
     @EnvironmentObject var cartManager: CartManager
-    @StateObject private var checkoutManager = StripeCheckoutManager()
+    @StateObject private var checkoutManager = StripeCheckoutManager.shared
     @Environment(\.dismiss) var dismiss
     @Environment(\.colorScheme) var colorScheme
     
@@ -10,7 +10,8 @@ public struct TipSelectionView: View {
     @State private var customTipAmount: String = ""
     @State private var showCustomTipField = false
     @State private var showCheckout = false
-    @State private var showSuccessAlert = false
+    @State private var showOrderStatus = false
+    @State private var isProcessingPayment = false
     
     private let tipOptions: [(percentage: Double, label: String)] = [
         (0.10, "10%"),
@@ -48,29 +49,58 @@ public struct TipSelectionView: View {
                         tipOptionsSection
                         if showCustomTipField { customTipSection }
                         noTipButton
+                        
+                        // Main payment button
                         Button(action: {
-                            showCheckout = true
+                            startPaymentProcess()
                         }) {
-                            Text("Proceed to Payment")
-                                .font(.system(size: 20, weight: .bold, design: .rounded))
-                                .foregroundColor(.white)
-                                .padding(.vertical, 18)
-                                .frame(maxWidth: .infinity)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 15)
-                                        .fill(
-                                            LinearGradient(
-                                                gradient: Gradient(colors: [.blue, .blue.opacity(0.8)]),
-                                                startPoint: .leading,
-                                                endPoint: .trailing
-                                            )
+                            HStack {
+                                if isProcessingPayment {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                        .tint(.white)
+                                }
+                                Text(isProcessingPayment ? "Processing..." : "Proceed to Payment")
+                                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                                    .foregroundColor(.white)
+                            }
+                            .padding(.vertical, 18)
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 15)
+                                    .fill(
+                                        LinearGradient(
+                                            gradient: Gradient(colors: [.blue, .blue.opacity(0.8)]),
+                                            startPoint: .leading,
+                                            endPoint: .trailing
                                         )
-                                        .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
-                                )
+                                    )
+                                    .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
+                            )
                         }
                         .padding(.horizontal, 20)
                         .padding(.top, 10)
-                        .disabled(cartManager.items.isEmpty)
+                        .disabled(cartManager.items.isEmpty || isProcessingPayment)
+                        
+                        // Debug buttons for testing
+                        #if DEBUG
+                        VStack(spacing: 10) {
+                            Button("Test Payment Success (Debug)") {
+                                print("[TipSelectionView] Manual test button pressed")
+                                testPaymentSuccess()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .foregroundColor(.green)
+                            
+                            Button("Test Order Creation (Debug)") {
+                                print("[TipSelectionView] Testing direct order creation")
+                                testOrderCreation()
+                            }
+                            .buttonStyle(.bordered)
+                            .foregroundColor(.orange)
+                        }
+                        .padding(.horizontal, 20)
+                        #endif
                     }
                 }
             }
@@ -85,60 +115,151 @@ public struct TipSelectionView: View {
                 .foregroundColor(.blue)
             }
         }
-        .sheet(isPresented: $showCheckout, onDismiss: { showCheckout = false }) {
+        .sheet(isPresented: $showCheckout, onDismiss: { 
+            print("[TipSelectionView] Safari sheet dismissed")
+            handleSafariDismiss()
+        }) {
             if let url = checkoutManager.checkoutURL {
-                SafariView(url: url)
+                SafariView(
+                    url: url,
+                    onDismiss: {
+                        print("[TipSelectionView] Safari view dismissed")
+                    },
+                    onSuccess: {
+                        print("[TipSelectionView] Payment success callback")
+                        handlePaymentSuccess()
+                    },
+                    onCancel: {
+                        print("[TipSelectionView] Payment cancel callback")
+                        handlePaymentCancellation()
+                    }
+                )
             }
         }
-        .onReceive(checkoutManager.$paymentSuccess) { success in
-            if success {
-                showSuccessAlert = true
-                cartManager.clearCart()
+        .sheet(isPresented: $showOrderStatus) {
+            if let order = checkoutManager.currentOrder {
+                OrderStatusView(order: order)
             }
         }
-        .alert("Payment Successful!", isPresented: $showSuccessAlert) {
-            Button("OK") {
-                dismiss()
+        .onReceive(checkoutManager.$shouldNavigateToOrderStatus) { shouldNavigate in
+            if shouldNavigate {
+                print("[TipSelectionView] shouldNavigateToOrderStatus is true, showing order status")
+                showOrderStatus = true
             }
-        } message: {
-            Text("Thank you for your order! We'll notify you when it's ready.")
         }
-        .onChange(of: showCheckout) { newValue in
-            if newValue {
-                // Create checkout session with tip included
-                let lineItems = cartManager.items.map { item in
-                    [
-                        "price_data": [
-                            "currency": "usd",
-                            "product_data": [
-                                "name": item.menuItem.id
-                            ],
-                            "unit_amount": Int(item.menuItem.price * 100)
-                        ],
-                        "quantity": item.quantity
-                    ]
-                }
-                var itemsWithTip = lineItems
-                if tipAmount > 0 {
-                    itemsWithTip.append([
-                        "price_data": [
-                            "currency": "usd",
-                            "product_data": [
-                                "name": "Tip"
-                            ],
-                            "unit_amount": Int(tipAmount * 100)
-                        ],
-                        "quantity": 1
-                    ])
-                }
-                Task {
-                    await checkoutManager.createCheckoutSession(lineItems: itemsWithTip)
-                }
+        .onReceive(checkoutManager.$currentOrder) { order in
+            if order != nil {
+                print("[TipSelectionView] currentOrder set, showing order status")
+                showOrderStatus = true
             }
         }
         .animation(.easeInOut(duration: 0.3), value: showCustomTipField)
         .animation(.easeInOut(duration: 0.2), value: selectedTipPercentage)
     }
+    
+    // MARK: - Payment Methods
+    
+    private func startPaymentProcess() {
+        print("[TipSelectionView] Starting payment process")
+        isProcessingPayment = true
+        
+        // Set pending order information
+        checkoutManager.setPendingOrder(
+            cartItems: cartManager.items,
+            tipAmount: tipAmount,
+            customerName: "Customer",
+            customerPhone: "+16155551234"
+        )
+        
+        // Create checkout session with tip included
+        let lineItems = cartManager.items.map { item in
+            [
+                "price_data": [
+                    "currency": "usd",
+                    "product_data": [
+                        "name": item.menuItem.id
+                    ],
+                    "unit_amount": Int(item.menuItem.price * 100)
+                ],
+                "quantity": item.quantity
+            ]
+        }
+        
+        var itemsWithTip = lineItems
+        if tipAmount > 0 {
+            itemsWithTip.append([
+                "price_data": [
+                    "currency": "usd",
+                    "product_data": [
+                        "name": "Tip"
+                    ],
+                    "unit_amount": Int(tipAmount * 100)
+                ],
+                "quantity": 1
+            ])
+        }
+        
+        Task {
+            await checkoutManager.createCheckoutSession(lineItems: itemsWithTip)
+            await MainActor.run {
+                isProcessingPayment = false
+                if checkoutManager.checkoutURL != nil {
+                    showCheckout = true
+                } else {
+                    print("[TipSelectionView] Failed to create checkout session")
+                }
+            }
+        }
+    }
+    
+    private func handleSafariDismiss() {
+        print("[TipSelectionView] Safari dismissed, checking payment status")
+        
+        // Don't automatically assume payment success
+        // Let the success/cancel callbacks handle it
+        print("[TipSelectionView] Safari dismissed, waiting for callbacks")
+    }
+    
+    private func handlePaymentSuccess() {
+        print("[TipSelectionView] Handling payment success")
+        checkoutManager.handlePaymentSuccess()
+        cartManager.clearCart()
+        dismiss() // Close the tip selection view
+    }
+    
+    private func handlePaymentCancellation() {
+        print("[TipSelectionView] Handling payment cancellation")
+        checkoutManager.handlePaymentCancellation()
+        // Don't clear cart or dismiss - let user try again
+    }
+    
+    // MARK: - Debug Methods
+    
+    private func testPaymentSuccess() {
+        checkoutManager.setPendingOrder(
+            cartItems: cartManager.items,
+            tipAmount: tipAmount,
+            customerName: "Test Customer",
+            customerPhone: "+16155551234"
+        )
+        checkoutManager.handlePaymentSuccess()
+        cartManager.clearCart()
+        dismiss()
+    }
+    
+    private func testOrderCreation() {
+        checkoutManager.setPendingOrder(
+            cartItems: cartManager.items,
+            tipAmount: tipAmount,
+            customerName: "Test Customer",
+            customerPhone: "+16155551234"
+        )
+        Task {
+            await checkoutManager.createOrder()
+        }
+    }
+    
+    // MARK: - View Components
     
     private var headerSection: some View {
         VStack(spacing: 16) {

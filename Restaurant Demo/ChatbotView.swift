@@ -54,7 +54,7 @@ class ChatbotViewModel: ObservableObject {
         }
         
         // Send to backend
-        guard let url = URL(string: "\(Config.currentEnvironment.baseURL)/chat") else { return }
+        guard let url = URL(string: "\(Config.backendURL)/chat") else { return }
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -188,7 +188,7 @@ struct ChatbotView: View {
                         .padding(.horizontal, 16)
                         .padding(.top, 20)
                     }
-                    .onChange(of: viewModel.messages.count) { _ in
+                    .onChange(of: viewModel.messages.count) { oldValue, newValue in
                         // Scroll to bottom when new messages are added
                         withAnimation(.easeInOut(duration: 0.3)) {
                             if let lastMessage = viewModel.messages.last {
@@ -196,9 +196,9 @@ struct ChatbotView: View {
                             }
                         }
                     }
-                    .onChange(of: viewModel.isLoading) { isLoading in
+                    .onChange(of: viewModel.isLoading) { oldValue, newValue in
                         // Scroll to loading indicator when it appears
-                        if isLoading {
+                        if newValue {
                             withAnimation(.easeInOut(duration: 0.3)) {
                                 proxy.scrollTo("loading", anchor: .bottom)
                             }

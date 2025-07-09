@@ -955,7 +955,7 @@ extension CameraController: AVCapturePhotoCaptureDelegate {
 }
 
 func uploadReceiptImage(_ image: UIImage, completion: @escaping (Result<[String: Any], Error>) -> Void) {
-    let urlString = Config.analyzeReceiptURL
+            let urlString = "\(Config.receiptBackendURL)/analyze-receipt"
     print("📤 Uploading receipt to: \(urlString)")
     
     guard let url = URL(string: urlString) else {

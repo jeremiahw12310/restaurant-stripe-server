@@ -1,133 +1,81 @@
-# Stripe Setup Guide
+# Stripe Production Setup Guide
 
-## Firebase Functions Setup (Original Approach)
+## 🚀 Making Your App Work Anywhere
 
-1. Install Firebase CLI:
-```bash
-npm install -g firebase-tools
+### Step 1: Get Stripe Production Keys
+
+1. **Go to [Stripe Dashboard](https://dashboard.stripe.com/)**
+2. **Switch to Live Mode** (toggle in top right)
+3. **Get your Live Keys:**
+   - Go to Developers > API Keys
+   - Copy your **Publishable Key** (starts with `pk_live_`)
+   - Copy your **Secret Key** (starts with `sk_live_`)
+
+### Step 2: Set Up Render Environment Variables
+
+1. **Go to [Render Dashboard](https://dashboard.render.com/)**
+2. **Find your `restaurant-stripe-server` service**
+3. **Go to Environment tab**
+4. **Add these environment variables:**
+
+```
+STRIPE_SECRET_KEY=sk_live_your_live_secret_key_here
+OPENAI_API_KEY=your_openai_api_key_here
+NODE_ENV=production
 ```
 
-2. Login to Firebase:
-```bash
-firebase login
-```
+### Step 3: Update iOS App for Production
 
-3. Initialize Firebase Functions:
-```bash
-firebase init functions
-```
+1. **Open `Restaurant Demo/Config.swift`**
+2. **Change line 9 to:**
+   ```swift
+   static let currentEnvironment: Environment = .production
+   ```
 
-4. Set Stripe secret key in Firebase config:
-```bash
-firebase functions:config:set stripe.secret="YOUR_STRIPE_SECRET_KEY"
-```
+### Step 4: Deploy and Test
 
-5. Deploy functions:
-```bash
-firebase deploy --only functions
-```
+1. **Push your code to GitHub**
+2. **Render will automatically deploy**
+3. **Test the app on any iPhone!**
 
-## Local Server Setup (Current Approach)
+## 🔧 Alternative: Use Stripe Test Mode (Recommended for Development)
 
-1. Install dependencies:
-```bash
-npm install express stripe cors
-```
+If you want to test without real money:
 
-2. Set environment variable:
-```bash
-export STRIPE_SECRET_KEY="your_stripe_secret_key_here"
-```
+1. **Stay in Test Mode** in Stripe Dashboard
+2. **Use test keys** (start with `pk_test_` and `sk_test_`)
+3. **Use test card numbers:**
+   - `4242 4242 4242 4242` (Visa)
+   - `4000 0000 0000 0002` (Declined)
+   - Expiry: Any future date
+   - CVC: Any 3 digits
 
-3. Run server:
-```bash
-node simple-stripe-server.js
-```
+## 📱 Testing on Any iPhone
 
-## Environment Variables
+Once deployed:
 
-Create a `.env` file in your project root:
-```
-STRIPE_SECRET_KEY=your_stripe_secret_key_here
-```
+1. **Build your iOS app** in Xcode
+2. **Archive and distribute** via TestFlight or Ad Hoc
+3. **Install on any iPhone**
+4. **The app will work anywhere in the world!**
 
-## Deployment to Render.com
+## 🌍 Production URLs
 
-1. Push code to GitHub
-2. Connect repository to Render
-3. Set environment variables in Render dashboard
-4. Deploy
+Your app will use:
+- **Backend:** `https://restaurant-stripe-server.onrender.com`
+- **Stripe Checkout:** Live Stripe checkout
+- **Success/Cancel:** Auto-redirects to your app
 
-## Prerequisites
-- Stripe account (sign up at https://stripe.com)
-- Firebase project with Functions enabled
+## 🔒 Security Notes
 
-## Step 1: Install Firebase Functions Dependencies
+- ✅ Stripe handles all payment security
+- ✅ No credit card data stored on your server
+- ✅ HTTPS enforced in production
+- ✅ Environment variables keep keys secure
 
-In your `functions` directory, run:
-```bash
-npm install
-```
+## 🚨 Important
 
-## Step 2: Set Up Stripe Configuration
-
-1. Get your Stripe secret key from the Stripe Dashboard
-2. Set up Firebase Functions configuration:
-
-```bash
-firebase functions:config:set stripe.secret="sk_test_your_stripe_secret_key_here"
-firebase functions:config:set stripe.webhook_secret="whsec_your_webhook_secret_here"
-```
-
-## Step 3: Deploy Firebase Functions
-
-```bash
-firebase logout
-firebase login
-firebase deploy --only functions
-```
-
-## Step 4: Set Up Stripe Webhook (Optional but Recommended)
-
-1. In your Stripe Dashboard, go to Webhooks
-2. Add endpoint: `https://your-firebase-project.cloudfunctions.net/stripeWebhook`
-3. Select events: `checkout.session.completed`, `payment_intent.succeeded`
-4. Copy the webhook signing secret and update your Firebase config
-
-## Step 5: Update iOS App URL Scheme
-
-Add URL schemes to your iOS app's Info.plist:
-- `restaurantdemo://success`
-- `restaurantdemo://cancel`
-
-## Step 6: Test the Integration
-
-1. Add items to cart
-2. Press "Proceed to Checkout"
-3. Complete payment in Stripe Checkout
-4. Verify success flow works
-
-## Troubleshooting
-
-### Common Issues:
-1. **Firebase Functions not deployed**: Make sure to run `firebase deploy --only functions`
-2. **Stripe key not set**: Verify your Stripe secret key is correctly set in Firebase config
-3. **URL scheme not working**: Check that your app's URL schemes are properly configured
-
-### Testing:
-- Use Stripe's test card numbers (e.g., 4242 4242 4242 4242)
-- Test both success and failure scenarios
-
-## Security Notes
-
-- Never expose your Stripe secret key in client-side code
-- Always use Firebase Functions for server-side operations
-- Consider adding user authentication before allowing payments
-- Implement proper error handling and logging
-
-## Next Steps
-
-1. Add order management system
-2. Implement inventory tracking
-3. Add email confirmations
-4. Set up analytics and reporting 
+- **Never commit API keys** to Git
+- **Use environment variables** for all secrets
+- **Test thoroughly** before going live
+- **Monitor Stripe dashboard** for transactions 
