@@ -7,7 +7,7 @@ struct Config {
     static let localBackendURL = "http://localhost:3001"
     
     // For local development (physical device on same network)
-    static let localNetworkBackendURL = "http://YOUR_IP_ADDRESS:3001"
+    static let localNetworkBackendURL = "http://192.168.1.100:3001"
     
     // For production (replace with your deployed URL)
     static let productionBackendURL = "https://restaurant-stripe-server-1.onrender.com"
