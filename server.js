@@ -196,6 +196,100 @@ Remember: You're not just an assistant - you're Dumpling Hero, and you love help
 
 const port = process.env.PORT || 3001;
 
+// Orders endpoint to create orders
+app.post('/orders', async (req, res) => {
+  try {
+    console.log('📦 Received order creation request');
+    console.log('📋 Request body:', JSON.stringify(req.body, null, 2));
+    
+    const { items, total, tip, customerInfo, paymentMethod } = req.body;
+    
+    if (!items || !total) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: items and total are required' 
+      });
+    }
+    
+    // Generate a random order number
+    const orderNumber = Math.floor(Math.random() * 9000) + 1000;
+    
+    // Create order object
+    const order = {
+      id: orderNumber.toString(),
+      orderNumber: orderNumber.toString(),
+      items: items,
+      subtotal: total - (tip || 0),
+      tip: tip || 0,
+      total: total,
+      status: 'confirmed',
+      statusHistory: [
+        {
+          status: 'confirmed',
+          timestamp: new Date().toISOString(),
+          description: 'Order confirmed and being prepared'
+        }
+      ],
+      customerInfo: customerInfo || {},
+      paymentMethod: paymentMethod || 'stripe',
+      orderDate: new Date().toISOString(),
+      estimatedReadyTime: new Date(Date.now() + 15 * 60 * 1000).toISOString() // 15 minutes from now
+    };
+    
+    console.log('✅ Order created successfully:', orderNumber);
+    console.log('📄 Order details:', JSON.stringify(order, null, 2));
+    
+    res.status(201).json({
+      success: true,
+      order: order,
+      message: 'Order created successfully'
+    });
+    
+  } catch (err) {
+    console.error('❌ Error creating order:', err);
+    res.status(500).json({ 
+      error: 'Failed to create order',
+      details: err.message 
+    });
+  }
+});
+
+// Stripe checkout session endpoint
+app.post('/create-checkout-session', async (req, res) => {
+  try {
+    console.log('💳 Received Stripe checkout session request');
+    console.log('📋 Line items:', JSON.stringify(req.body.line_items, null, 2));
+    
+    const { line_items } = req.body;
+    
+    if (!line_items || !Array.isArray(line_items)) {
+      return res.status(400).json({ 
+        error: 'line_items is required and must be an array' 
+      });
+    }
+    
+    // Since we don't have Stripe configured on this server, we'll simulate a checkout URL
+    // In a real app, you would create an actual Stripe session here
+    const mockSessionUrl = `https://checkout.stripe.com/pay/cs_test_mock_session_${Date.now()}#fidkdWxOYHwnPyd1blpxYHZxWjA0VGh1T3JEYU1oSWFWV3xBc05nT0RuPUFGaGNAa0RoQkdSR2FgUjRHfGNpdGxIUE9sXV1SZGJHRn1JdE5uSkBgUVBOdT1qdm5rYHVGZzVJTlZzYnJNUmJKXUdxRWNKdWZnTWA%3D`;
+    
+    // For development, we'll return a mock URL that includes success/cancel callbacks
+    const devSessionUrl = `data:text/html,<html><body><h2>Mock Stripe Checkout</h2><p>This is a development mock of Stripe Checkout</p><button onclick="window.location.href='restaurantdemo://success'">Complete Payment</button><br><br><button onclick="window.location.href='restaurantdemo://cancel'">Cancel Payment</button></body></html>`;
+    
+    console.log('✅ Mock checkout session created');
+    
+    res.json({ 
+      url: devSessionUrl,
+      sessionId: `cs_test_mock_${Date.now()}`
+    });
+    
+  } catch (err) {
+    console.error('❌ Error creating checkout session:', err);
+    res.status(500).json({ 
+      error: 'Failed to create checkout session',
+      details: err.message 
+    });
+  }
+});
+
 app.listen(port, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${port}`);
   console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);

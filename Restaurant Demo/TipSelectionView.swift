@@ -11,6 +11,7 @@ public struct TipSelectionView: View {
     @State private var showCustomTipField = false
     @State private var showCheckout = false
     @State private var showSuccessAlert = false
+    @State private var showOrderStatus = false
     
     private let tipOptions: [(percentage: Double, label: String)] = [
         (0.10, "10%"),
@@ -88,6 +89,17 @@ public struct TipSelectionView: View {
         .sheet(isPresented: $showCheckout, onDismiss: { showCheckout = false }) {
             if let url = checkoutManager.checkoutURL {
                 SafariView(url: url)
+                    .onReceive(NotificationCenter.default.publisher(for: .paymentSuccess)) { _ in
+                        // Handle payment success
+                        Task {
+                            await checkoutManager.createOrder(from: cartManager.items, tipAmount: tipAmount)
+                        }
+                        showCheckout = false
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: .paymentCancelled)) { _ in
+                        // Handle payment cancellation
+                        showCheckout = false
+                    }
             }
         }
         .onReceive(checkoutManager.$paymentSuccess) { success in
@@ -97,11 +109,25 @@ public struct TipSelectionView: View {
             }
         }
         .alert("Payment Successful!", isPresented: $showSuccessAlert) {
+            Button("View Order") {
+                // Navigate to order status
+                showOrderStatus = true
+                dismiss()
+            }
             Button("OK") {
                 dismiss()
             }
         } message: {
-            Text("Thank you for your order! We'll notify you when it's ready.")
+            if let order = checkoutManager.createdOrder {
+                Text("Thank you for your order #\(order.orderNumber)! We'll notify you when it's ready.")
+            } else {
+                Text("Thank you for your order! We'll notify you when it's ready.")
+            }
+        }
+        .sheet(isPresented: $showOrderStatus) {
+            if let order = checkoutManager.createdOrder {
+                OrderStatusView(order: order)
+            }
         }
         .onChange(of: showCheckout) { newValue in
             if newValue {
@@ -111,7 +137,7 @@ public struct TipSelectionView: View {
                         "price_data": [
                             "currency": "usd",
                             "product_data": [
-                                "name": item.menuItem.id
+                                "name": item.menuItem.name ?? item.menuItem.id
                             ],
                             "unit_amount": Int(item.menuItem.price * 100)
                         ],

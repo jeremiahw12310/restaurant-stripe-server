@@ -4,6 +4,12 @@ import FirebaseAuth
 import FirebaseAppCheck
 import Kingfisher
 
+extension Notification.Name {
+    static let switchToHomeTab = Notification.Name("switchToHomeTab")
+    static let paymentSuccess = Notification.Name("paymentSuccess")
+    static let paymentCancelled = Notification.Name("paymentCancelled")
+}
+
 // This is your main app entry point.
 @main
 struct Restaurant_DemoApp: App {
@@ -63,8 +69,18 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // based on the URL returned by Stripe. For now, we just print it.
         print("Redirected back to app with URL: \(url)")
         
-        // After payment, you might want to clear the cart or show a thank you message.
-        // This part can be expanded with more advanced state management.
+        // Handle Stripe payment success/cancel
+        if url.scheme == "restaurantdemo" {
+            if url.host == "success" {
+                print("✅ Payment successful!")
+                // Post notification that payment was successful
+                NotificationCenter.default.post(name: .paymentSuccess, object: nil)
+            } else if url.host == "cancel" {
+                print("❌ Payment cancelled")
+                // Post notification that payment was cancelled
+                NotificationCenter.default.post(name: .paymentCancelled, object: nil)
+            }
+        }
         
         return true
     }
