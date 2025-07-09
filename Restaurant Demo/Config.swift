@@ -7,14 +7,14 @@ struct Config {
     static let localBackendURL = "http://localhost:3001"
     
     // For local development (physical device on same network)
-    static let localNetworkBackendURL = "http://10.37.129.2:3001"
+    static let localNetworkBackendURL = "http://YOUR_IP_ADDRESS:3001"
     
     // For production (replace with your deployed URL)
     static let productionBackendURL = "https://restaurant-stripe-server-1.onrender.com"
     
     // MARK: - Current Environment
     // Change this to switch between environments
-    static let currentEnvironment: Environment = .production
+    static let currentEnvironment: Environment = .localNetwork
     
     enum Environment {
         case local
