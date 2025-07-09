@@ -5,6 +5,12 @@ const cors = require('cors');
 const fs = require('fs');
 const { OpenAI } = require('openai');
 
+// Initialize Stripe only if secret key is provided
+let stripe;
+if (process.env.STRIPE_SECRET_KEY) {
+  stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+}
+
 // Updated for Render deployment with latest OpenAI model
 // ROOT SERVER.JS - USING GPT-4O MODEL
 const app = express();
@@ -281,6 +287,36 @@ app.get('/orders/:orderId', (req, res) => {
       error: 'Failed to fetch order',
       details: err.message 
     });
+  }
+});
+
+// Stripe checkout session endpoint
+app.post('/create-checkout-session', async (req, res) => {
+  try {
+    if (!stripe) {
+      return res.status(500).json({ 
+        error: 'Stripe not configured - STRIPE_SECRET_KEY environment variable missing' 
+      });
+    }
+
+    const { line_items } = req.body;
+    console.log('🛒 Creating Stripe checkout session');
+    console.log('Line items:', line_items);
+    
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: line_items,
+      mode: 'payment',
+      success_url: 'restaurantdemo://success',
+      cancel_url: 'restaurantdemo://cancel',
+    });
+
+    console.log('✅ Stripe session created:', session.id);
+    res.json({ url: session.url });
+    
+  } catch (error) {
+    console.error('❌ Error creating checkout session:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
