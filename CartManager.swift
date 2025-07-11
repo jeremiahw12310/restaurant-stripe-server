@@ -19,6 +19,8 @@ struct CartItem: Identifiable, Equatable {
 // This is an EnvironmentObject, accessible from any view in the app.
 class CartManager: ObservableObject {
     @Published var items: [CartItem] = []
+    @Published var showFlyingDumpling: Bool = false
+    @Published var showFlyingBoba: Bool = false
 
     // A computed property to calculate the subtotal of all items in the cart.
     var subtotal: Double {
