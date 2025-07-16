@@ -16,7 +16,7 @@ app.get('/', (req, res) => {
     status: 'Server is running!', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    server: 'BACKEND server.js with gpt-4o'
+    server: 'BACKEND server.js with gpt-4.1-mini'
   });
 });
 
@@ -193,7 +193,7 @@ Remember: You're not just an assistant—you love helping people discover the be
       console.log('📋 System prompt preview:', systemPrompt.substring(0, 200) + '...');
       
       const response = await openai.chat.completions.create({
-        model: "gpt-4.1-nano", // Using the newest most cost-effective model
+        model: "gpt-4.1-mini", // UPGRADED: Changed from nano to mini for better performance
         messages: messages,
         max_tokens: 300,
         temperature: 0.7
