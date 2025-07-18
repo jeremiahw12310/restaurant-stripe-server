@@ -20,6 +20,149 @@ app.use(express.json());
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// MARK: - Personalized Combo Generation
+
+// Generate personalized combo endpoint
+app.post('/generate-combo', async (req, res) => {
+  try {
+    console.log('🤖 Received personalized combo request');
+    
+    const { userName, dietaryPreferences, menuItems } = req.body;
+    
+    if (!userName || !dietaryPreferences || !menuItems) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: userName, dietaryPreferences, menuItems' 
+      });
+    }
+    
+    // Filter menu items by category for better organization
+    const dumplings = menuItems.filter(item => item.isDumpling);
+    const appetizers = menuItems.filter(item => 
+      item.id.toLowerCase().includes('appetizer') || 
+      item.id.toLowerCase().includes('spring roll') ||
+      item.id.toLowerCase().includes('wonton') ||
+      item.id.toLowerCase().includes('edamame')
+    );
+    const drinks = menuItems.filter(item => item.isDrink);
+    const sauces = menuItems.filter(item => 
+      item.id.toLowerCase().includes('sauce') ||
+      item.id.toLowerCase().includes('dipping')
+    );
+    
+    // Create dietary restrictions string
+    const restrictions = [];
+    if (dietaryPreferences.hasPeanutAllergy) restrictions.push('peanut allergy');
+    if (dietaryPreferences.isVegetarian) restrictions.push('vegetarian');
+    if (dietaryPreferences.hasLactoseIntolerance) restrictions.push('lactose intolerant');
+    if (dietaryPreferences.doesntEatPork) restrictions.push('no pork');
+    if (dietaryPreferences.dislikesSpicyFood) restrictions.push('no spicy food');
+    
+    const restrictionsText = restrictions.length > 0 ? 
+      `Dietary restrictions: ${restrictions.join(', ')}. ` : '';
+    
+    const spicePreference = dietaryPreferences.likesSpicyFood ? 
+      'The customer enjoys spicy food. ' : '';
+    
+    // Create menu items text for AI
+    const menuText = `
+Available menu items:
+
+Dumplings:
+${dumplings.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
+
+Appetizers:
+${appetizers.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
+
+Drinks:
+${drinks.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
+
+Sauces:
+${sauces.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
+    `.trim();
+    
+    // Create AI prompt
+    const prompt = `You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. 
+
+Customer: ${userName}
+${restrictionsText}${spicePreference}
+
+${menuText}
+
+Please create a personalized combo for ${userName} with:
+1. One dumpling option (or half and half if available)
+2. One appetizer
+3. One drink
+4. Occasionally a sauce (if it complements the combo well)
+
+Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
+
+Respond in this exact JSON format:
+{
+  "items": [
+    {"id": "Item Name", "category": "dumplings"},
+    {"id": "Item Name", "category": "appetizers"},
+    {"id": "Item Name", "category": "drinks"}
+  ],
+  "aiResponse": "A 3-sentence personalized response starting with the customer's name, explaining why you chose these items for them. Make them feel seen and understood.",
+  "totalPrice": 0.00
+}
+
+Calculate the total price accurately. Keep the response warm and personal.`;
+    
+    console.log('🤖 Sending request to OpenAI...');
+    
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: "You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. Always respond with valid JSON in the exact format requested."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      temperature: 0.7,
+      max_tokens: 500
+    });
+    
+    const aiResponse = completion.choices[0].message.content;
+    console.log('🤖 AI Response:', aiResponse);
+    
+    // Parse AI response
+    let comboData;
+    try {
+      comboData = JSON.parse(aiResponse);
+    } catch (parseError) {
+      console.error('❌ Failed to parse AI response:', parseError);
+      return res.status(500).json({ 
+        error: 'Failed to parse AI response',
+        aiResponse: aiResponse 
+      });
+    }
+    
+    // Validate response structure
+    if (!comboData.items || !comboData.aiResponse || typeof comboData.totalPrice !== 'number') {
+      return res.status(500).json({ 
+        error: 'Invalid AI response structure',
+        aiResponse: aiResponse 
+      });
+    }
+    
+    console.log('✅ Generated personalized combo successfully');
+    
+    res.json(comboData);
+    
+  } catch (error) {
+    console.error('❌ Error generating personalized combo:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate personalized combo',
+      details: error.message 
+    });
+  }
+});
+
 // Health check endpoint
 app.get('/', (req, res) => {
   res.json({ 
