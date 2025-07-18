@@ -273,18 +273,18 @@ Remember: You're not just an assistant—you love helping people discover the be
         });
       }
       
-      // Filter menu items by category for better organization
+      // Enhanced filtering logic to properly categorize all menu items
       const dumplings = menuItems.filter(item => item.isDumpling);
       const appetizers = menuItems.filter(item => 
         !item.isDumpling && !item.isDrink && 
         (item.id.toLowerCase().includes('appetizer') || 
-         item.id.toLowerCase().includes('spring roll') ||
-         item.id.toLowerCase().includes('wonton') ||
          item.id.toLowerCase().includes('edamame') ||
-         item.id.toLowerCase().includes('soup') ||
-         item.id.toLowerCase().includes('salad') ||
+         item.id.toLowerCase().includes('cucumber') ||
+         item.id.toLowerCase().includes('tofu') ||
          item.id.toLowerCase().includes('rice') ||
-         item.id.toLowerCase().includes('noodle'))
+         item.id.toLowerCase().includes('noodle') ||
+         item.id.toLowerCase().includes('soup') ||
+         item.id.toLowerCase().includes('wonton'))
       );
       const drinks = menuItems.filter(item => item.isDrink);
       const sauces = menuItems.filter(item => 
@@ -348,85 +348,120 @@ Sauces:
 ${shuffledSauces.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
       `.trim();
       
-      // Create AI prompt with enhanced variety instructions
-      const prompt = `You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. 
-
-Customer: ${userName}
-${restrictionsText}${spicePreference}
-Random seed for variety: ${randomSeed}
-
-${menuText}
-
-Please create a personalized combo for ${userName} with:
-1. One dumpling option (or half and half if available)
-2. One appetizer  
-3. One drink
-4. Occasionally a sauce (if it complements the combo well)
-
-CRITICAL VARIETY RULES:
-- You MUST choose DIFFERENT items each time - NEVER repeat the same combination
-- If you see multiple options in each category, rotate through them systematically
-- Vary between spicy and mild options when appropriate
-- Consider the customer's dietary preferences and restrictions
-- The combo should be balanced and appealing
-
-RESPONSE FORMAT:
-{
-  "items": [
-    {"id": "Item Name", "category": "dumplings"},
-    {"id": "Item Name", "category": "appetizers"},
-    {"id": "Item Name", "category": "drinks"}
-  ],
-  "aiResponse": "A brief 1-2 sentence personalized response starting with the customer's name. Keep it short and warm.",
-  "totalPrice": 0.00
-}
-
-Calculate the total price accurately. Keep the response concise and friendly.`;
+      // Enhanced selection with better variety and rotation
+      const selectedItems = [];
+      
+      // Create rotation indices based on user name and time for variety
+      const timeSeed = Math.floor(Date.now() / 1000) % 3600; // Changes every hour
+      const userSeed = userName.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+      const rotationIndex = (timeSeed + userSeed) % Math.max(shuffledDumplings.length, shuffledAppetizers.length, shuffledDrinks.length, 1);
+      
+      // Select dumpling if available with rotation
+      if (shuffledDumplings.length > 0) {
+        const dumplingIndex = rotationIndex % shuffledDumplings.length;
+        const selectedDumpling = shuffledDumplings[dumplingIndex];
+        selectedItems.push({
+          id: selectedDumpling.id,
+          category: 'dumplings'
+        });
+      }
+      
+      // Select appetizer if available with rotation
+      if (shuffledAppetizers.length > 0) {
+        const appetizerIndex = (rotationIndex + 1) % shuffledAppetizers.length;
+        const selectedAppetizer = shuffledAppetizers[appetizerIndex];
+        selectedItems.push({
+          id: selectedAppetizer.id,
+          category: 'appetizers'
+        });
+      }
+      
+      // Select drink if available with rotation
+      if (shuffledDrinks.length > 0) {
+        const drinkIndex = (rotationIndex + 2) % shuffledDrinks.length;
+        const selectedDrink = shuffledDrinks[drinkIndex];
+        selectedItems.push({
+          id: selectedDrink.id,
+          category: 'drinks'
+        });
+      }
+      
+      // Select sauce if available (optional, with rotation)
+      if (shuffledSauces.length > 0 && (rotationIndex % 3) === 0) {
+        const sauceIndex = rotationIndex % shuffledSauces.length;
+        const selectedSauce = shuffledSauces[sauceIndex];
+        selectedItems.push({
+          id: selectedSauce.id,
+          category: 'sauces'
+        });
+      }
+      
+      // Calculate total price
+      const totalPrice = selectedItems.reduce((total, item) => {
+        const menuItem = menuItems.find(mi => mi.id === item.id);
+        return total + (menuItem ? menuItem.price : 0);
+      }, 0);
       
       console.log('🤖 Sending request to OpenAI...');
       
+      // Create prompt for OpenAI
+      const prompt = `You are a helpful AI assistant for a dumpling restaurant. Create a personalized response for a customer named "${userName}" who has ordered the following combo:
+
+${selectedItems.map(item => `- ${item.id} (${item.category})`).join('\n')}
+
+Total price: $${totalPrice.toFixed(2)}
+
+Dietary preferences:
+- Likes spicy food: ${dietaryPreferences.likesSpicyFood}
+- Dislikes spicy food: ${dietaryPreferences.dislikesSpicyFood}
+- Has peanut allergy: ${dietaryPreferences.hasPeanutAllergy}
+- Is vegetarian: ${dietaryPreferences.isVegetarian}
+- Has lactose intolerance: ${dietaryPreferences.hasLactoseIntolerance}
+- Doesn't eat pork: ${dietaryPreferences.doesntEatPork}
+
+Please provide a friendly, personalized response explaining why you chose these items for this customer. Keep it warm and welcoming, around 2-3 sentences. Don't mention dietary restrictions unless they're relevant to the selection.
+
+Respond in this exact JSON format:
+{
+  "items": ${JSON.stringify(selectedItems)},
+  "aiResponse": "your personalized message here",
+  "totalPrice": ${totalPrice.toFixed(2)}
+}`;
+
       const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-3.5-turbo",
         messages: [
           {
             role: "system",
-            content: "You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. Always respond with valid JSON in the exact format requested."
+            content: "You are a helpful AI assistant for a dumpling restaurant. Always respond with valid JSON in the exact format requested."
           },
           {
             role: "user",
             content: prompt
           }
         ],
-        temperature: 0.9,
-        max_tokens: 500
+        temperature: 0.7,
+        max_tokens: 300
       });
-      
+
       const aiResponse = completion.choices[0].message.content;
       console.log('🤖 AI Response:', aiResponse);
       
-      // Parse AI response
-      let comboData;
+      let parsedResponse;
       try {
-        comboData = JSON.parse(aiResponse);
-      } catch (parseError) {
-        console.error('❌ Failed to parse AI response:', parseError);
-        return res.status(500).json({ 
-          error: 'Failed to parse AI response',
-          aiResponse: aiResponse 
-        });
+        parsedResponse = JSON.parse(aiResponse);
+      } catch (error) {
+        console.error('❌ Failed to parse AI response:', error);
+        // Fallback response
+        parsedResponse = {
+          items: selectedItems,
+          aiResponse: `Hi ${userName}! I've created a delicious combo just for you. Enjoy your meal!`,
+          totalPrice: totalPrice.toFixed(2)
+        };
       }
-      
-      // Validate response structure
-      if (!comboData.items || !comboData.aiResponse || typeof comboData.totalPrice !== 'number') {
-        return res.status(500).json({ 
-          error: 'Invalid AI response structure',
-          aiResponse: aiResponse 
-        });
-      }
-      
+
+      res.json(parsedResponse);
       console.log('✅ Generated personalized combo successfully');
-      
-      res.json(comboData);
       
     } catch (error) {
       console.error('❌ Error generating personalized combo:', error);
@@ -437,6 +472,9 @@ Calculate the total price accurately. Keep the response concise and friendly.`;
     }
   });
 }
+
+// Force production environment
+process.env.NODE_ENV = 'production';
 
 const port = process.env.PORT || 3001;
 

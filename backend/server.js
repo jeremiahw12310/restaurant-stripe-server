@@ -259,7 +259,173 @@ Remember: You're not just an assistant—you love helping people discover the be
       res.status(500).json({ error: err.message });
     }
   });
+
+  // Generate personalized combo endpoint
+  app.post('/generate-combo', async (req, res) => {
+    try {
+      console.log('🤖 Received personalized combo request');
+      
+      const { userName, dietaryPreferences, menuItems } = req.body;
+      
+      if (!userName || !dietaryPreferences || !menuItems) {
+        return res.status(400).json({ 
+          error: 'Missing required fields: userName, dietaryPreferences, menuItems' 
+        });
+      }
+      
+      // Enhanced filtering logic to properly categorize all menu items
+      const dumplings = menuItems.filter(item => item.isDumpling);
+      const appetizers = menuItems.filter(item => 
+        !item.isDumpling && !item.isDrink && 
+        (item.id.toLowerCase().includes('appetizer') || 
+         item.id.toLowerCase().includes('edamame') ||
+         item.id.toLowerCase().includes('cucumber') ||
+         item.id.toLowerCase().includes('tofu') ||
+         item.id.toLowerCase().includes('rice') ||
+         item.id.toLowerCase().includes('noodle') ||
+         item.id.toLowerCase().includes('soup') ||
+         item.id.toLowerCase().includes('wonton'))
+      );
+      const drinks = menuItems.filter(item => item.isDrink);
+      const sauces = menuItems.filter(item => 
+        !item.isDumpling && !item.isDrink && 
+        (item.id.toLowerCase().includes('sauce') || 
+         item.id.toLowerCase().includes('dipping'))
+      );
+      
+      console.log('📋 Available items:');
+      console.log('Dumplings:', dumplings.map(item => item.id));
+      console.log('Appetizers:', appetizers.map(item => item.id));
+      console.log('Drinks:', drinks.map(item => item.id));
+      console.log('Sauces:', sauces.map(item => item.id));
+      
+      // Enhanced selection with better variety and rotation
+      const selectedItems = [];
+      
+      // Create rotation indices based on user name and time for variety
+      const timeSeed = Math.floor(Date.now() / 1000) % 3600; // Changes every hour
+      const userSeed = userName.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+      const rotationIndex = (timeSeed + userSeed) % Math.max(dumplings.length, appetizers.length, drinks.length, 1);
+      
+      // Select dumpling if available with rotation
+      if (dumplings.length > 0) {
+        const dumplingIndex = rotationIndex % dumplings.length;
+        const selectedDumpling = dumplings[dumplingIndex];
+        selectedItems.push({
+          id: selectedDumpling.id,
+          category: 'dumplings'
+        });
+      }
+      
+      // Select appetizer if available with rotation
+      if (appetizers.length > 0) {
+        const appetizerIndex = (rotationIndex + 1) % appetizers.length;
+        const selectedAppetizer = appetizers[appetizerIndex];
+        selectedItems.push({
+          id: selectedAppetizer.id,
+          category: 'appetizers'
+        });
+      }
+      
+      // Select drink if available with rotation
+      if (drinks.length > 0) {
+        const drinkIndex = (rotationIndex + 2) % drinks.length;
+        const selectedDrink = drinks[drinkIndex];
+        selectedItems.push({
+          id: selectedDrink.id,
+          category: 'drinks'
+        });
+      }
+      
+      // Select sauce if available (optional, with rotation)
+      if (sauces.length > 0 && (rotationIndex % 3) === 0) {
+        const sauceIndex = rotationIndex % sauces.length;
+        const selectedSauce = sauces[sauceIndex];
+        selectedItems.push({
+          id: selectedSauce.id,
+          category: 'sauces'
+        });
+      }
+      
+      // Calculate total price
+      const totalPrice = selectedItems.reduce((total, item) => {
+        const menuItem = menuItems.find(mi => mi.id === item.id);
+        return total + (menuItem ? menuItem.price : 0);
+      }, 0);
+      
+      console.log('🤖 Sending request to OpenAI...');
+      
+      // Create prompt for OpenAI
+      const prompt = `You are a helpful AI assistant for a dumpling restaurant. Create a personalized response for a customer named "${userName}" who has ordered the following combo:
+
+${selectedItems.map(item => `- ${item.id} (${item.category})`).join('\n')}
+
+Total price: $${totalPrice.toFixed(2)}
+
+Dietary preferences:
+- Likes spicy food: ${dietaryPreferences.likesSpicyFood}
+- Dislikes spicy food: ${dietaryPreferences.dislikesSpicyFood}
+- Has peanut allergy: ${dietaryPreferences.hasPeanutAllergy}
+- Is vegetarian: ${dietaryPreferences.isVegetarian}
+- Has lactose intolerance: ${dietaryPreferences.hasLactoseIntolerance}
+- Doesn't eat pork: ${dietaryPreferences.doesntEatPork}
+
+Please provide a friendly, personalized response explaining why you chose these items for this customer. Keep it warm and welcoming, around 2-3 sentences. Don't mention dietary restrictions unless they're relevant to the selection.
+
+Respond in this exact JSON format:
+{
+  "items": ${JSON.stringify(selectedItems)},
+  "aiResponse": "your personalized message here",
+  "totalPrice": ${totalPrice.toFixed(2)}
+}`;
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [
+          {
+            role: "system",
+            content: "You are a helpful AI assistant for a dumpling restaurant. Always respond with valid JSON in the exact format requested."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 300
+      });
+
+      const aiResponse = completion.choices[0].message.content;
+      console.log('🤖 AI Response:', aiResponse);
+      
+      let parsedResponse;
+      try {
+        parsedResponse = JSON.parse(aiResponse);
+      } catch (error) {
+        console.error('❌ Failed to parse AI response:', error);
+        // Fallback response
+        parsedResponse = {
+          items: selectedItems,
+          aiResponse: `Hi ${userName}! I've created a delicious combo just for you. Enjoy your meal!`,
+          totalPrice: totalPrice.toFixed(2)
+        };
+      }
+
+      res.json(parsedResponse);
+      console.log('✅ Generated personalized combo successfully');
+      
+    } catch (error) {
+      console.error('❌ Error generating personalized combo:', error);
+      res.status(500).json({ 
+        error: 'Failed to generate personalized combo',
+        details: error.message 
+      });
+    }
+  });
 }
+
+// Force production environment
+process.env.NODE_ENV = 'production';
 
 const port = process.env.PORT || 3001;
 
