@@ -274,9 +274,9 @@ Remember: You're not just an assistant—you love helping people discover the be
         });
       }
       
-      // Enhanced filtering logic to properly categorize all menu items
-      const dumplings = menuItems.filter(item => item.isDumpling);
-      const appetizers = menuItems.filter(item => 
+      // Enhanced filtering logic with comprehensive dietary considerations
+      let dumplings = menuItems.filter(item => item.isDumpling);
+      let appetizers = menuItems.filter(item => 
         !item.isDumpling && !item.isDrink && 
         (item.id.toLowerCase().includes('appetizer') || 
          item.id.toLowerCase().includes('edamame') ||
@@ -288,20 +288,91 @@ Remember: You're not just an assistant—you love helping people discover the be
          item.id.toLowerCase().includes('wonton'))
       );
       
-      // Filter drinks based on lactose intolerance
       let drinks = menuItems.filter(item => item.isDrink);
-      if (dietaryPreferences.hasLactoseIntolerance) {
-        // For lactose intolerant users, only include drinks that have milk substitution options
-        drinks = drinks.filter(item => item.milkSubModifiersEnabled && item.availableMilkSubIDs.length > 0);
-      }
-      
-      const sauces = menuItems.filter(item => 
+      let sauces = menuItems.filter(item => 
         !item.isDumpling && !item.isDrink && 
         (item.id.toLowerCase().includes('sauce') || 
          item.id.toLowerCase().includes('dipping'))
       );
       
-      console.log('📋 Available items:');
+      // Apply dietary preference filters
+      
+      // 1. Vegetarian filtering
+      if (dietaryPreferences.isVegetarian) {
+        // Filter out non-vegetarian items
+        dumplings = dumplings.filter(item => 
+          item.id.toLowerCase().includes('veggie') ||
+          item.id.toLowerCase().includes('vegetable') ||
+          !item.id.toLowerCase().includes('pork') &&
+          !item.id.toLowerCase().includes('chicken') &&
+          !item.id.toLowerCase().includes('beef') &&
+          !item.id.toLowerCase().includes('shrimp') &&
+          !item.id.toLowerCase().includes('crab')
+        );
+        
+        appetizers = appetizers.filter(item =>
+          item.id.toLowerCase().includes('edamame') ||
+          item.id.toLowerCase().includes('cucumber') ||
+          item.id.toLowerCase().includes('tofu') ||
+          item.id.toLowerCase().includes('rice') ||
+          !item.id.toLowerCase().includes('pork') &&
+          !item.id.toLowerCase().includes('chicken') &&
+          !item.id.toLowerCase().includes('beef') &&
+          !item.id.toLowerCase().includes('shrimp') &&
+          !item.id.toLowerCase().includes('crab')
+        );
+      }
+      
+      // 2. Pork restriction filtering
+      if (dietaryPreferences.doesntEatPork) {
+        dumplings = dumplings.filter(item => 
+          !item.id.toLowerCase().includes('pork')
+        );
+        
+        appetizers = appetizers.filter(item =>
+          !item.id.toLowerCase().includes('pork')
+        );
+      }
+      
+      // 3. Peanut allergy filtering
+      if (dietaryPreferences.hasPeanutAllergy) {
+        // Filter out items with peanuts
+        dumplings = dumplings.filter(item => 
+          !item.id.toLowerCase().includes('peanut')
+        );
+        
+        appetizers = appetizers.filter(item =>
+          !item.id.toLowerCase().includes('peanut') &&
+          !item.id.toLowerCase().includes('cold noodle') // Contains peanut sauce
+        );
+        
+        sauces = sauces.filter(item =>
+          !item.id.toLowerCase().includes('peanut')
+        );
+      }
+      
+      // 4. Spicy food preferences
+      if (dietaryPreferences.dislikesSpicyFood) {
+        dumplings = dumplings.filter(item => 
+          !item.id.toLowerCase().includes('spicy')
+        );
+        
+        appetizers = appetizers.filter(item =>
+          !item.id.toLowerCase().includes('spicy')
+        );
+        
+        sauces = sauces.filter(item =>
+          !item.id.toLowerCase().includes('spicy')
+        );
+      }
+      
+      // 5. Lactose intolerance filtering for drinks
+      if (dietaryPreferences.hasLactoseIntolerance) {
+        // For lactose intolerant users, only include drinks that have milk substitution options
+        drinks = drinks.filter(item => item.milkSubModifiersEnabled && item.availableMilkSubIDs.length > 0);
+      }
+      
+      console.log('📋 Available items after dietary filtering:');
       console.log('Dumplings:', dumplings.map(item => item.id));
       console.log('Appetizers:', appetizers.map(item => item.id));
       console.log('Drinks:', drinks.map(item => item.id));
@@ -363,8 +434,8 @@ Remember: You're not just an assistant—you love helping people discover the be
       
       console.log('🤖 Sending request to OpenAI...');
       
-      // Create prompt for OpenAI
-      const prompt = `You are a helpful AI assistant for a dumpling restaurant. Create a personalized response for a customer named "${userName}" who has ordered the following combo:
+      // Create comprehensive prompt for OpenAI with detailed dietary information
+      const prompt = `You are Dumpling Hero, the friendly assistant for Dumpling House in Nashville, TN. Create a personalized response for a customer named "${userName}" who has ordered the following combo:
 
 ${selectedItems.map(item => `- ${item.id} (${item.category})`).join('\n')}
 
@@ -378,9 +449,22 @@ Dietary preferences:
 - Has lactose intolerance: ${dietaryPreferences.hasLactoseIntolerance}
 - Doesn't eat pork: ${dietaryPreferences.doesntEatPork}
 
-IMPORTANT: If the customer has lactose intolerance and you're recommending a milk-based drink (like milk tea, coffee latte, etc.), make sure to mention that they can substitute with oat milk, almond milk, or coconut milk. For example: "I've included a refreshing milk tea that you can enjoy with oat milk, almond milk, or coconut milk instead of regular milk."
+IMPORTANT DIETARY INFORMATION:
+- Veggie dumplings include: cabbage, carrots, onions, celery, shiitake mushrooms, glass noodles
+- Contains peanut butter: cold noodles with peanut sauce, cold tofu, peanut butter pork
+- Contains shellfish: pork and shrimp, and the cold noodles
+- There's dairy inside curry chicken and the curry sauce and the curry rice
+- There's a little onion in pork, curry chicken and curry beef and onion
 
-Please provide a friendly, personalized response explaining why you chose these items for this customer. Keep it warm and welcoming, around 2-3 sentences. Don't mention dietary restrictions unless they're relevant to the selection.
+MILK SUBSTITUTIONS: For customers with lactose intolerance, our milk teas and coffee lattes can be made with oat milk, almond milk, or coconut milk instead of regular milk. When recommending these drinks to lactose intolerant customers, always mention the milk substitution options available.
+
+Please provide a friendly, personalized response explaining why you chose these items for this customer. Keep it warm and welcoming, around 2-3 sentences. 
+
+IMPORTANT RULES:
+- If the customer has lactose intolerance and you're recommending a milk-based drink (like milk tea, coffee latte, etc.), make sure to mention that they can substitute with oat milk, almond milk, or coconut milk.
+- Don't mention the total price in your response.
+- Don't mention dietary restrictions unless they're relevant to the selection.
+- Use the customer's name to make it personal.
 
 Respond in this exact JSON format:
 {
@@ -394,7 +478,7 @@ Respond in this exact JSON format:
         messages: [
           {
             role: "system",
-            content: "You are a helpful AI assistant for a dumpling restaurant. Always respond with valid JSON in the exact format requested."
+            content: "You are Dumpling Hero, the friendly assistant for Dumpling House. Always respond with valid JSON in the exact format requested. Never mention the total price in your response."
           },
           {
             role: "user",
