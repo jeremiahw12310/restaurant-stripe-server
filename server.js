@@ -429,7 +429,7 @@ If a field is missing, use null.
     try {
       console.log('💬 Received chat request');
       
-      const { message, conversation_history, userFirstName } = req.body;
+      const { message, conversation_history, userFirstName, userPreferences } = req.body;
       
       if (!message) {
         return res.status(400).json({ error: 'Message is required' });
@@ -437,9 +437,27 @@ If a field is missing, use null.
       
       console.log('📝 User message:', message);
       console.log('👤 User first name:', userFirstName || 'Not provided');
+      console.log('⚙️ User preferences:', userPreferences || 'Not provided');
       
       // Create the optimized system prompt
       const userGreeting = userFirstName ? `Hello ${userFirstName}! ` : '';
+      
+      // Build user preferences context
+      let userPreferencesContext = '';
+      if (userPreferences && userPreferences.hasCompletedPreferences) {
+        const preferences = [];
+        if (userPreferences.likesSpicyFood) preferences.push('likes spicy food');
+        if (userPreferences.dislikesSpicyFood) preferences.push('prefers mild dishes');
+        if (userPreferences.hasPeanutAllergy) preferences.push('has peanut allergies');
+        if (userPreferences.isVegetarian) preferences.push('is vegetarian');
+        if (userPreferences.hasLactoseIntolerance) preferences.push('is lactose intolerant');
+        if (userPreferences.doesntEatPork) preferences.push('does not eat pork');
+        
+        if (preferences.length > 0) {
+          userPreferencesContext = `\n\nUSER PREFERENCES: This customer ${preferences.join(', ')}. When making recommendations, prioritize dishes that align with these preferences and avoid suggesting items that conflict with their dietary restrictions.`;
+        }
+      }
+      
       const systemPrompt = `You are Dumpling Hero, the friendly and knowledgeable assistant for Dumpling House in Nashville, TN. 
 
 You know your name is "Dumpling Hero" and you should never refer to yourself as any other name (such as Wanyi, AI, assistant, etc). However, you do not need to mention your name in every response—just avoid using any other name.
@@ -472,7 +490,7 @@ PERSONALITY:
 - Keep responses friendly but concise (2-3 sentences max)
 - Always end with a question to encourage conversation
 
-Remember: You're not just an assistant—you love helping people discover the best dumplings in Nashville!`;
+Remember: You're not just an assistant—you love helping people discover the best dumplings in Nashville!${userPreferencesContext}`;
 
       // Build conversation history for context
       const messages = [
