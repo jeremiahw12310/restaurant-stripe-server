@@ -88,6 +88,8 @@ ${restrictionsText}${spicePreference}
 
 ${menuText}
 
+CRITICAL: You can ONLY recommend items that are listed above. Do NOT create or suggest any items that are not in the provided menu.
+
 Please create a personalized combo for ${userName} with:
 1. One dumpling option (or half and half if available)
 2. One appetizer
@@ -96,18 +98,20 @@ Please create a personalized combo for ${userName} with:
 
 Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
 
+IMPORTANT: Use the EXACT item names as shown in the menu above. Do not modify, shorten, or change the item names.
+
 Respond in this exact JSON format:
 {
   "items": [
-    {"id": "Item Name", "category": "dumplings"},
-    {"id": "Item Name", "category": "appetizers"},
-    {"id": "Item Name", "category": "drinks"}
+    {"id": "Exact Item Name from Menu", "category": "dumplings"},
+    {"id": "Exact Item Name from Menu", "category": "appetizers"},
+    {"id": "Exact Item Name from Menu", "category": "drinks"}
   ],
   "aiResponse": "A 3-sentence personalized response starting with the customer's name, explaining why you chose these items for them. Make them feel seen and understood.",
   "totalPrice": 0.00
 }
 
-Calculate the total price accurately. Keep the response warm and personal.`;
+Calculate the total price accurately by adding the prices of the selected items. Keep the response warm and personal.`;
     
     console.log('🤖 Sending request to OpenAI...');
     
@@ -150,9 +154,49 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       });
     }
     
-    console.log('✅ Generated personalized combo successfully');
+    // CRITICAL: Validate that all recommended items exist in the provided menu
+    const availableItemIds = menuItems.map(item => item.id);
+    const recommendedItemIds = comboData.items.map(item => item.id);
     
-    res.json(comboData);
+    // Check if any recommended items don't exist in the menu
+    const invalidItems = recommendedItemIds.filter(id => !availableItemIds.includes(id));
+    
+    if (invalidItems.length > 0) {
+      console.error('❌ AI recommended items not in menu:', invalidItems);
+      return res.status(500).json({ 
+        error: 'AI recommended items not available in menu',
+        invalidItems: invalidItems,
+        availableItems: availableItemIds,
+        aiResponse: aiResponse 
+      });
+    }
+    
+    // Recalculate total price from actual menu items to ensure accuracy
+    let actualTotalPrice = 0;
+    const validatedItems = comboData.items.map(comboItem => {
+      const actualItem = menuItems.find(item => item.id === comboItem.id);
+      if (actualItem) {
+        actualTotalPrice += actualItem.price;
+        return {
+          id: actualItem.id,
+          category: comboItem.category
+        };
+      }
+      return comboItem;
+    });
+    
+    // Update the response with validated items and accurate pricing
+    const validatedResponse = {
+      items: validatedItems,
+      aiResponse: comboData.aiResponse,
+      totalPrice: actualTotalPrice
+    };
+    
+    console.log('✅ Generated personalized combo successfully with validated items');
+    console.log('📊 Items:', validatedItems.map(item => item.id));
+    console.log('💰 Total Price: $' + actualTotalPrice.toFixed(2));
+    
+    res.json(validatedResponse);
     
   } catch (error) {
     console.error('❌ Error generating personalized combo:', error);
