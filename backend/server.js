@@ -193,6 +193,7 @@ SPECIAL DIETARY INFORMATION:
 - Most drinks can be adjusted for ice and sugar: 25%, 50%, 75%, and 100% options
 - Drinks that include real fruit: strawberry fresh milk tea, peach fresh and pineapple fresh milk teas, lychee dragon, grape magic, full of mango, peach strawberry, pineapple, kiwi and watermelon fruit teas, and the lychee mint, strawberry, mango, and pineapple lemonade or sodas
 - Available toppings for drinks: cheese foam, tapioca, peach or lychee popping jelly, pineapple nada jelly, boba jelly, tiramisu foam, brown sugar boba jelly, mango star jelly, coffee jelly and whipped cream
+- MILK SUBSTITUTIONS: For customers with lactose intolerance, our milk teas and coffee lattes can be made with oat milk, almond milk, or coconut milk instead of regular milk. When recommending these drinks to lactose intolerant customers, always mention the milk substitution options available.
 
 RECOMMENDATION GUIDELINES:
 - When recommending combinations, consider what would actually taste good together
@@ -286,7 +287,14 @@ Remember: You're not just an assistant—you love helping people discover the be
          item.id.toLowerCase().includes('soup') ||
          item.id.toLowerCase().includes('wonton'))
       );
-      const drinks = menuItems.filter(item => item.isDrink);
+      
+      // Filter drinks based on lactose intolerance
+      let drinks = menuItems.filter(item => item.isDrink);
+      if (dietaryPreferences.hasLactoseIntolerance) {
+        // For lactose intolerant users, only include drinks that have milk substitution options
+        drinks = drinks.filter(item => item.milkSubModifiersEnabled && item.availableMilkSubIDs.length > 0);
+      }
+      
       const sauces = menuItems.filter(item => 
         !item.isDumpling && !item.isDrink && 
         (item.id.toLowerCase().includes('sauce') || 
@@ -369,6 +377,8 @@ Dietary preferences:
 - Is vegetarian: ${dietaryPreferences.isVegetarian}
 - Has lactose intolerance: ${dietaryPreferences.hasLactoseIntolerance}
 - Doesn't eat pork: ${dietaryPreferences.doesntEatPork}
+
+IMPORTANT: If the customer has lactose intolerance and you're recommending a milk-based drink (like milk tea, coffee latte, etc.), make sure to mention that they can substitute with oat milk, almond milk, or coconut milk. For example: "I've included a refreshing milk tea that you can enjoy with oat milk, almond milk, or coconut milk instead of regular milk."
 
 Please provide a friendly, personalized response explaining why you chose these items for this customer. Keep it warm and welcoming, around 2-3 sentences. Don't mention dietary restrictions unless they're relevant to the selection.
 
