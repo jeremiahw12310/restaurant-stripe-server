@@ -794,3 +794,4 @@ app.listen(port, '0.0.0.0', () => {
   console.log(`🔑 OpenAI API Key configured: ${process.env.OPENAI_API_KEY ? 'Yes' : 'No'}`);
   console.log(`🔥 Firebase configured: ${admin.apps.length ? 'Yes' : 'No'}`);
 });
+// Force redeploy - Sat Jul 19 14:12:02 CDT 2025
