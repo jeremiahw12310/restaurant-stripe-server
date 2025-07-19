@@ -10,13 +10,20 @@ const upload = multer({ dest: 'uploads/' });
 app.use(cors());
 app.use(express.json());
 
+// Enhanced combo variety system to encourage exploration
+const comboInsights = []; // Track combo patterns for insights, not restrictions
+const MAX_INSIGHTS = 100;
+const userComboPreferences = new Map(); // Track user preferences for personalization
+
 // Health check endpoint
 app.get('/', (req, res) => {
   res.json({ 
     status: 'Server is running!', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    server: 'BACKEND server.js with gpt-4.1-mini'
+    server: 'BACKEND server.js with gpt-4o-mini',
+    firebaseConfigured: !!admin.apps.length,
+    openaiConfigured: !!process.env.OPENAI_API_KEY
   });
 });
 
@@ -298,9 +305,86 @@ Remember: You're not just an assistant—you love helping people discover the be
 Available menu items:
 
 ${menuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} ${item.isDumpling ? '(dumpling)' : item.isDrink ? '(drink)' : ''}`).join('\n')}
-      `.trim();
+    `.trim();
       
-      // Create AI prompt that lets ChatGPT actually choose the items
+      // Create AI prompt that encourages variety while letting ChatGPT choose intelligently
+      const currentTime = new Date().toISOString();
+      const randomSeed = Math.floor(Math.random() * 10000);
+      const sessionId = Math.random().toString(36).substring(2, 15);
+      const minuteOfHour = new Date().getMinutes();
+      const secondOfMinute = new Date().getSeconds();
+      const dayOfWeek = new Date().getDay();
+      const hourOfDay = new Date().getHours();
+      
+      // Intelligent variety system that encourages exploration
+      const varietyFactors = {
+        timeBased: minuteOfHour % 4,
+        dayBased: dayOfWeek % 3,
+        hourBased: hourOfDay % 4,
+        seedBased: randomSeed % 10,
+        secondBased: secondOfMinute % 5
+      };
+      
+      // Dynamic exploration strategies
+      const getExplorationStrategy = () => {
+        const strategyIndex = (varietyFactors.timeBased + varietyFactors.dayBased + varietyFactors.seedBased) % 8;
+        const strategies = [
+          "EXPLORE_BUDGET: Discover affordable hidden gems under $8 each",
+          "EXPLORE_PREMIUM: Try premium items over $15 for a special experience",
+          "EXPLORE_POPULAR: Mix popular favorites with lesser-known items",
+          "EXPLORE_ADVENTUROUS: Choose unique or specialty items that stand out",
+          "EXPLORE_TRADITIONAL: Focus on classic, time-tested combinations",
+          "EXPLORE_FUSION: Try items that blend different culinary traditions",
+          "EXPLORE_SEASONAL: Choose items that feel fresh and seasonal",
+          "EXPLORE_COMFORT: Select hearty, satisfying comfort food combinations"
+        ];
+        return strategies[strategyIndex];
+      };
+      
+      // Price exploration ranges
+      const getPriceExploration = () => {
+        const priceIndex = (varietyFactors.hourBased + varietyFactors.secondBased) % 4;
+        const ranges = [
+          "BUDGET_EXPLORATION: $5-15 total - great value discoveries",
+          "MODERATE_EXPLORATION: $15-30 total - balanced variety", 
+          "PREMIUM_EXPLORATION: $30-45 total - premium experiences",
+          "LUXURY_EXPLORATION: $45+ total - indulgent combinations"
+        ];
+        return ranges[priceIndex];
+      };
+      
+      // Flavor exploration profiles
+      const getFlavorExploration = () => {
+        const flavorIndex = (varietyFactors.dayBased + varietyFactors.seedBased) % 6;
+        const profiles = [
+          "SPICY_EXPLORATION: Discover bold, spicy flavors and heat",
+          "MILD_EXPLORATION: Explore gentle, subtle flavor profiles",
+          "SWEET_EXPLORATION: Try sweet and dessert-like elements",
+          "SAVORY_EXPLORATION: Explore rich, umami flavor combinations",
+          "FRESH_EXPLORATION: Discover light, fresh, and crisp items",
+          "BALANCED_EXPLORATION: Mix different flavor profiles harmoniously"
+        ];
+        return profiles[flavorIndex];
+      };
+      
+      const explorationStrategy = getExplorationStrategy();
+      const priceExploration = getPriceExploration();
+      const flavorExploration = getFlavorExploration();
+      
+      // Get user's previous combo preferences for personalization (not restriction)
+      const userPreferences = userComboPreferences.get(userName) || { categories: {}, priceRanges: [], flavorProfiles: [] };
+      
+      // Create variety encouragement instead of restriction
+      const varietyEncouragement = `
+VARIETY ENCOURAGEMENT:
+- Explore different categories and combinations
+- Try items you haven't suggested recently
+- Mix popular favorites with hidden gems
+- Consider seasonal and time-based factors
+- Use the exploration strategy to guide your choices
+- Balance familiarity with discovery
+`;
+
       const prompt = `You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. 
 
 Customer: ${userName}
@@ -318,10 +402,36 @@ Please create a personalized combo for ${userName} with:
 
 Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
 
+INTELLIGENT VARIETY SYSTEM:
+Current time: ${currentTime}
+Random seed: ${randomSeed}
+Session ID: ${sessionId}
+Minute: ${minuteOfHour}, Second: ${secondOfMinute}, Day: ${dayOfWeek}, Hour: ${hourOfDay}
+
+EXPLORATION STRATEGY: ${explorationStrategy}
+PRICE EXPLORATION: ${priceExploration}
+FLAVOR EXPLORATION: ${flavorExploration}
+
+${varietyEncouragement}
+
+USER PREFERENCES INSIGHTS (for personalization, not restriction):
+${userPreferences.categories && Object.keys(userPreferences.categories).length > 0 ? 
+  `Previous category preferences: ${Object.entries(userPreferences.categories).map(([cat, count]) => `${cat} (${count} times)`).join(', ')}` : 
+  'No previous preferences recorded - great opportunity to explore!'}
+
+VARIETY GUIDELINES:
+- Use the exploration strategy to guide your choices
+- Consider the time-based factors for seasonal appropriateness
+- Mix familiar favorites with new discoveries
+- Balance price ranges and flavor profiles
+- Consider what would create an enjoyable dining experience
+- Use the random seed to add variety to your selection process
+- Explore different combinations that work well together
+
 IMPORTANT RULES:
 - Choose items that actually exist in the menu above
 - Consider dietary restrictions carefully
-- Create variety - don't always choose the same items
+- Create enjoyable, balanced combinations
 - Consider flavor combinations that work well together
 - Calculate the total price by adding up the prices of your chosen items
 - For milk teas and coffees, note that milk substitutes (oat milk, almond milk, coconut milk) are available for lactose intolerant customers
@@ -346,14 +456,14 @@ Calculate the total price accurately. Keep the response warm and personal.`;
         messages: [
           {
             role: "system",
-            content: "You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. Always respond with valid JSON in the exact format requested."
+            content: "You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. Always respond with valid JSON in the exact format requested. Focus on creating enjoyable, varied combinations while considering user preferences and dietary restrictions."
           },
           {
             role: "user",
             content: prompt
           }
         ],
-        temperature: 0.7,
+        temperature: 0.9,
         max_tokens: 500
       });
       
@@ -381,6 +491,48 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       }
       
       console.log('✅ Generated personalized combo successfully');
+      
+      // Store combo insights for learning (not restriction)
+      const comboInsight = {
+        items: comboData.items,
+        timestamp: new Date().toISOString(),
+        userName: userName,
+        strategy: explorationStrategy,
+        priceRange: priceExploration,
+        flavorProfile: flavorExploration
+      };
+      
+      // Add to insights for learning patterns
+      comboInsights.push(comboInsight);
+      if (comboInsights.length > MAX_INSIGHTS) {
+        comboInsights.shift(); // Remove oldest
+      }
+      
+      // Update user preferences for personalization
+      if (!userComboPreferences.has(userName)) {
+        userComboPreferences.set(userName, { categories: {}, priceRanges: [], flavorProfiles: [] });
+      }
+      const userPrefs = userComboPreferences.get(userName);
+      
+      // Track category preferences
+      comboData.items.forEach(item => {
+        const category = item.category || 'other';
+        userPrefs.categories[category] = (userPrefs.categories[category] || 0) + 1;
+      });
+      
+      // Track price range
+      userPrefs.priceRanges.push(comboData.totalPrice);
+      if (userPrefs.priceRanges.length > 10) {
+        userPrefs.priceRanges.shift();
+      }
+      
+      // Track flavor profile
+      userPrefs.flavorProfiles.push(flavorExploration);
+      if (userPrefs.flavorProfiles.length > 10) {
+        userPrefs.flavorProfiles.shift();
+      }
+      
+      console.log(`📝 Stored combo insights. Total insights: ${comboInsights.length}, User preferences updated for ${userName}`);
       
       res.json(comboData);
       
