@@ -629,16 +629,34 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       const aiResponse = completion.choices[0].message.content;
       console.log('🤖 AI Response:', aiResponse);
       
-      // Parse AI response
+      // Parse AI response - handle both pure JSON and markdown-wrapped JSON
       let comboData;
       try {
+        // First try to parse as pure JSON
         comboData = JSON.parse(aiResponse);
       } catch (parseError) {
-        console.error('❌ Failed to parse AI response:', parseError);
-        return res.status(500).json({ 
-          error: 'Failed to parse AI response',
-          aiResponse: aiResponse 
-        });
+        console.log('🔄 First parse attempt failed, trying to extract JSON from markdown...');
+        
+        // Try to extract JSON from markdown code blocks
+        const jsonMatch = aiResponse.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+        if (jsonMatch) {
+          try {
+            comboData = JSON.parse(jsonMatch[1]);
+            console.log('✅ Successfully extracted JSON from markdown code block');
+          } catch (markdownParseError) {
+            console.error('❌ Failed to parse JSON from markdown:', markdownParseError);
+            return res.status(500).json({ 
+              error: 'Failed to parse AI response from markdown',
+              aiResponse: aiResponse 
+            });
+          }
+        } else {
+          console.error('❌ Failed to parse AI response - no valid JSON found:', parseError);
+          return res.status(500).json({ 
+            error: 'Failed to parse AI response - no valid JSON found',
+            aiResponse: aiResponse 
+          });
+        }
       }
       
       // Validate response structure
