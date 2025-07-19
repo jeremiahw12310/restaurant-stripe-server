@@ -444,7 +444,7 @@ Remember: You're not just an assistant—you love helping people discover the be
       console.log('📋 System prompt preview:', systemPrompt.substring(0, 200) + '...');
       
       const response = await openai.chat.completions.create({
-        model: "gpt-4.1-mini", // UPGRADED: Changed from nano to mini for better performance
+        model: "gpt-4o-mini",
         messages: messages,
         max_tokens: 300,
         temperature: 0.7
@@ -467,7 +467,12 @@ Remember: You're not just an assistant—you love helping people discover the be
     try {
       console.log('🔍 Fetching complete menu from Firestore...');
       
-      const admin = require('firebase-admin');
+      if (!admin.apps.length) {
+        return res.status(500).json({ 
+          error: 'Firebase not initialized - FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
+        });
+      }
+      
       const db = admin.firestore();
       
       // Get all menu categories
@@ -520,177 +525,6 @@ Remember: You're not just an assistant—you love helping people discover the be
       });
     }
   });
-
-  // Generate personalized combo endpoint
-  app.post('/generate-combo', async (req, res) => {
-    try {
-      console.log('🤖 Received personalized combo request');
-      console.log('📝 Request body:', JSON.stringify(req.body, null, 2));
-      
-      const { userName, dietaryPreferences } = req.body;
-      
-      if (!userName || !dietaryPreferences) {
-        console.log('❌ Missing required fields');
-        console.log('👤 userName:', userName);
-        console.log('🥗 dietaryPreferences:', dietaryPreferences);
-        return res.status(400).json({ 
-          error: 'Missing required fields: userName, dietaryPreferences' 
-        });
-      }
-      
-      // Fetch the complete, current menu from Firestore
-      console.log('🔍 Fetching current menu from Firestore...');
-      const db = admin.firestore();
-      
-      const categoriesSnapshot = await db.collection('menu').get();
-      const allMenuItems = [];
-      
-      for (const categoryDoc of categoriesSnapshot.docs) {
-        const categoryId = categoryDoc.id;
-        
-        // Get all items in this category
-        const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
-        
-        for (const itemDoc of itemsSnapshot.docs) {
-          try {
-            const itemData = itemDoc.data();
-            const menuItem = {
-              id: itemData.id || itemDoc.id,
-              description: itemData.description || '',
-              price: itemData.price || 0.0,
-              imageURL: itemData.imageURL || '',
-              isAvailable: itemData.isAvailable !== false,
-              paymentLinkID: itemData.paymentLinkID || '',
-              isDumpling: itemData.isDumpling || false,
-              isDrink: itemData.isDrink || false,
-              category: categoryId
-            };
-            allMenuItems.push(menuItem);
-          } catch (error) {
-            console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
-          }
-        }
-      }
-      
-      console.log(`🔍 Fetched ${allMenuItems.length} current menu items from Firestore`);
-      console.log(`🔍 Menu items:`, allMenuItems.map(item => `${item.id} (${item.isDumpling ? 'dumpling' : item.isDrink ? 'drink' : 'other'})`));
-      console.log(`🔍 Dietary preferences:`, dietaryPreferences);
-      
-      // Create dietary restrictions string
-      const restrictions = [];
-      if (dietaryPreferences.hasPeanutAllergy) restrictions.push('peanut allergy');
-      if (dietaryPreferences.isVegetarian) restrictions.push('vegetarian');
-      if (dietaryPreferences.hasLactoseIntolerance) restrictions.push('lactose intolerant');
-      if (dietaryPreferences.doesntEatPork) restrictions.push('no pork');
-      if (dietaryPreferences.dislikesSpicyFood) restrictions.push('no spicy food');
-      
-      const restrictionsText = restrictions.length > 0 ? 
-        `Dietary restrictions: ${restrictions.join(', ')}. ` : '';
-      
-      const spicePreference = dietaryPreferences.likesSpicyFood ? 
-        'The customer enjoys spicy food. ' : '';
-      
-      // Create menu items text for AI - send the FULL current menu from Firestore
-      const menuText = `
-Available menu items (current as of ${new Date().toLocaleString()}):
-
-${allMenuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} ${item.isDumpling ? '(dumpling)' : item.isDrink ? '(drink)' : ''}`).join('\n')}
-      `.trim();
-      
-      // Create AI prompt that lets ChatGPT actually choose the items
-      const prompt = `You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. 
-
-Customer: ${userName}
-${restrictionsText}${spicePreference}
-
-${menuText}
-
-IMPORTANT: You must choose items from the EXACT menu above. Do not make up items.
-
-Please create a personalized combo for ${userName} with:
-1. One dumpling option (choose from items marked as dumplings above)
-2. One appetizer or side dish (choose from non-dumpling, non-drink items above)  
-3. One drink (choose from items marked as drinks above)
-4. Optionally one sauce or condiment (choose from items that seem like sauces/dips above) - only if it complements the combo well
-
-Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
-
-IMPORTANT RULES:
-- Choose items that actually exist in the menu above
-- Consider dietary restrictions carefully
-- Create variety - don't always choose the same items
-- Consider flavor combinations that work well together
-- Calculate the total price by adding up the prices of your chosen items
-- For milk teas and coffees, note that milk substitutes (oat milk, almond milk, coconut milk) are available for lactose intolerant customers
-
-Respond in this exact JSON format:
-{
-  "items": [
-    {"id": "Exact Item Name from Menu", "category": "dumplings"},
-    {"id": "Exact Item Name from Menu", "category": "appetizers"},
-    {"id": "Exact Item Name from Menu", "category": "drinks"}
-  ],
-  "aiResponse": "A 3-sentence personalized response starting with the customer's name, explaining why you chose these items for them. Make them feel seen and understood.",
-  "totalPrice": 0.00
-}
-
-Calculate the total price accurately. Keep the response warm and personal.`;
-      
-      console.log('🤖 Sending request to OpenAI...');
-      
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: "You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. Always respond with valid JSON in the exact format requested."
-          },
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
-        temperature: 0.7,
-        max_tokens: 500
-      });
-      
-      const aiResponse = completion.choices[0].message.content;
-      console.log('🤖 AI Response:', aiResponse);
-      
-      // Parse AI response
-      let comboData;
-      try {
-        comboData = JSON.parse(aiResponse);
-      } catch (parseError) {
-        console.error('❌ Failed to parse AI response:', parseError);
-        return res.status(500).json({ 
-          error: 'Failed to parse AI response',
-          aiResponse: aiResponse 
-        });
-      }
-      
-      // Validate response structure
-      if (!comboData.items || !comboData.aiResponse || typeof comboData.totalPrice !== 'number') {
-        console.error('❌ Invalid AI response structure:', comboData);
-        return res.status(500).json({ 
-          error: 'Invalid AI response structure',
-          aiResponse: aiResponse 
-        });
-      }
-      
-      console.log('✅ Generated personalized combo successfully');
-      console.log('📤 Sending response:', JSON.stringify(comboData, null, 2));
-      
-      res.json(comboData);
-      
-    } catch (error) {
-      console.error('❌ Error generating personalized combo:', error);
-      res.status(500).json({ 
-        error: 'Failed to generate personalized combo',
-        details: error.message 
-      });
-    }
-  });
 }
 
 // Force production environment
@@ -702,4 +536,5 @@ app.listen(port, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${port}`);
   console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔑 OpenAI API Key configured: ${process.env.OPENAI_API_KEY ? 'Yes' : 'No'}`);
+  console.log(`🔥 Firebase configured: ${admin.apps.length ? 'Yes' : 'No'}`);
 });
