@@ -5,6 +5,24 @@ const cors = require('cors');
 const fs = require('fs');
 const { OpenAI } = require('openai');
 
+// Initialize Firebase Admin
+const admin = require('firebase-admin');
+
+// Check if Firebase credentials are available
+if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+  try {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+    console.log('✅ Firebase Admin initialized successfully');
+  } catch (error) {
+    console.error('❌ Error initializing Firebase Admin:', error);
+  }
+} else {
+  console.warn('⚠️ FIREBASE_SERVICE_ACCOUNT_KEY not found - Firebase features will not work');
+}
+
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 app.use(cors());
@@ -261,23 +279,115 @@ Remember: You're not just an assistant—you love helping people discover the be
     }
   });
 
+  // Fetch complete menu from Firestore endpoint
+  app.get('/firestore-menu', async (req, res) => {
+    try {
+      console.log('🔍 Fetching complete menu from Firestore...');
+      
+      const admin = require('firebase-admin');
+      const db = admin.firestore();
+      
+      // Get all menu categories
+      const categoriesSnapshot = await db.collection('menu').get();
+      const allMenuItems = [];
+      
+      for (const categoryDoc of categoriesSnapshot.docs) {
+        const categoryId = categoryDoc.id;
+        console.log(`🔍 Processing category: ${categoryId}`);
+        
+        // Get all items in this category
+        const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
+        
+        for (const itemDoc of itemsSnapshot.docs) {
+          try {
+            const itemData = itemDoc.data();
+            const menuItem = {
+              id: itemData.id || itemDoc.id,
+              description: itemData.description || '',
+              price: itemData.price || 0.0,
+              imageURL: itemData.imageURL || '',
+              isAvailable: itemData.isAvailable !== false,
+              paymentLinkID: itemData.paymentLinkID || '',
+              isDumpling: itemData.isDumpling || false,
+              isDrink: itemData.isDrink || false,
+              category: categoryId
+            };
+            allMenuItems.push(menuItem);
+            console.log(`✅ Added item: ${menuItem.id} (${categoryId})`);
+          } catch (error) {
+            console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
+          }
+        }
+      }
+      
+      console.log(`✅ Fetched ${allMenuItems.length} menu items from Firestore`);
+      
+      res.json({
+        success: true,
+        menuItems: allMenuItems,
+        totalItems: allMenuItems.length,
+        categories: categoriesSnapshot.docs.map(doc => doc.id)
+      });
+      
+    } catch (error) {
+      console.error('❌ Error fetching menu from Firestore:', error);
+      res.status(500).json({ 
+        error: 'Failed to fetch menu from Firestore',
+        details: error.message 
+      });
+    }
+  });
+
   // Generate personalized combo endpoint
   app.post('/generate-combo', async (req, res) => {
     try {
       console.log('🤖 Received personalized combo request');
       
-      const { userName, dietaryPreferences, menuItems } = req.body;
+      const { userName, dietaryPreferences } = req.body;
       
-      if (!userName || !dietaryPreferences || !menuItems) {
+      if (!userName || !dietaryPreferences) {
         return res.status(400).json({ 
-          error: 'Missing required fields: userName, dietaryPreferences, menuItems' 
+          error: 'Missing required fields: userName, dietaryPreferences' 
         });
       }
       
-      // Send the FULL menu to ChatGPT - no filtering, let ChatGPT decide
-      console.log('🔍 DEBUG: All menu items received:', menuItems.length);
-      console.log('🔍 DEBUG: All menu items:', menuItems.map(item => `${item.id} (${item.isDumpling ? 'dumpling' : item.isDrink ? 'drink' : 'other'})`));
-      console.log('🔍 DEBUG: Dietary preferences:', dietaryPreferences);
+      // Fetch the complete, current menu from Firestore
+      console.log('🔍 Fetching current menu from Firestore...');
+      const db = admin.firestore();
+      
+      const categoriesSnapshot = await db.collection('menu').get();
+      const allMenuItems = [];
+      
+      for (const categoryDoc of categoriesSnapshot.docs) {
+        const categoryId = categoryDoc.id;
+        
+        // Get all items in this category
+        const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
+        
+        for (const itemDoc of itemsSnapshot.docs) {
+          try {
+            const itemData = itemDoc.data();
+            const menuItem = {
+              id: itemData.id || itemDoc.id,
+              description: itemData.description || '',
+              price: itemData.price || 0.0,
+              imageURL: itemData.imageURL || '',
+              isAvailable: itemData.isAvailable !== false,
+              paymentLinkID: itemData.paymentLinkID || '',
+              isDumpling: itemData.isDumpling || false,
+              isDrink: itemData.isDrink || false,
+              category: categoryId
+            };
+            allMenuItems.push(menuItem);
+          } catch (error) {
+            console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
+          }
+        }
+      }
+      
+      console.log(`🔍 Fetched ${allMenuItems.length} current menu items from Firestore`);
+      console.log(`🔍 Menu items:`, allMenuItems.map(item => `${item.id} (${item.isDumpling ? 'dumpling' : item.isDrink ? 'drink' : 'other'})`));
+      console.log(`🔍 Dietary preferences:`, dietaryPreferences);
       
       // Create dietary restrictions string
       const restrictions = [];
@@ -293,11 +403,11 @@ Remember: You're not just an assistant—you love helping people discover the be
       const spicePreference = dietaryPreferences.likesSpicyFood ? 
         'The customer enjoys spicy food. ' : '';
       
-      // Create menu items text for AI - send the FULL menu
+      // Create menu items text for AI - send the FULL current menu from Firestore
       const menuText = `
-Available menu items:
+Available menu items (current as of ${new Date().toLocaleString()}):
 
-${menuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} ${item.isDumpling ? '(dumpling)' : item.isDrink ? '(drink)' : ''}`).join('\n')}
+${allMenuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} ${item.isDumpling ? '(dumpling)' : item.isDrink ? '(drink)' : ''}`).join('\n')}
       `.trim();
       
       // Create AI prompt that lets ChatGPT actually choose the items
