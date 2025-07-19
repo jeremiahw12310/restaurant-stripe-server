@@ -28,6 +28,11 @@ const upload = multer({ dest: 'uploads/' });
 app.use(cors());
 app.use(express.json());
 
+// Enhanced combo memory system to prevent repeats
+const comboHistory = []; // Track last 50 combos to avoid repeats
+const MAX_HISTORY = 50;
+const recentUserCombos = new Map(); // Track per-user recent combos
+
 // Health check endpoint
 app.get('/', (req, res) => {
   res.json({ 
@@ -219,102 +224,150 @@ Available menu items (current as of ${new Date().toLocaleString()}):
 ${allMenuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} ${item.isDumpling ? '(dumpling)' : item.isDrink ? '(drink)' : ''}`).join('\n')}
     `.trim();
     
-    // Create deterministic item selection based on random seed
+    // Create AI prompt that lets ChatGPT actually choose the items
     const currentTime = new Date().toISOString();
-    const randomSeed = Math.floor(Math.random() * 1000);
+    const randomSeed = Math.floor(Math.random() * 10000); // Increased range
     const sessionId = Math.random().toString(36).substring(2, 15);
-    const timestamp = new Date();
-    const minute = timestamp.getMinutes();
-    const second = timestamp.getSeconds();
+    const minuteOfHour = new Date().getMinutes();
+    const secondOfMinute = new Date().getSeconds();
+    const dayOfWeek = new Date().getDay();
+    const hourOfDay = new Date().getHours();
     
-    // Parse menu items to categorize them
-    const menuItems = menuText.split('\n').filter(line => line.trim() && line.includes('$'));
-    const dumplings = [];
-    const appetizers = [];
-    const drinks = [];
+    // Advanced variety system with multiple factors
+    const varietyFactors = {
+      timeBased: minuteOfHour % 4, // 0-3 based on minute
+      dayBased: dayOfWeek % 3, // 0-2 based on day of week
+      hourBased: hourOfDay % 4, // 0-3 based on hour
+      seedBased: randomSeed % 10, // 0-9 based on random seed
+      secondBased: secondOfMinute % 5 // 0-4 based on seconds
+    };
     
-    menuItems.forEach(item => {
-      const priceMatch = item.match(/\$(\d+\.?\d*)/);
-      if (priceMatch) {
-        const price = parseFloat(priceMatch[1]);
-        const itemName = item.split('$')[0].trim();
-        
-        if (item.toLowerCase().includes('dumpling') || item.toLowerCase().includes('bao')) {
-          dumplings.push({ name: itemName, price: price });
-        } else if (item.toLowerCase().includes('tea') || item.toLowerCase().includes('coffee') || 
-                   item.toLowerCase().includes('drink') || item.toLowerCase().includes('milk')) {
-          drinks.push({ name: itemName, price: price });
-        } else {
-          appetizers.push({ name: itemName, price: price });
-        }
-      }
-    });
+    // Dynamic selection strategies based on multiple factors
+    const getSelectionStrategy = () => {
+      const strategyIndex = (varietyFactors.timeBased + varietyFactors.dayBased + varietyFactors.seedBased) % 8;
+      const strategies = [
+        "ULTRA_BUDGET: Choose the most affordable items (under $8 each)",
+        "PREMIUM_LUXURY: Choose the most expensive items (over $15 each)",
+        "POPULAR_MIX: Choose the most popular items from each category",
+        "ADVENTUROUS: Choose unique or specialty items",
+        "TRADITIONAL: Choose classic, traditional items",
+        "FUSION: Choose items that blend different cuisines",
+        "SEASONAL: Choose items that feel seasonal or fresh",
+        "COMFORT: Choose hearty, comforting items"
+      ];
+      return strategies[strategyIndex];
+    };
     
-    // Deterministic selection based on random seed and timestamp
-    const seedLastDigit = randomSeed % 10;
-    const minuteIndex = minute % 10;
-    const secondIndex = second % 10;
+    // Price range variation
+    const getPriceRange = () => {
+      const priceIndex = (varietyFactors.hourBased + varietyFactors.secondBased) % 4;
+      const ranges = [
+        "BUDGET: $5-12 total",
+        "MODERATE: $12-25 total", 
+        "PREMIUM: $25-40 total",
+        "LUXURY: $40+ total"
+      ];
+      return ranges[priceIndex];
+    };
     
-    // Select items based on strategy
-    let selectedDumpling, selectedAppetizer, selectedDrink;
+    // Flavor profile variation
+    const getFlavorProfile = () => {
+      const flavorIndex = (varietyFactors.dayBased + varietyFactors.seedBased) % 6;
+      const profiles = [
+        "SPICY: Choose items with heat and bold flavors",
+        "MILD: Choose gentle, subtle flavors",
+        "SWEET: Choose items with sweet or dessert-like elements",
+        "SAVORY: Choose rich, umami flavors",
+        "FRESH: Choose light, fresh, and crisp items",
+        "BALANCED: Mix of different flavor profiles"
+      ];
+      return profiles[flavorIndex];
+    };
     
-    // Dumpling selection
-    if (dumplings.length > 0) {
-      const dumplingIndex = (seedLastDigit + minuteIndex) % dumplings.length;
-      selectedDumpling = dumplings[dumplingIndex];
-    }
+    const selectionStrategy = getSelectionStrategy();
+    const priceRange = getPriceRange();
+    const flavorProfile = getFlavorProfile();
     
-    // Appetizer selection  
-    if (appetizers.length > 0) {
-      const appetizerIndex = (seedLastDigit + secondIndex) % appetizers.length;
-      selectedAppetizer = appetizers[appetizerIndex];
-    }
+    // Get recent combos for this user to avoid repeats
+    const userRecentCombos = recentUserCombos.get(userName) || [];
+    const recentItemIds = userRecentCombos.flatMap(combo => combo.items.map(item => item.id));
+    const globalRecentCombos = comboHistory.slice(-10); // Last 10 global combos
     
-    // Drink selection
-    if (drinks.length > 0) {
-      const drinkIndex = (minuteIndex + secondIndex) % drinks.length;
-      selectedDrink = drinks[drinkIndex];
-    }
-    
-    // Create the selected items array
-    const selectedItems = [];
-    if (selectedDumpling) {
-      selectedItems.push({ id: selectedDumpling.name, category: "dumplings" });
-    }
-    if (selectedAppetizer) {
-      selectedItems.push({ id: selectedAppetizer.name, category: "appetizers" });
-    }
-    if (selectedDrink) {
-      selectedItems.push({ id: selectedDrink.name, category: "drinks" });
-    }
-    
-    // Calculate total price
-    const totalPrice = [selectedDumpling, selectedAppetizer, selectedDrink]
-      .filter(item => item)
-      .reduce((sum, item) => sum + item.price, 0);
+    // Create a list of items to avoid
+    const itemsToAvoid = [...new Set([...recentItemIds, ...globalRecentCombos.flatMap(combo => combo.items.map(item => item.id))])];
     
     const prompt = `You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. 
 
 Customer: ${userName}
 ${restrictionsText}${spicePreference}
 
-I have already selected the following items for ${userName}'s personalized combo:
-${selectedItems.map(item => `- ${item.id} (${item.category})`).join('\n')}
+${menuText}
 
-Total Price: $${totalPrice.toFixed(2)}
+IMPORTANT: You must choose items from the EXACT menu above. Do not make up items.
 
-Please create a personalized response explaining why you chose these specific items for ${userName}. Consider their dietary preferences and restrictions. The combo should feel balanced and appealing.
+Please create a personalized combo for ${userName} with:
+1. One dumpling option (choose from items marked as dumplings above)
+2. One appetizer or side dish (choose from non-dumpling, non-drink items above)  
+3. One drink (choose from items marked as drinks above)
+4. Optionally one sauce or condiment (choose from items that seem like sauces/dips above) - only if it complements the combo well
 
-IMPORTANT: Do not change the items - use exactly the items I provided above.
+Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
+
+ULTRA-VARIETY SYSTEM:
+Current time: ${currentTime}
+Random seed: ${randomSeed}
+Session ID: ${sessionId}
+Minute: ${minuteOfHour}, Second: ${secondOfMinute}, Day: ${dayOfWeek}, Hour: ${hourOfDay}
+
+SELECTION STRATEGY: ${selectionStrategy}
+PRICE RANGE: ${priceRange}
+FLAVOR PROFILE: ${flavorProfile}
+
+CRITICAL VARIETY REQUIREMENTS:
+- You MUST choose completely different items each time
+- Use the selection strategy above to guide your choices
+- Respect the price range specified
+- Follow the flavor profile direction
+- Mix up categories - don't always choose the same type of items
+- Consider the time-based factors for additional variety
+- Random seed should influence which specific items you pick
+- Session ID ensures each request is unique
+- Vary between spicy/mild, sweet/savory, traditional/modern
+- Consider seasonal appropriateness based on current time
+
+ITEMS TO AVOID (recently recommended):
+${itemsToAvoid.length > 0 ? itemsToAvoid.join(', ') : 'None - all items available'}
+
+CRITICAL: Do NOT choose any of the items listed above. Choose completely different items.
+
+ITEM SELECTION RULES:
+- Use the random seed to determine which specific items to pick
+- If seed ends in 0-1: Choose first items in each category
+- If seed ends in 2-3: Choose middle items in each category  
+- If seed ends in 4-5: Choose last items in each category
+- If seed ends in 6-7: Choose alternating items (first, last, first)
+- If seed ends in 8-9: Choose items based on minute of hour
+
+IMPORTANT RULES:
+- Choose items that actually exist in the menu above
+- Consider dietary restrictions carefully
+- Create maximum variety - never repeat the same combination
+- Consider flavor combinations that work well together
+- Calculate the total price by adding up the prices of your chosen items
+- For milk teas and coffees, note that milk substitutes (oat milk, almond milk, coconut milk) are available for lactose intolerant customers
 
 Respond in this exact JSON format:
 {
-  "items": ${JSON.stringify(selectedItems)},
+  "items": [
+    {"id": "Exact Item Name from Menu", "category": "dumplings"},
+    {"id": "Exact Item Name from Menu", "category": "appetizers"},
+    {"id": "Exact Item Name from Menu", "category": "drinks"}
+  ],
   "aiResponse": "A 3-sentence personalized response starting with the customer's name, explaining why you chose these items for them. Make them feel seen and understood.",
-  "totalPrice": ${totalPrice.toFixed(2)}
+  "totalPrice": 0.00
 }
 
-Keep the response warm and personal.`;
+Calculate the total price accurately. Keep the response warm and personal.`;
     
     console.log('🤖 Sending request to OpenAI...');
     
@@ -358,6 +411,31 @@ Keep the response warm and personal.`;
     }
     
     console.log('✅ Generated personalized combo successfully');
+    
+    // Store combo in memory to avoid repeats
+    const comboToStore = {
+      items: comboData.items,
+      timestamp: new Date().toISOString(),
+      userName: userName
+    };
+    
+    // Add to global history
+    comboHistory.push(comboToStore);
+    if (comboHistory.length > MAX_HISTORY) {
+      comboHistory.shift(); // Remove oldest
+    }
+    
+    // Add to user-specific history
+    if (!recentUserCombos.has(userName)) {
+      recentUserCombos.set(userName, []);
+    }
+    const userCombos = recentUserCombos.get(userName);
+    userCombos.push(comboToStore);
+    if (userCombos.length > 5) { // Keep last 5 per user
+      userCombos.shift();
+    }
+    
+    console.log(`📝 Stored combo in memory. Global history: ${comboHistory.length}, User history: ${userCombos.length}`);
     
     res.json(comboData);
     
