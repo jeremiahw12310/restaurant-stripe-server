@@ -5,6 +5,26 @@ const cors = require('cors');
 const fs = require('fs');
 const { OpenAI } = require('openai');
 
+// Initialize Firebase Admin SDK
+let admin;
+try {
+  admin = require('firebase-admin');
+  
+  // Check if Firebase service account key is provided
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+    console.log('✅ Firebase Admin SDK initialized successfully');
+  } else {
+    console.log('⚠️ FIREBASE_SERVICE_ACCOUNT_KEY not found, Firebase features will be disabled');
+  }
+} catch (error) {
+  console.error('❌ Failed to initialize Firebase Admin SDK:', error.message);
+  admin = { apps: [] }; // Fallback to prevent errors
+}
+
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 app.use(cors());
@@ -281,9 +301,64 @@ Remember: You're not just an assistant—you love helping people discover the be
         });
       }
       
+      // Check if menu items have proper categories
+      const hasProperCategories = menuItems.some(item => item.category && item.category !== 'Other' && item.category !== 'uncategorized');
+      
+      let allMenuItems = menuItems;
+      
+      // If menu items don't have proper categories, fetch from Firebase
+      if (!hasProperCategories) {
+        console.log('🔍 Menu items lack proper categories, fetching from Firebase...');
+        
+        if (admin.apps.length) {
+          try {
+            const db = admin.firestore();
+            
+            // Get all menu categories
+            const categoriesSnapshot = await db.collection('menu').get();
+            
+            for (const categoryDoc of categoriesSnapshot.docs) {
+              const categoryId = categoryDoc.id;
+              console.log(`🔍 Processing category: ${categoryId}`);
+              
+              // Get all items in this category
+              const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
+              
+              for (const itemDoc of itemsSnapshot.docs) {
+                try {
+                  const itemData = itemDoc.data();
+                  const menuItem = {
+                    id: itemData.id || itemDoc.id,
+                    description: itemData.description || '',
+                    price: itemData.price || 0.0,
+                    imageURL: itemData.imageURL || '',
+                    isAvailable: itemData.isAvailable !== false,
+                    paymentLinkID: itemData.paymentLinkID || '',
+                    category: categoryId
+                  };
+                  allMenuItems.push(menuItem);
+                  console.log(`✅ Added item: ${menuItem.id} (${categoryId})`);
+                } catch (error) {
+                  console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
+                }
+              }
+            }
+            
+            console.log(`✅ Successfully fetched ${allMenuItems.length} menu items from Firestore`);
+          } catch (error) {
+            console.error('❌ Error fetching from Firestore:', error);
+            // Continue with original menu items if Firebase fetch fails
+          }
+        } else {
+          console.error('❌ Firebase not configured, using original menu items');
+        }
+      } else {
+        console.log('✅ Menu items have proper categories, using as-is');
+      }
+      
       // Send the FULL menu to ChatGPT - no filtering, let ChatGPT decide
-      console.log('🔍 DEBUG: All menu items received:', menuItems.length);
-      console.log('🔍 DEBUG: All menu items:', menuItems.map(item => `${item.id} (${item.category || 'uncategorized'})`));
+      console.log('🔍 DEBUG: All menu items received:', allMenuItems.length);
+      console.log('🔍 DEBUG: All menu items:', allMenuItems.map(item => `${item.id} (${item.category || 'uncategorized'})`));
       console.log('🔍 DEBUG: Dietary preferences:', dietaryPreferences);
       
       // Create dietary restrictions string
@@ -302,7 +377,7 @@ Remember: You're not just an assistant—you love helping people discover the be
       
       // Group menu items by their Firebase categories
       const menuByCategory = {};
-      menuItems.forEach(item => {
+      allMenuItems.forEach(item => {
         const category = item.category || 'Other';
         if (!menuByCategory[category]) {
           menuByCategory[category] = [];
