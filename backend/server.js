@@ -378,107 +378,83 @@ Remember: You're not just an assistant—you love helping people discover the be
       console.log('Drinks:', drinks.map(item => item.id));
       console.log('Sauces:', sauces.map(item => item.id));
       
-      // Enhanced selection with better variety and rotation
-      const selectedItems = [];
+      // Create dietary restrictions string
+      const restrictions = [];
+      if (dietaryPreferences.hasPeanutAllergy) restrictions.push('peanut allergy');
+      if (dietaryPreferences.isVegetarian) restrictions.push('vegetarian');
+      if (dietaryPreferences.hasLactoseIntolerance) restrictions.push('lactose intolerant');
+      if (dietaryPreferences.doesntEatPork) restrictions.push('no pork');
+      if (dietaryPreferences.dislikesSpicyFood) restrictions.push('no spicy food');
       
-      // Create rotation indices based on user name and time for variety
-      const timeSeed = Math.floor(Date.now() / 1000) % 3600; // Changes every hour
-      const userSeed = userName.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-      const rotationIndex = (timeSeed + userSeed) % Math.max(dumplings.length, appetizers.length, drinks.length, 1);
+      const restrictionsText = restrictions.length > 0 ? 
+        `Dietary restrictions: ${restrictions.join(', ')}. ` : '';
       
-      // Select dumpling if available with rotation
-      if (dumplings.length > 0) {
-        const dumplingIndex = rotationIndex % dumplings.length;
-        const selectedDumpling = dumplings[dumplingIndex];
-        selectedItems.push({
-          id: selectedDumpling.id,
-          category: 'dumplings'
-        });
-      }
+      const spicePreference = dietaryPreferences.likesSpicyFood ? 
+        'The customer enjoys spicy food. ' : '';
       
-      // Select appetizer if available with rotation
-      if (appetizers.length > 0) {
-        const appetizerIndex = (rotationIndex + 1) % appetizers.length;
-        const selectedAppetizer = appetizers[appetizerIndex];
-        selectedItems.push({
-          id: selectedAppetizer.id,
-          category: 'appetizers'
-        });
-      }
-      
-      // Select drink if available with rotation
-      if (drinks.length > 0) {
-        const drinkIndex = (rotationIndex + 2) % drinks.length;
-        const selectedDrink = drinks[drinkIndex];
-        selectedItems.push({
-          id: selectedDrink.id,
-          category: 'drinks'
-        });
-      }
-      
-      // Select sauce if available (optional, with rotation)
-      if (sauces.length > 0 && (rotationIndex % 3) === 0) {
-        const sauceIndex = rotationIndex % sauces.length;
-        const selectedSauce = sauces[sauceIndex];
-        selectedItems.push({
-          id: selectedSauce.id,
-          category: 'sauces'
-        });
-      }
-      
-      // Calculate total price
-      const totalPrice = selectedItems.reduce((total, item) => {
-        const menuItem = menuItems.find(mi => mi.id === item.id);
-        return total + (menuItem ? menuItem.price : 0);
-      }, 0);
-      
-      console.log('🤖 Sending request to OpenAI...');
-      
-      // Create comprehensive prompt for OpenAI with detailed dietary information
-      const prompt = `You are Dumpling Hero, the friendly assistant for Dumpling House in Nashville, TN. Create a personalized response for a customer named "${userName}" who has ordered the following combo:
+      // Create menu items text for AI with better organization
+      const menuText = `
+Available menu items:
 
-${selectedItems.map(item => `- ${item.id} (${item.category})`).join('\n')}
+Dumplings:
+${dumplings.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
 
-Total price: $${totalPrice.toFixed(2)}
+Appetizers:
+${appetizers.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
 
-Dietary preferences:
-- Likes spicy food: ${dietaryPreferences.likesSpicyFood}
-- Dislikes spicy food: ${dietaryPreferences.dislikesSpicyFood}
-- Has peanut allergy: ${dietaryPreferences.hasPeanutAllergy}
-- Is vegetarian: ${dietaryPreferences.isVegetarian}
-- Has lactose intolerance: ${dietaryPreferences.hasLactoseIntolerance}
-- Doesn't eat pork: ${dietaryPreferences.doesntEatPork}
+Drinks:
+${drinks.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
 
-IMPORTANT DIETARY INFORMATION:
-- Veggie dumplings include: cabbage, carrots, onions, celery, shiitake mushrooms, glass noodles
-- Contains peanut butter: cold noodles with peanut sauce, cold tofu, peanut butter pork
-- Contains shellfish: pork and shrimp, and the cold noodles
-- There's dairy inside curry chicken and the curry sauce and the curry rice
-- There's a little onion in pork, curry chicken and curry beef and onion
+Sauces:
+${sauces.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
+      `.trim();
+      
+      // Create AI prompt that lets ChatGPT actually choose the items
+      const prompt = `You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. 
 
-MILK SUBSTITUTIONS: For customers with lactose intolerance, our milk teas and coffee lattes can be made with oat milk, almond milk, or coconut milk instead of regular milk. When recommending these drinks to lactose intolerant customers, always mention the milk substitution options available.
+Customer: ${userName}
+${restrictionsText}${spicePreference}
 
-Please provide a friendly, personalized response explaining why you chose these items for this customer. Keep it warm and welcoming, around 2-3 sentences. 
+${menuText}
+
+IMPORTANT: You must choose items from the EXACT menu above. Do not make up items.
+
+Please create a personalized combo for ${userName} with:
+1. One dumpling option (choose from the Dumplings section above)
+2. One appetizer (choose from the Appetizers section above)  
+3. One drink (choose from the Drinks section above)
+4. Optionally one sauce (choose from the Sauces section above) - only if it complements the combo well
+
+Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
 
 IMPORTANT RULES:
-- If the customer has lactose intolerance and you're recommending a milk-based drink (like milk tea, coffee latte, etc.), make sure to mention that they can substitute with oat milk, almond milk, or coconut milk.
-- Don't mention the total price in your response.
-- Don't mention dietary restrictions unless they're relevant to the selection.
-- Use the customer's name to make it personal.
+- Choose items that actually exist in the menu above
+- Consider dietary restrictions carefully
+- Create variety - don't always choose the same items
+- Consider flavor combinations that work well together
+- Calculate the total price by adding up the prices of your chosen items
 
 Respond in this exact JSON format:
 {
-  "items": ${JSON.stringify(selectedItems)},
-  "aiResponse": "your personalized message here",
-  "totalPrice": ${totalPrice.toFixed(2)}
-}`;
+  "items": [
+    {"id": "Exact Item Name from Menu", "category": "dumplings"},
+    {"id": "Exact Item Name from Menu", "category": "appetizers"},
+    {"id": "Exact Item Name from Menu", "category": "drinks"}
+  ],
+  "aiResponse": "A 3-sentence personalized response starting with the customer's name, explaining why you chose these items for them. Make them feel seen and understood.",
+  "totalPrice": 0.00
+}
 
+Calculate the total price accurately. Keep the response warm and personal.`;
+      
+      console.log('🤖 Sending request to OpenAI...');
+      
       const completion = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
-            content: "You are Dumpling Hero, the friendly assistant for Dumpling House. Always respond with valid JSON in the exact format requested. Never mention the total price in your response."
+            content: "You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. Always respond with valid JSON in the exact format requested."
           },
           {
             role: "user",
@@ -486,27 +462,35 @@ Respond in this exact JSON format:
           }
         ],
         temperature: 0.7,
-        max_tokens: 300
+        max_tokens: 500
       });
-
+      
       const aiResponse = completion.choices[0].message.content;
       console.log('🤖 AI Response:', aiResponse);
       
-      let parsedResponse;
+      // Parse AI response
+      let comboData;
       try {
-        parsedResponse = JSON.parse(aiResponse);
-      } catch (error) {
-        console.error('❌ Failed to parse AI response:', error);
-        // Fallback response
-        parsedResponse = {
-          items: selectedItems,
-          aiResponse: `Hi ${userName}! I've created a delicious combo just for you. Enjoy your meal!`,
-          totalPrice: totalPrice.toFixed(2)
-        };
+        comboData = JSON.parse(aiResponse);
+      } catch (parseError) {
+        console.error('❌ Failed to parse AI response:', parseError);
+        return res.status(500).json({ 
+          error: 'Failed to parse AI response',
+          aiResponse: aiResponse 
+        });
       }
-
-      res.json(parsedResponse);
+      
+      // Validate response structure
+      if (!comboData.items || !comboData.aiResponse || typeof comboData.totalPrice !== 'number') {
+        return res.status(500).json({ 
+          error: 'Invalid AI response structure',
+          aiResponse: aiResponse 
+        });
+      }
+      
       console.log('✅ Generated personalized combo successfully');
+      
+      res.json(comboData);
       
     } catch (error) {
       console.error('❌ Error generating personalized combo:', error);

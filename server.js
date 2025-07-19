@@ -63,7 +63,7 @@ app.post('/generate-combo', async (req, res) => {
     const spicePreference = dietaryPreferences.likesSpicyFood ? 
       'The customer enjoys spicy food. ' : '';
     
-    // Create menu items text for AI
+    // Create menu items text for AI with better organization
     const menuText = `
 Available menu items:
 
@@ -80,7 +80,7 @@ Sauces:
 ${sauces.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
     `.trim();
     
-    // Create AI prompt
+    // Create AI prompt that lets ChatGPT actually choose the items
     const prompt = `You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. 
 
 Customer: ${userName}
@@ -88,20 +88,29 @@ ${restrictionsText}${spicePreference}
 
 ${menuText}
 
+IMPORTANT: You must choose items from the EXACT menu above. Do not make up items.
+
 Please create a personalized combo for ${userName} with:
-1. One dumpling option (or half and half if available)
-2. One appetizer
-3. One drink
-4. Occasionally a sauce (if it complements the combo well)
+1. One dumpling option (choose from the Dumplings section above)
+2. One appetizer (choose from the Appetizers section above)  
+3. One drink (choose from the Drinks section above)
+4. Optionally one sauce (choose from the Sauces section above) - only if it complements the combo well
 
 Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
+
+IMPORTANT RULES:
+- Choose items that actually exist in the menu above
+- Consider dietary restrictions carefully
+- Create variety - don't always choose the same items
+- Consider flavor combinations that work well together
+- Calculate the total price by adding up the prices of your chosen items
 
 Respond in this exact JSON format:
 {
   "items": [
-    {"id": "Item Name", "category": "dumplings"},
-    {"id": "Item Name", "category": "appetizers"},
-    {"id": "Item Name", "category": "drinks"}
+    {"id": "Exact Item Name from Menu", "category": "dumplings"},
+    {"id": "Exact Item Name from Menu", "category": "appetizers"},
+    {"id": "Exact Item Name from Menu", "category": "drinks"}
   ],
   "aiResponse": "A 3-sentence personalized response starting with the customer's name, explaining why you chose these items for them. Make them feel seen and understood.",
   "totalPrice": 0.00
