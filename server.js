@@ -20,25 +20,196 @@ app.use(express.json());
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// Initialize Firebase Admin
+const admin = require('firebase-admin');
+
+// Check if Firebase credentials are available
+if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+  try {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+    console.log('✅ Firebase Admin initialized successfully');
+  } catch (error) {
+    console.error('❌ Error initializing Firebase Admin:', error);
+  }
+} else {
+  console.warn('⚠️ FIREBASE_SERVICE_ACCOUNT_KEY not found - Firebase features will not work');
+}
+
 // MARK: - Personalized Combo Generation
+
+// Fetch complete menu from Firestore endpoint
+app.get('/firestore-menu', async (req, res) => {
+  try {
+    console.log('🔍 Fetching complete menu from Firestore...');
+    
+    if (!admin.apps.length) {
+      return res.status(500).json({ 
+        error: 'Firebase not initialized - FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
+      });
+    }
+    
+    const db = admin.firestore();
+    
+    // Get all menu categories
+    const categoriesSnapshot = await db.collection('menu').get();
+    const allMenuItems = [];
+    
+    for (const categoryDoc of categoriesSnapshot.docs) {
+      const categoryId = categoryDoc.id;
+      console.log(`🔍 Processing category: ${categoryId}`);
+      
+      // Get all items in this category
+      const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
+      
+      for (const itemDoc of itemsSnapshot.docs) {
+        try {
+          const itemData = itemDoc.data();
+          const menuItem = {
+            id: itemData.id || itemDoc.id,
+            description: itemData.description || '',
+            price: itemData.price || 0.0,
+            imageURL: itemData.imageURL || '',
+            isAvailable: itemData.isAvailable !== false,
+            paymentLinkID: itemData.paymentLinkID || '',
+            isDumpling: itemData.isDumpling || false,
+            isDrink: itemData.isDrink || false,
+            category: categoryId
+          };
+          allMenuItems.push(menuItem);
+          console.log(`✅ Added item: ${menuItem.id} (${categoryId})`);
+        } catch (error) {
+          console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
+        }
+      }
+    }
+    
+    console.log(`✅ Fetched ${allMenuItems.length} menu items from Firestore`);
+    
+    res.json({
+      success: true,
+      menuItems: allMenuItems,
+      totalItems: allMenuItems.length,
+      categories: categoriesSnapshot.docs.map(doc => doc.id)
+    });
+    
+  } catch (error) {
+    console.error('❌ Error fetching menu from Firestore:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch menu from Firestore',
+      details: error.message 
+    });
+  }
+});
 
 // Generate personalized combo endpoint
 app.post('/generate-combo', async (req, res) => {
   try {
     console.log('🤖 Received personalized combo request');
+    console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
     
-    const { userName, dietaryPreferences, menuItems } = req.body;
+    const { userName, dietaryPreferences } = req.body;
     
-    if (!userName || !dietaryPreferences || !menuItems) {
+    if (!userName || !dietaryPreferences) {
+      console.log('❌ Missing required fields. Received:', { userName: !!userName, dietaryPreferences: !!dietaryPreferences });
       return res.status(400).json({ 
-        error: 'Missing required fields: userName, dietaryPreferences, menuItems' 
+        error: 'Missing required fields: userName, dietaryPreferences',
+        received: { userName: !!userName, dietaryPreferences: !!dietaryPreferences }
       });
     }
     
-    // Send the FULL menu to ChatGPT - no filtering, let ChatGPT decide
-    console.log('🔍 DEBUG: All menu items received:', menuItems.length);
-    console.log('🔍 DEBUG: All menu items:', menuItems.map(item => `${item.id} (${item.isDumpling ? 'dumpling' : item.isDrink ? 'drink' : 'other'})`));
-    console.log('🔍 DEBUG: Dietary preferences:', dietaryPreferences);
+    // Fetch the complete, current menu from Firestore or use fallback
+    console.log('🔍 Fetching current menu...');
+    
+    let allMenuItems = [];
+    
+    if (admin.apps.length) {
+      // Use Firestore if available
+      console.log('🔍 Using Firestore for menu data...');
+      const db = admin.firestore();
+      
+      const categoriesSnapshot = await db.collection('menu').get();
+      
+      for (const categoryDoc of categoriesSnapshot.docs) {
+        const categoryId = categoryDoc.id;
+        
+        // Get all items in this category
+        const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
+        
+        for (const itemDoc of itemsSnapshot.docs) {
+          try {
+            const itemData = itemDoc.data();
+            const menuItem = {
+              id: itemData.id || itemDoc.id,
+              description: itemData.description || '',
+              price: itemData.price || 0.0,
+              imageURL: itemData.imageURL || '',
+              isAvailable: itemData.isAvailable !== false,
+              paymentLinkID: itemData.paymentLinkID || '',
+              isDumpling: itemData.isDumpling || false,
+              isDrink: itemData.isDrink || false,
+              category: categoryId
+            };
+            allMenuItems.push(menuItem);
+          } catch (error) {
+            console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
+          }
+        }
+      }
+    } else {
+      // Use fallback static menu data
+      console.log('🔍 Using fallback static menu data...');
+      allMenuItems = [
+        // Dumplings
+        { id: "No.9 Pork (12)", price: 13.99, description: "Classic pork dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
+        { id: "No.2 Pork & Chive (12)", price: 15.99, description: "Pork and chive dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
+        { id: "No.4 Pork Shrimp (12)", price: 16.99, description: "Pork and shrimp dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
+        { id: "No.5 Pork & Cabbage (12)", price: 14.99, description: "Pork and cabbage dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
+        { id: "No.3 Spicy Pork (12)", price: 14.99, description: "Spicy pork dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
+        { id: "No.7 Curry Chicken (12)", price: 12.99, description: "Curry chicken dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
+        { id: "No.8 Chicken & Coriander (12)", price: 13.99, description: "Chicken and coriander dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
+        { id: "No.1 Chicken & Mushroom (12)", price: 14.99, description: "Chicken and mushroom dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
+        { id: "No.10 Curry Beef & Onion (12)", price: 15.99, description: "Curry beef and onion dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
+        { id: "No.6 Veggie (12)", price: 13.99, description: "Vegetable dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
+        
+        // Appetizers
+        { id: "Edamame", price: 4.99, description: "Steamed soybeans", isDumpling: false, isDrink: false, category: "appetizers" },
+        { id: "Asian Pickled Cucumbers", price: 5.75, description: "Pickled cucumbers", isDumpling: false, isDrink: false, category: "appetizers" },
+        { id: "(Crab & Shrimp) Cold Noodle w/ Peanut Sauce", price: 8.35, description: "Cold noodles with peanut sauce", isDumpling: false, isDrink: false, category: "appetizers" },
+        { id: "Peanut Butter Pork Dumplings", price: 7.99, description: "Peanut butter pork dumplings", isDumpling: false, isDrink: false, category: "appetizers" },
+        { id: "Spicy Tofu", price: 5.99, description: "Spicy tofu", isDumpling: false, isDrink: false, category: "appetizers" },
+        { id: "Curry Rice w/ Chicken", price: 7.75, description: "Curry rice with chicken", isDumpling: false, isDrink: false, category: "appetizers" },
+        { id: "Jasmine White Rice", price: 2.75, description: "Jasmine white rice", isDumpling: false, isDrink: false, category: "appetizers" },
+        { id: "Cold Tofu", price: 5.99, description: "Cold tofu", isDumpling: false, isDrink: false, category: "appetizers" },
+        
+        // Soups
+        { id: "Hot & Sour Soup", price: 5.95, description: "Hot and sour soup", isDumpling: false, isDrink: false, category: "soups" },
+        { id: "Pork Wonton Soup", price: 6.95, description: "Pork wonton soup", isDumpling: false, isDrink: false, category: "soups" },
+        
+        // Drinks
+        { id: "Bubble Milk Tea w/ Tapioca", price: 5.90, description: "Bubble milk tea with tapioca", isDumpling: false, isDrink: true, category: "drinks" },
+        { id: "Fresh Milk Tea", price: 5.90, description: "Fresh milk tea", isDumpling: false, isDrink: true, category: "drinks" },
+        { id: "Capped Thai Brown Sugar", price: 6.90, description: "Capped Thai brown sugar milk tea", isDumpling: false, isDrink: true, category: "drinks" },
+        { id: "Strawberry Fresh", price: 6.75, description: "Strawberry fresh milk tea", isDumpling: false, isDrink: true, category: "drinks" },
+        { id: "Peach Fresh", price: 6.50, description: "Peach fresh milk tea", isDumpling: false, isDrink: true, category: "drinks" },
+        { id: "Lychee Dragon Fruit", price: 6.50, description: "Lychee dragon fruit tea", isDumpling: false, isDrink: true, category: "drinks" },
+        { id: "Peach Strawberry", price: 6.75, description: "Peach strawberry fruit tea", isDumpling: false, isDrink: true, category: "drinks" },
+        { id: "Coffee Latte", price: 5.50, description: "Coffee latte", isDumpling: false, isDrink: true, category: "drinks" },
+        { id: "Coke", price: 2.25, description: "Coca Cola", isDumpling: false, isDrink: true, category: "drinks" },
+        { id: "Bottle Water", price: 1.00, description: "Bottle water", isDumpling: false, isDrink: true, category: "drinks" },
+        
+        // Sauces
+        { id: "Peanut Sauce", price: 1.50, description: "Peanut sauce", isDumpling: false, isDrink: false, category: "sauces" },
+        { id: "SPICY Peanut Sauce", price: 1.50, description: "Spicy peanut sauce", isDumpling: false, isDrink: false, category: "sauces" },
+        { id: "Curry Sauce w/ Chicken", price: 1.50, description: "Curry sauce with chicken", isDumpling: false, isDrink: false, category: "sauces" }
+      ];
+    }
+    
+    console.log(`🔍 Fetched ${allMenuItems.length} current menu items from Firestore`);
+    console.log(`🔍 Menu items:`, allMenuItems.map(item => `${item.id} (${item.isDumpling ? 'dumpling' : item.isDrink ? 'drink' : 'other'})`));
+    console.log(`🔍 Dietary preferences:`, dietaryPreferences);
     
     // Create dietary restrictions string
     const restrictions = [];
@@ -54,11 +225,11 @@ app.post('/generate-combo', async (req, res) => {
     const spicePreference = dietaryPreferences.likesSpicyFood ? 
       'The customer enjoys spicy food. ' : '';
     
-    // Create menu items text for AI - send the FULL menu
+    // Create menu items text for AI - send the FULL current menu from Firestore
     const menuText = `
-Available menu items:
+Available menu items (current as of ${new Date().toLocaleString()}):
 
-${menuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} ${item.isDumpling ? '(dumpling)' : item.isDrink ? '(drink)' : ''}`).join('\n')}
+${allMenuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} ${item.isDumpling ? '(dumpling)' : item.isDrink ? '(drink)' : ''}`).join('\n')}
     `.trim();
     
     // Create AI prompt that lets ChatGPT actually choose the items
@@ -160,8 +331,10 @@ app.get('/', (req, res) => {
     status: 'Server is running!', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    server: 'ROOT server.js with gpt-4.1-nano and Stripe',
-    stripeConfigured: !!process.env.STRIPE_SECRET_KEY
+    server: 'ROOT server.js with gpt-4o-mini and Stripe',
+    stripeConfigured: !!process.env.STRIPE_SECRET_KEY,
+    firebaseConfigured: !!admin.apps.length,
+    openaiConfigured: !!process.env.OPENAI_API_KEY
   });
 });
 
@@ -438,7 +611,8 @@ If a field is missing, use null.
           { name: "Peanut Butter Pork Dumplings", price: 7.99 },
           { name: "Spicy Tofu", price: 5.99 },
           { name: "Curry Rice w/ Chicken", price: 7.75 },
-          { name: "Jasmine White Rice", price: 2.75 }
+          { name: "Jasmine White Rice", price: 2.75 },
+          { name: "Cold Tofu", price: 5.99 }
         ],
         soups: [
           { name: "Hot & Sour Soup", price: 5.95 },
@@ -517,18 +691,35 @@ If a field is missing, use null.
             { name: "Grape", price: 5.25 },
             { name: "Original Lemonade", price: 5.50 }
           ],
+          soda: [
+            { name: "Pineapple", price: 5.50 },
+            { name: "Lychee Mint", price: 5.50 },
+            { name: "Peach Mint", price: 5.50 },
+            { name: "Passion Fruit", price: 5.25 },
+            { name: "Mango", price: 5.50 },
+            { name: "Strawberry", price: 5.50 },
+            { name: "Grape", price: 5.25 }
+          ],
           other: [
             { name: "Coke", price: 2.25 },
             { name: "Diet Coke", price: 2.25 },
             { name: "Sprite", price: 2.25 },
             { name: "Bottle Water", price: 1.00 },
-            { name: "Cup Water", price: 1.00 }
+            { name: "Cup Water", price: 1.00 },
+            { name: "Soda", price: 2.25 }
           ]
         },
         toppings: [
           { name: "Coffee Jelly", price: 0.50 },
           { name: "Boba Jelly", price: 0.50 },
-          { name: "Lychee Popping Jelly", price: 0.50 }
+          { name: "Lychee Popping Jelly", price: 0.50 },
+          { name: "Pineapple Nada Jelly", price: 0.50 },
+          { name: "Tiramisu Foam", price: 0.75 },
+          { name: "Brown Sugar Boba Jelly", price: 0.50 },
+          { name: "Mango Star Jelly", price: 0.50 },
+          { name: "Whipped Cream", price: 0.25 },
+          { name: "Cheese Foam", price: 0.75 },
+          { name: "Tapioca", price: 0.50 }
         ],
         sauces: [
           { name: "Peanut Sauce", price: 1.50 },
@@ -544,7 +735,19 @@ If a field is missing, use null.
         containsDairy: ["curry chicken", "curry sauce", "curry rice"],
         containsOnion: ["pork", "curry chicken", "curry beef and onion"],
         vegan: false,
-        delivery: false
+        delivery: false,
+        milkSubstitutions: ["oat milk", "almond milk", "coconut milk"],
+        drinkCustomizations: {
+          iceLevels: ["25%", "50%", "75%", "100%"],
+          sugarLevels: ["25%", "50%", "75%", "100%"],
+          realFruitDrinks: [
+            "strawberry fresh milk tea", "peach fresh milk tea", "pineapple fresh milk tea",
+            "lychee dragon fruit tea", "grape magic fruit tea", "full of mango fruit tea", 
+            "peach strawberry fruit tea", "pineapple fruit tea", "kiwi booster fruit tea", 
+            "watermelon code fruit tea", "lychee mint lemonade", "strawberry lemonade", 
+            "mango lemonade", "pineapple lemonade"
+          ]
+        }
       },
       policies: {
         reservations: "No reservations needed for groups under 8",
@@ -1001,4 +1204,5 @@ app.listen(port, '0.0.0.0', () => {
   console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔑 OpenAI API Key configured: ${process.env.OPENAI_API_KEY ? 'Yes' : 'No'}`);
   console.log(`💳 Stripe configured: ${process.env.STRIPE_SECRET_KEY ? 'Yes' : 'No'}`);
+  console.log(`🔥 Firebase configured: ${admin.apps.length ? 'Yes' : 'No'}`);
 });
