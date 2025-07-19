@@ -407,13 +407,17 @@ Calculate the total price accurately. Keep the response warm and personal.`;
     }
 
     // Add to recommendation history
-    const newHistoryItem = {
-      itemId: comboData.items[0].id, // Assuming the first item is the main choice
-      timestamp: new Date().toISOString()
-    };
-    userHistory.push(newHistoryItem);
+    comboData.items.forEach(item => {
+      const newHistoryItem = {
+        itemId: item.id,
+        timestamp: new Date().toISOString()
+      };
+      userHistory.push(newHistoryItem);
+    });
+    
+    // Keep only the most recent items (remove oldest if over limit)
     if (userHistory.length > MAX_HISTORY_PER_USER) {
-      userHistory.shift();
+      userHistory.splice(0, userHistory.length - MAX_HISTORY_PER_USER);
     }
     recommendationHistory.set(userName, userHistory);
     
