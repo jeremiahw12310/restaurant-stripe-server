@@ -19,7 +19,7 @@ if (process.env.FIREBASE_AUTH_TYPE === 'adc') {
   } catch (error) {
     console.error('❌ Error initializing Firebase Admin with ADC:', error);
   }
-} else if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+} else if (process.env.FIREBASE_AUTH_TYPE === 'service-account' && process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
   // Use service account key
   try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
@@ -27,6 +27,17 @@ if (process.env.FIREBASE_AUTH_TYPE === 'adc') {
       credential: admin.credential.cert(serviceAccount)
     });
     console.log('✅ Firebase Admin initialized with service account key');
+  } catch (error) {
+    console.error('❌ Error initializing Firebase Admin with service account:', error);
+  }
+} else if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+  // Fallback: Use service account key if available
+  try {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+    console.log('✅ Firebase Admin initialized with service account key (fallback)');
   } catch (error) {
     console.error('❌ Error initializing Firebase Admin with service account:', error);
   }

@@ -13,7 +13,7 @@ services:
       - key: FIREBASE_SERVICE_ACCOUNT_KEY
         sync: false
       - key: FIREBASE_AUTH_TYPE
-        value: adc
+        value: service-account
       - key: GOOGLE_CLOUD_PROJECT
         value: dumplinghouseapp
     healthCheckPath: / 
