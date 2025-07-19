@@ -301,63 +301,54 @@ Remember: You're not just an assistant—you love helping people discover the be
         });
       }
       
-      // Check if menu items have proper categories
-      const hasProperCategories = menuItems.some(item => item.category && item.category !== 'Other' && item.category !== 'uncategorized');
+      // Always try to fetch properly categorized items from Firebase first
+      let allMenuItems = [];
       
-      let allMenuItems = menuItems;
-      
-      // If menu items don't have proper categories, try to categorize them from descriptions
-      if (!hasProperCategories) {
-        console.log('🔍 Menu items lack proper categories, attempting to categorize from descriptions...');
-        
-        // First try Firebase if available
-        if (admin.apps.length) {
-          try {
-            const db = admin.firestore();
+      if (admin.apps.length) {
+        try {
+          console.log('🔍 Fetching properly categorized menu items from Firebase...');
+          const db = admin.firestore();
+          
+          // Get all menu categories
+          const categoriesSnapshot = await db.collection('menu').get();
+          
+          for (const categoryDoc of categoriesSnapshot.docs) {
+            const categoryId = categoryDoc.id;
+            console.log(`🔍 Processing category: ${categoryId}`);
             
-            // Get all menu categories
-            const categoriesSnapshot = await db.collection('menu').get();
+            // Get all items in this category
+            const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
             
-            for (const categoryDoc of categoriesSnapshot.docs) {
-              const categoryId = categoryDoc.id;
-              console.log(`🔍 Processing category: ${categoryId}`);
-              
-              // Get all items in this category
-              const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
-              
-              for (const itemDoc of itemsSnapshot.docs) {
-                try {
-                  const itemData = itemDoc.data();
-                  const menuItem = {
-                    id: itemData.id || itemDoc.id,
-                    description: itemData.description || '',
-                    price: itemData.price || 0.0,
-                    imageURL: itemData.imageURL || '',
-                    isAvailable: itemData.isAvailable !== false,
-                    paymentLinkID: itemData.paymentLinkID || '',
-                    category: categoryId
-                  };
-                  allMenuItems.push(menuItem);
-                  console.log(`✅ Added item: ${menuItem.id} (${categoryId})`);
-                } catch (error) {
-                  console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
-                }
+            for (const itemDoc of itemsSnapshot.docs) {
+              try {
+                const itemData = itemDoc.data();
+                const menuItem = {
+                  id: itemData.id || itemDoc.id,
+                  description: itemData.description || '',
+                  price: itemData.price || 0.0,
+                  imageURL: itemData.imageURL || '',
+                  isAvailable: itemData.isAvailable !== false,
+                  paymentLinkID: itemData.paymentLinkID || '',
+                  category: categoryId
+                };
+                allMenuItems.push(menuItem);
+                console.log(`✅ Added item: ${menuItem.id} (${categoryId})`);
+              } catch (error) {
+                console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
               }
             }
-            
-            console.log(`✅ Successfully fetched ${allMenuItems.length} menu items from Firestore`);
-          } catch (error) {
-            console.error('❌ Error fetching from Firestore:', error);
-            // Fall back to parsing descriptions
-            console.log('🔄 Falling back to parsing categories from descriptions...');
-            allMenuItems = categorizeFromDescriptions(menuItems);
           }
-        } else {
-          console.log('🔄 Firebase not configured, parsing categories from descriptions...');
+          
+          console.log(`✅ Successfully fetched ${allMenuItems.length} menu items from Firestore with proper categories`);
+        } catch (error) {
+          console.error('❌ Error fetching from Firestore:', error);
+          // Fall back to parsing descriptions only if Firebase fails
+          console.log('🔄 Falling back to parsing categories from descriptions...');
           allMenuItems = categorizeFromDescriptions(menuItems);
         }
       } else {
-        console.log('✅ Menu items have proper categories, using as-is');
+        console.log('🔄 Firebase not configured, parsing categories from descriptions...');
+        allMenuItems = categorizeFromDescriptions(menuItems);
       }
       
       // Helper function to categorize items from their descriptions
