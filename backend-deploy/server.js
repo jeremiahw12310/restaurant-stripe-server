@@ -64,9 +64,9 @@ app.post('/generate-combo', async (req, res) => {
     // Use the menu items from the request (which come from Firebase)
     let allMenuItems = menuItems || [];
     
-    // If no menu items provided, fetch from Firebase
+    // If no menu items provided, try to fetch from Firebase
     if (!allMenuItems || allMenuItems.length === 0) {
-      console.log('🔍 No menu items in request, fetching from Firestore...');
+      console.log('🔍 No menu items in request, trying to fetch from Firestore...');
       
       if (admin.apps.length) {
         try {
@@ -105,17 +105,10 @@ app.post('/generate-combo', async (req, res) => {
           console.log(`✅ Successfully fetched ${allMenuItems.length} menu items from Firestore`);
         } catch (error) {
           console.error('❌ Error fetching from Firestore:', error);
-          return res.status(500).json({ 
-            error: 'Failed to fetch menu from Firebase',
-            details: error.message 
-          });
+          console.log('🔄 Firebase fetch failed, will use menu items from request if available');
         }
       } else {
-        console.error('❌ Firebase not configured');
-        return res.status(500).json({ 
-          error: 'Firebase not configured - FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing',
-          details: 'Please configure Firebase service account key in production environment'
-        });
+        console.log('⚠️ Firebase not configured, will use menu items from request if available');
       }
     }
     

@@ -301,7 +301,7 @@ Remember: You're not just an assistant—you love helping people discover the be
         });
       }
       
-      // Always fetch from Firebase to get the most up-to-date menu with proper categories
+      // Try to fetch from Firebase first, fall back to menu items from request
       let allMenuItems = [];
       
       if (admin.apps.length) {
@@ -341,16 +341,20 @@ Remember: You're not just an assistant—you love helping people discover the be
           console.log(`✅ Successfully fetched ${allMenuItems.length} menu items from Firestore with proper categories`);
         } catch (error) {
           console.error('❌ Error fetching from Firestore:', error);
-          return res.status(500).json({ 
-            error: 'Failed to fetch menu from Firebase',
-            details: error.message 
-          });
+          console.log('🔄 Falling back to menu items from request...');
+          allMenuItems = menuItems || [];
         }
       } else {
-        console.error('❌ Firebase not configured');
+        console.log('⚠️ Firebase not configured, using menu items from request');
+        allMenuItems = menuItems || [];
+      }
+      
+      // If still no menu items, return error
+      if (!allMenuItems || allMenuItems.length === 0) {
+        console.error('❌ No menu items available');
         return res.status(500).json({ 
-          error: 'Firebase not configured - FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing',
-          details: 'Please configure Firebase service account key in production environment'
+          error: 'No menu items available',
+          details: 'Unable to fetch menu from Firebase or request'
         });
       }
       
