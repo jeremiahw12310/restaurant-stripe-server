@@ -38,70 +38,21 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
   console.warn('⚠️ FIREBASE_SERVICE_ACCOUNT_KEY not found - Firebase features will not work');
 }
 
-// MARK: - Personalized Combo Generation
+// Enhanced combo variety system to encourage exploration
+const comboInsights = []; // Track combo patterns for insights, not restrictions
+const MAX_INSIGHTS = 100;
+const userComboPreferences = new Map(); // Track user preferences for personalization
 
-// Fetch complete menu from Firestore endpoint
-app.get('/firestore-menu', async (req, res) => {
-  try {
-    console.log('🔍 Fetching complete menu from Firestore...');
-    
-    if (!admin.apps.length) {
-      return res.status(500).json({ 
-        error: 'Firebase not initialized - FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
-      });
-    }
-    
-    const db = admin.firestore();
-    
-    // Get all menu categories
-    const categoriesSnapshot = await db.collection('menu').get();
-    const allMenuItems = [];
-    
-    for (const categoryDoc of categoriesSnapshot.docs) {
-      const categoryId = categoryDoc.id;
-      console.log(`🔍 Processing category: ${categoryId}`);
-      
-      // Get all items in this category
-      const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
-      
-      for (const itemDoc of itemsSnapshot.docs) {
-        try {
-          const itemData = itemDoc.data();
-          const menuItem = {
-            id: itemData.id || itemDoc.id,
-            description: itemData.description || '',
-            price: itemData.price || 0.0,
-            imageURL: itemData.imageURL || '',
-            isAvailable: itemData.isAvailable !== false,
-            paymentLinkID: itemData.paymentLinkID || '',
-            isDumpling: itemData.isDumpling || false,
-            isDrink: itemData.isDrink || false,
-            category: categoryId
-          };
-          allMenuItems.push(menuItem);
-          console.log(`✅ Added item: ${menuItem.id} (${categoryId})`);
-        } catch (error) {
-          console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
-        }
-      }
-    }
-    
-    console.log(`✅ Fetched ${allMenuItems.length} menu items from Firestore`);
-    
-    res.json({
-      success: true,
-      menuItems: allMenuItems,
-      totalItems: allMenuItems.length,
-      categories: categoriesSnapshot.docs.map(doc => doc.id)
-    });
-    
-  } catch (error) {
-    console.error('❌ Error fetching menu from Firestore:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch menu from Firestore',
-      details: error.message 
-    });
-  }
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'Server is running!', 
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    server: 'MAIN server.js with gpt-4o-mini',
+    firebaseConfigured: !!admin.apps.length,
+    openaiConfigured: !!process.env.OPENAI_API_KEY
+  });
 });
 
 // Generate personalized combo endpoint
@@ -120,95 +71,80 @@ app.post('/generate-combo', async (req, res) => {
       });
     }
     
-    // Fetch the complete, current menu from Firestore or use fallback
+    // Fetch the complete, current menu from Firestore
     console.log('🔍 Fetching current menu...');
     
     let allMenuItems = [];
     
-    if (admin.apps.length) {
-      // Use Firestore if available
-      console.log('🔍 Using Firestore for menu data...');
-      const db = admin.firestore();
+    // Use the menu items from the request (which come from Firebase)
+    let menuItems = req.body.menuItems || [];
+    
+    // If no menu items provided, fetch from Firebase
+    if (!allMenuItems || allMenuItems.length === 0) {
+      console.log('🔍 No menu items in request, fetching from Firestore...');
       
-      const categoriesSnapshot = await db.collection('menu').get();
-      
-      for (const categoryDoc of categoriesSnapshot.docs) {
-        const categoryId = categoryDoc.id;
-        
-        // Get all items in this category
-        const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
-        
-        for (const itemDoc of itemsSnapshot.docs) {
-          try {
-            const itemData = itemDoc.data();
-            const menuItem = {
-              id: itemData.id || itemDoc.id,
-              description: itemData.description || '',
-              price: itemData.price || 0.0,
-              imageURL: itemData.imageURL || '',
-              isAvailable: itemData.isAvailable !== false,
-              paymentLinkID: itemData.paymentLinkID || '',
-              isDumpling: itemData.isDumpling || false,
-              isDrink: itemData.isDrink || false,
-              category: categoryId
-            };
-            allMenuItems.push(menuItem);
-          } catch (error) {
-            console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
+      if (admin.apps.length) {
+        try {
+          const db = admin.firestore();
+          
+          // Get all menu categories
+          const categoriesSnapshot = await db.collection('menu').get();
+          
+          for (const categoryDoc of categoriesSnapshot.docs) {
+            const categoryId = categoryDoc.id;
+            console.log(`🔍 Processing category: ${categoryId}`);
+            
+            // Get all items in this category
+            const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
+            
+            for (const itemDoc of itemsSnapshot.docs) {
+              try {
+                const itemData = itemDoc.data();
+                const menuItem = {
+                  id: itemData.id || itemDoc.id,
+                  description: itemData.description || '',
+                  price: itemData.price || 0.0,
+                  imageURL: itemData.imageURL || '',
+                  isAvailable: itemData.isAvailable !== false,
+                  paymentLinkID: itemData.paymentLinkID || '',
+                  category: categoryId
+                };
+                allMenuItems.push(menuItem);
+                console.log(`✅ Added item: ${menuItem.id} (${categoryId})`);
+              } catch (error) {
+                console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
+              }
+            }
           }
+          
+          console.log(`✅ Successfully fetched ${allMenuItems.length} menu items from Firestore`);
+        } catch (error) {
+          console.error('❌ Error fetching from Firestore:', error);
+          return res.status(500).json({ 
+            error: 'Failed to fetch menu from Firebase',
+            details: error.message 
+          });
         }
+      } else {
+        console.error('❌ Firebase not configured');
+        return res.status(500).json({ 
+          error: 'Firebase not configured - FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing',
+          details: 'Please configure Firebase service account key in production environment'
+        });
       }
-    } else {
-      // Use fallback static menu data
-      console.log('🔍 Using fallback static menu data...');
-      allMenuItems = [
-        // Dumplings
-        { id: "No.9 Pork (12)", price: 13.99, description: "Classic pork dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.2 Pork & Chive (12)", price: 15.99, description: "Pork and chive dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.4 Pork Shrimp (12)", price: 16.99, description: "Pork and shrimp dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.5 Pork & Cabbage (12)", price: 14.99, description: "Pork and cabbage dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.3 Spicy Pork (12)", price: 14.99, description: "Spicy pork dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.7 Curry Chicken (12)", price: 12.99, description: "Curry chicken dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.8 Chicken & Coriander (12)", price: 13.99, description: "Chicken and coriander dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.1 Chicken & Mushroom (12)", price: 14.99, description: "Chicken and mushroom dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.10 Curry Beef & Onion (12)", price: 15.99, description: "Curry beef and onion dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.6 Veggie (12)", price: 13.99, description: "Vegetable dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        
-        // Appetizers
-        { id: "Edamame", price: 4.99, description: "Steamed soybeans", isDumpling: false, isDrink: false, category: "appetizers" },
-        { id: "Asian Pickled Cucumbers", price: 5.75, description: "Pickled cucumbers", isDumpling: false, isDrink: false, category: "appetizers" },
-        { id: "(Crab & Shrimp) Cold Noodle w/ Peanut Sauce", price: 8.35, description: "Cold noodles with peanut sauce", isDumpling: false, isDrink: false, category: "appetizers" },
-        { id: "Peanut Butter Pork Dumplings", price: 7.99, description: "Peanut butter pork dumplings", isDumpling: false, isDrink: false, category: "appetizers" },
-        { id: "Spicy Tofu", price: 5.99, description: "Spicy tofu", isDumpling: false, isDrink: false, category: "appetizers" },
-        { id: "Curry Rice w/ Chicken", price: 7.75, description: "Curry rice with chicken", isDumpling: false, isDrink: false, category: "appetizers" },
-        { id: "Jasmine White Rice", price: 2.75, description: "Jasmine white rice", isDumpling: false, isDrink: false, category: "appetizers" },
-        { id: "Cold Tofu", price: 5.99, description: "Cold tofu", isDumpling: false, isDrink: false, category: "appetizers" },
-        
-        // Soups
-        { id: "Hot & Sour Soup", price: 5.95, description: "Hot and sour soup", isDumpling: false, isDrink: false, category: "soups" },
-        { id: "Pork Wonton Soup", price: 6.95, description: "Pork wonton soup", isDumpling: false, isDrink: false, category: "soups" },
-        
-        // Drinks
-        { id: "Bubble Milk Tea w/ Tapioca", price: 5.90, description: "Bubble milk tea with tapioca", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Fresh Milk Tea", price: 5.90, description: "Fresh milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Capped Thai Brown Sugar", price: 6.90, description: "Capped Thai brown sugar milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Strawberry Fresh", price: 6.75, description: "Strawberry fresh milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Peach Fresh", price: 6.50, description: "Peach fresh milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Lychee Dragon Fruit", price: 6.50, description: "Lychee dragon fruit tea", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Peach Strawberry", price: 6.75, description: "Peach strawberry fruit tea", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Coffee Latte", price: 5.50, description: "Coffee latte", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Coke", price: 2.25, description: "Coca Cola", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Bottle Water", price: 1.00, description: "Bottle water", isDumpling: false, isDrink: true, category: "drinks" },
-        
-        // Sauces
-        { id: "Peanut Sauce", price: 1.50, description: "Peanut sauce", isDumpling: false, isDrink: false, category: "sauces" },
-        { id: "SPICY Peanut Sauce", price: 1.50, description: "Spicy peanut sauce", isDumpling: false, isDrink: false, category: "sauces" },
-        { id: "Curry Sauce w/ Chicken", price: 1.50, description: "Curry sauce with chicken", isDumpling: false, isDrink: false, category: "sauces" }
-      ];
     }
     
-    console.log(`🔍 Fetched ${allMenuItems.length} current menu items from Firestore`);
-    console.log(`🔍 Menu items:`, allMenuItems.map(item => `${item.id} (${item.isDumpling ? 'dumpling' : item.isDrink ? 'drink' : 'other'})`));
+    // If still no menu items, return error
+    if (!allMenuItems || allMenuItems.length === 0) {
+      console.error('❌ No menu items available');
+      return res.status(500).json({ 
+        error: 'No menu items available',
+        details: 'Unable to fetch menu from Firebase or request'
+      });
+    }
+    
+    console.log(`🔍 Fetched ${allMenuItems.length} current menu items`);
+    console.log(`🔍 Menu items:`, allMenuItems.map(item => `${item.id} (${item.category})`));
     console.log(`🔍 Dietary preferences:`, dietaryPreferences);
     
     // Create dietary restrictions string
@@ -225,14 +161,106 @@ app.post('/generate-combo', async (req, res) => {
     const spicePreference = dietaryPreferences.likesSpicyFood ? 
       'The customer enjoys spicy food. ' : '';
     
-    // Create menu items text for AI - send the FULL current menu from Firestore
+    // Create menu items text for AI - organize by Firebase categories
+    const menuByCategory = {};
+    
+    // Group items by their Firebase category
+    allMenuItems.forEach(item => {
+      if (!menuByCategory[item.category]) {
+        menuByCategory[item.category] = [];
+      }
+      menuByCategory[item.category].push(item);
+    });
+    
+    // Create organized menu text by category
     const menuText = `
 Available menu items (current as of ${new Date().toLocaleString()}):
 
-${allMenuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} ${item.isDumpling ? '(dumpling)' : item.isDrink ? '(drink)' : ''}`).join('\n')}
+${Object.entries(menuByCategory).map(([category, items]) => {
+  const categoryTitle = category.charAt(0).toUpperCase() + category.slice(1);
+  const itemsList = items.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n');
+  return `${categoryTitle}:\n${itemsList}`;
+}).join('\n\n')}
     `.trim();
     
-    // Create AI prompt that lets ChatGPT actually choose the items
+    // Create AI prompt that encourages variety while letting ChatGPT choose intelligently
+    const currentTime = new Date().toISOString();
+    const randomSeed = Math.floor(Math.random() * 10000);
+    const sessionId = Math.random().toString(36).substring(2, 15);
+    const minuteOfHour = new Date().getMinutes();
+    const secondOfMinute = new Date().getSeconds();
+    const dayOfWeek = new Date().getDay();
+    const hourOfDay = new Date().getHours();
+    
+    // Intelligent variety system that encourages exploration
+    const varietyFactors = {
+      timeBased: minuteOfHour % 4,
+      dayBased: dayOfWeek % 3,
+      hourBased: hourOfDay % 4,
+      seedBased: randomSeed % 10,
+      secondBased: secondOfMinute % 5
+    };
+    
+    // Dynamic exploration strategies
+    const getExplorationStrategy = () => {
+      const strategyIndex = (varietyFactors.timeBased + varietyFactors.dayBased + varietyFactors.seedBased) % 8;
+      const strategies = [
+        "EXPLORE_BUDGET: Discover affordable hidden gems under $8 each",
+        "EXPLORE_PREMIUM: Try premium items over $15 for a special experience",
+        "EXPLORE_POPULAR: Mix popular favorites with lesser-known items",
+        "EXPLORE_ADVENTUROUS: Choose unique or specialty items that stand out",
+        "EXPLORE_TRADITIONAL: Focus on classic, time-tested combinations",
+        "EXPLORE_FUSION: Try items that blend different culinary traditions",
+        "EXPLORE_SEASONAL: Choose items that feel fresh and seasonal",
+        "EXPLORE_COMFORT: Select hearty, satisfying comfort food combinations"
+      ];
+      return strategies[strategyIndex];
+    };
+    
+    // Price exploration ranges
+    const getPriceExploration = () => {
+      const priceIndex = (varietyFactors.hourBased + varietyFactors.secondBased) % 4;
+      const ranges = [
+        "BUDGET_EXPLORATION: $5-15 total - great value discoveries",
+        "MODERATE_EXPLORATION: $15-30 total - balanced variety", 
+        "PREMIUM_EXPLORATION: $30-45 total - premium experiences",
+        "LUXURY_EXPLORATION: $45+ total - indulgent combinations"
+      ];
+      return ranges[priceIndex];
+    };
+    
+    // Flavor exploration profiles
+    const getFlavorExploration = () => {
+      const flavorIndex = (varietyFactors.dayBased + varietyFactors.seedBased) % 6;
+      const profiles = [
+        "SPICY_EXPLORATION: Discover bold, spicy flavors and heat",
+        "MILD_EXPLORATION: Explore gentle, subtle flavor profiles",
+        "SWEET_EXPLORATION: Try sweet and dessert-like elements",
+        "SAVORY_EXPLORATION: Explore rich, umami flavor combinations",
+        "FRESH_EXPLORATION: Discover light, fresh, and crisp items",
+        "BALANCED_EXPLORATION: Mix different flavor profiles harmoniously"
+      ];
+      return profiles[flavorIndex];
+    };
+    
+    const explorationStrategy = getExplorationStrategy();
+    const priceExploration = getPriceExploration();
+    const flavorExploration = getFlavorExploration();
+    
+    // Get user's previous combo preferences for personalization (not restriction)
+    const userPreferences = userComboPreferences.get(userName) || { categories: {}, priceRanges: [], flavorProfiles: [] };
+    
+    // Create variety encouragement instead of restriction
+    const varietyEncouragement = `
+VARIETY ENCOURAGEMENT:
+- Explore different categories and combinations
+- Try items you haven't suggested recently
+- Mix popular favorites with hidden gems
+- Consider seasonal and time-based factors
+- Use the exploration strategy to guide your choices
+- Balance familiarity with discovery
+`;
+
     const prompt = `You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. 
 
 Customer: ${userName}
@@ -243,17 +271,43 @@ ${menuText}
 IMPORTANT: You must choose items from the EXACT menu above. Do not make up items.
 
 Please create a personalized combo for ${userName} with:
-1. One dumpling option (choose from items marked as dumplings above)
-2. One appetizer or side dish (choose from non-dumpling, non-drink items above)  
-3. One drink (choose from items marked as drinks above)
-4. Optionally one sauce or condiment (choose from items that seem like sauces/dips above) - only if it complements the combo well
+1. One item from the dumplings category
+2. One item from the appetizers category (or another non-drink category)
+3. One item from the drinks category
+4. Optionally one sauce or condiment (from sauces category) - only if it complements the combo well
 
 Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
+
+INTELLIGENT VARIETY SYSTEM:
+Current time: ${currentTime}
+Random seed: ${randomSeed}
+Session ID: ${sessionId}
+Minute: ${minuteOfHour}, Second: ${secondOfMinute}, Day: ${dayOfWeek}, Hour: ${hourOfDay}
+
+EXPLORATION STRATEGY: ${explorationStrategy}
+PRICE EXPLORATION: ${priceExploration}
+FLAVOR EXPLORATION: ${flavorExploration}
+
+${varietyEncouragement}
+
+USER PREFERENCES INSIGHTS (for personalization, not restriction):
+${userPreferences.categories && Object.keys(userPreferences.categories).length > 0 ? 
+  `Previous category preferences: ${Object.entries(userPreferences.categories).map(([cat, count]) => `${cat} (${count} times)`).join(', ')}` : 
+  'No previous preferences recorded - great opportunity to explore!'}
+
+VARIETY GUIDELINES:
+- Use the exploration strategy to guide your choices
+- Consider the time-based factors for seasonal appropriateness
+- Mix familiar favorites with new discoveries
+- Balance price ranges and flavor profiles
+- Consider what would create an enjoyable dining experience
+- Use the random seed to add variety to your selection process
+- Explore different combinations that work well together
 
 IMPORTANT RULES:
 - Choose items that actually exist in the menu above
 - Consider dietary restrictions carefully
-- Create variety - don't always choose the same items
+- Create enjoyable, balanced combinations
 - Consider flavor combinations that work well together
 - Calculate the total price by adding up the prices of your chosen items
 - For milk teas and coffees, note that milk substitutes (oat milk, almond milk, coconut milk) are available for lactose intolerant customers
@@ -278,14 +332,14 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       messages: [
         {
           role: "system",
-          content: "You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. Always respond with valid JSON in the exact format requested."
+          content: "You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. Always respond with valid JSON in the exact format requested. Focus on creating enjoyable, varied combinations while considering user preferences and dietary restrictions."
         },
         {
           role: "user",
           content: prompt
         }
       ],
-      temperature: 0.7,
+      temperature: 0.9,
       max_tokens: 500
     });
     
@@ -314,6 +368,48 @@ Calculate the total price accurately. Keep the response warm and personal.`;
     
     console.log('✅ Generated personalized combo successfully');
     
+    // Store combo insights for learning (not restriction)
+    const comboInsight = {
+      items: comboData.items,
+      timestamp: new Date().toISOString(),
+      userName: userName,
+      strategy: explorationStrategy,
+      priceRange: priceExploration,
+      flavorProfile: flavorExploration
+    };
+    
+    // Add to insights for learning patterns
+    comboInsights.push(comboInsight);
+    if (comboInsights.length > MAX_INSIGHTS) {
+      comboInsights.shift(); // Remove oldest
+    }
+    
+    // Update user preferences for personalization
+    if (!userComboPreferences.has(userName)) {
+      userComboPreferences.set(userName, { categories: {}, priceRanges: [], flavorProfiles: [] });
+    }
+    const userPrefs = userComboPreferences.get(userName);
+    
+    // Track category preferences
+    comboData.items.forEach(item => {
+      const category = item.category || 'other';
+      userPrefs.categories[category] = (userPrefs.categories[category] || 0) + 1;
+    });
+    
+    // Track price range
+    userPrefs.priceRanges.push(comboData.totalPrice);
+    if (userPrefs.priceRanges.length > 10) {
+      userPrefs.priceRanges.shift();
+    }
+    
+    // Track flavor profile
+    userPrefs.flavorProfiles.push(flavorExploration);
+    if (userPrefs.flavorProfiles.length > 10) {
+      userPrefs.flavorProfiles.shift();
+    }
+    
+    console.log(`📝 Stored combo insights. Total insights: ${comboInsights.length}, User preferences updated for ${userName}`);
+    
     res.json(comboData);
     
   } catch (error) {
@@ -323,19 +419,6 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       details: error.message 
     });
   }
-});
-
-// Health check endpoint
-app.get('/', (req, res) => {
-  res.json({ 
-    status: 'Server is running!', 
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    server: 'ROOT server.js with gpt-4o-mini and Stripe',
-    stripeConfigured: !!process.env.STRIPE_SECRET_KEY,
-    firebaseConfigured: !!admin.apps.length,
-    openaiConfigured: !!process.env.OPENAI_API_KEY
-  });
 });
 
 // MARK: - Stripe Checkout Endpoints
