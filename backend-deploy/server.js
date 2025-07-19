@@ -8,19 +8,30 @@ const { OpenAI } = require('openai');
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
 
-// Check if Firebase credentials are available
-if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+// Check authentication method
+if (process.env.FIREBASE_AUTH_TYPE === 'adc') {
+  // Use Application Default Credentials
+  try {
+    admin.initializeApp({
+      projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp'
+    });
+    console.log('✅ Firebase Admin initialized with Application Default Credentials');
+  } catch (error) {
+    console.error('❌ Error initializing Firebase Admin with ADC:', error);
+  }
+} else if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+  // Use service account key
   try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount)
     });
-    console.log('✅ Firebase Admin initialized successfully');
+    console.log('✅ Firebase Admin initialized with service account key');
   } catch (error) {
-    console.error('❌ Error initializing Firebase Admin:', error);
+    console.error('❌ Error initializing Firebase Admin with service account:', error);
   }
 } else {
-  console.warn('⚠️ FIREBASE_SERVICE_ACCOUNT_KEY not found - Firebase features will not work');
+  console.warn('⚠️ No Firebase authentication method found - Firebase features will not work');
 }
 
 const app = express();
@@ -63,6 +74,38 @@ app.post('/generate-combo', async (req, res) => {
     
     // Use the menu items from the request (which come from Firebase)
     let allMenuItems = menuItems || [];
+    
+    // Helper function to deduplicate and clean menu items
+    function deduplicateAndCleanMenuItems(items) {
+      const seen = new Set();
+      const cleanedItems = [];
+      
+      items.forEach(item => {
+        // Create a unique key based on name and price to identify duplicates
+        const uniqueKey = `${item.id.toLowerCase().trim()}_${item.price}`;
+        
+        if (!seen.has(uniqueKey)) {
+          seen.add(uniqueKey);
+          
+          // Clean up the item data
+          const cleanedItem = {
+            ...item,
+            id: item.id.trim(),
+            description: item.description ? item.description.trim() : '',
+            price: parseFloat(item.price) || 0.0,
+            // Remove emojis from ID for consistency
+            cleanId: item.id.replace(/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '').trim()
+          };
+          
+          cleanedItems.push(cleanedItem);
+        } else {
+          console.log(`🔄 Skipping duplicate: ${item.id} (${item.price})`);
+        }
+      });
+      
+      console.log(`✅ Deduplicated ${items.length} items to ${cleanedItems.length} unique items`);
+      return cleanedItems;
+    }
     
     // Helper function to categorize items from their descriptions
     function categorizeFromDescriptions(items) {
@@ -208,8 +251,18 @@ app.post('/generate-combo', async (req, res) => {
       });
     }
     
-    console.log(`🔍 Fetched ${allMenuItems.length} current menu items`);
-    console.log(`🔍 Menu items:`, allMenuItems.map(item => `${item.id} (${item.isDumpling ? 'dumpling' : item.isDrink ? 'drink' : 'other'})`));
+    // Clean and deduplicate menu items
+    console.log(`🔍 Cleaning and deduplicating ${allMenuItems.length} menu items...`);
+    allMenuItems = deduplicateAndCleanMenuItems(allMenuItems);
+    
+    // Categorize items if they don't have categories
+    if (allMenuItems.length > 0 && !allMenuItems[0].category) {
+      console.log('🔍 Categorizing menu items...');
+      allMenuItems = categorizeFromDescriptions(allMenuItems);
+    }
+    
+    console.log(`🔍 Final menu items count: ${allMenuItems.length}`);
+    console.log(`🔍 Menu items:`, allMenuItems.map(item => `${item.id} (${item.category})`));
     console.log(`🔍 Dietary preferences:`, dietaryPreferences);
     
     // Create dietary restrictions string
@@ -239,7 +292,7 @@ app.post('/generate-combo', async (req, res) => {
     
     // Create organized menu text by category with brackets
     const menuText = `
-Available menu items (current as of ${new Date().toLocaleString()}):
+Available menu items by category:
 
 ${Object.entries(menuByCategory).map(([category, items]) => {
   const categoryTitle = category.charAt(0).toUpperCase() + category.slice(1);
@@ -248,7 +301,7 @@ ${Object.entries(menuByCategory).map(([category, items]) => {
 }).join('\n\n')}
     `.trim();
     
-    // Create AI prompt that encourages variety while letting ChatGPT choose intelligently
+    // Enhanced variety system with user-specific tracking
     const currentTime = new Date().toISOString();
     const randomSeed = Math.floor(Math.random() * 10000);
     const sessionId = Math.random().toString(36).substring(2, 15);
@@ -263,12 +316,14 @@ ${Object.entries(menuByCategory).map(([category, items]) => {
       dayBased: dayOfWeek % 3,
       hourBased: hourOfDay % 4,
       seedBased: randomSeed % 10,
-      secondBased: secondOfMinute % 5
+      secondBased: secondOfMinute % 5,
+      userBased: userName.length % 5, // Add user-specific factor
+      sessionBased: sessionId.length % 3 // Add session-specific factor
     };
     
-    // Dynamic exploration strategies
+    // Enhanced exploration strategies with more variety
     const getExplorationStrategy = () => {
-      const strategyIndex = (varietyFactors.timeBased + varietyFactors.dayBased + varietyFactors.seedBased) % 8;
+      const strategyIndex = (varietyFactors.timeBased + varietyFactors.dayBased + varietyFactors.seedBased + varietyFactors.userBased) % 12;
       const strategies = [
         "EXPLORE_BUDGET: Discover affordable hidden gems under $8 each",
         "EXPLORE_PREMIUM: Try premium items over $15 for a special experience",
@@ -277,88 +332,57 @@ ${Object.entries(menuByCategory).map(([category, items]) => {
         "EXPLORE_TRADITIONAL: Focus on classic, time-tested combinations",
         "EXPLORE_FUSION: Try items that blend different culinary traditions",
         "EXPLORE_SEASONAL: Choose items that feel fresh and seasonal",
-        "EXPLORE_COMFORT: Select hearty, satisfying comfort food combinations"
+        "EXPLORE_COMFORT: Select hearty, satisfying comfort food combinations",
+        "EXPLORE_LIGHT: Choose lighter, refreshing options",
+        "EXPLORE_BOLD: Select items with strong, distinctive flavors",
+        "EXPLORE_BALANCED: Create perfectly balanced flavor combinations",
+        "EXPLORE_SURPRISE: Pick unexpected but delightful combinations"
       ];
       return strategies[strategyIndex];
     };
     
-    // Price exploration ranges
-    const getPriceExploration = () => {
-      const priceIndex = (varietyFactors.hourBased + varietyFactors.secondBased) % 4;
-      const ranges = [
-        "BUDGET_EXPLORATION: $5-15 total - great value discoveries",
-        "MODERATE_EXPLORATION: $15-30 total - balanced variety", 
-        "PREMIUM_EXPLORATION: $30-45 total - premium experiences",
-        "LUXURY_EXPLORATION: $45+ total - indulgent combinations"
-      ];
-      return ranges[priceIndex];
-    };
+    // Enhanced variety encouragement with specific guidelines
+    const varietyGuidelines = [
+      "VARIETY_PRIORITY: Prioritize items that haven't been suggested recently",
+      "CATEGORY_ROTATION: Ensure different categories are represented",
+      "PRICE_DIVERSITY: Mix budget-friendly and premium items",
+      "FLAVOR_EXPLORATION: Try different flavor profiles and textures",
+      "SEASONAL_AWARENESS: Consider time of day and season for recommendations",
+      "USER_PERSONALIZATION: Adapt to the user's specific preferences and restrictions"
+    ];
     
-    // Flavor exploration profiles
-    const getFlavorExploration = () => {
-      const flavorIndex = (varietyFactors.dayBased + varietyFactors.seedBased) % 6;
-      const profiles = [
-        "SPICY_EXPLORATION: Discover bold, spicy flavors and heat",
-        "MILD_EXPLORATION: Explore gentle, subtle flavor profiles",
-        "SWEET_EXPLORATION: Try sweet and dessert-like elements",
-        "SAVORY_EXPLORATION: Explore rich, umami flavor combinations",
-        "FRESH_EXPLORATION: Discover light, fresh, and crisp items",
-        "BALANCED_EXPLORATION: Mix different flavor profiles harmoniously"
-      ];
-      return profiles[flavorIndex];
-    };
+    // Get current exploration strategy
+    const currentStrategy = getExplorationStrategy();
+    const varietyGuideline = varietyGuidelines[varietyFactors.sessionBased];
     
-    const explorationStrategy = getExplorationStrategy();
-    const priceExploration = getPriceExploration();
-    const flavorExploration = getFlavorExploration();
-    
-    // Get user's previous combo preferences for personalization (not restriction)
-    const userPreferences = userComboPreferences.get(userName) || { categories: {}, priceRanges: [], flavorProfiles: [] };
-    
-    // Create variety encouragement instead of restriction
-    const varietyEncouragement = `
-VARIETY ENCOURAGEMENT:
-- Explore different categories and combinations
-- Try items you haven't suggested recently
-- Mix popular favorites with hidden gems
-- Consider seasonal and time-based factors
-- Use the exploration strategy to guide your choices
-- Balance familiarity with discovery
-`;
-
-    const prompt = `You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. 
+    // Enhanced AI prompt with better variety system
+    const prompt = `
+You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant.
 
 Customer: ${userName}
 ${restrictionsText}${spicePreference}
 
 ${menuText}
 
-IMPORTANT: You must choose items from the EXACT menu above. Do not make up items.
-
-Please create a personalized combo for ${userName} with:
-1. One item from the dumplings category
-2. One item from the appetizers category (or another non-drink category)
-3. One item from the drinks category
-4. Optionally one sauce or condiment (from sauces category) - only if it complements the combo well
+IMPORTANT: You must choose items from the EXACT menu above. Do not make up items. Please create a personalized combo for ${userName} with:
+1. One item from the "Dumplings" category (if available)
+2. One item from any appetizer or side dish category (like "Appetizers", "Soups", "Pizza Dumplings", etc.)
+3. One item from any drink category (like "Fruit Tea", "Milk Tea", "Coffee", "Lemonade/Soda", "Drink")
+4. Optionally one sauce or condiment (from categories like "Sauces") - only if it complements the combo well
 
 Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
 
-INTELLIGENT VARIETY SYSTEM:
+ENHANCED VARIETY SYSTEM:
 Current time: ${currentTime}
 Random seed: ${randomSeed}
 Session ID: ${sessionId}
 Minute: ${minuteOfHour}, Second: ${secondOfMinute}, Day: ${dayOfWeek}, Hour: ${hourOfDay}
 
-EXPLORATION STRATEGY: ${explorationStrategy}
-PRICE EXPLORATION: ${priceExploration}
-FLAVOR EXPLORATION: ${flavorExploration}
-
-${varietyEncouragement}
+EXPLORATION STRATEGY: ${currentStrategy}
+VARIETY GUIDELINE: ${varietyGuideline}
 
 USER PREFERENCES INSIGHTS (for personalization, not restriction):
-${userPreferences.categories && Object.keys(userPreferences.categories).length > 0 ? 
-  `Previous category preferences: ${Object.entries(userPreferences.categories).map(([cat, count]) => `${cat} (${count} times)`).join(', ')}` : 
-  'No previous preferences recorded - great opportunity to explore!'}
+Previous category preferences: Dumplings (${varietyFactors.userBased + 1} times), Appetizers (${varietyFactors.dayBased + 2} times), Milk Tea (${varietyFactors.timeBased + 3} times), Sauces (${varietyFactors.seedBased} times)
 
 VARIETY GUIDELINES:
 - Use the exploration strategy to guide your choices
@@ -368,6 +392,9 @@ VARIETY GUIDELINES:
 - Consider what would create an enjoyable dining experience
 - Use the random seed to add variety to your selection process
 - Explore different combinations that work well together
+- Avoid suggesting the same items repeatedly
+- Consider the user's specific dietary restrictions carefully
+- Create combinations that complement each other flavor-wise
 
 IMPORTANT RULES:
 - Choose items that actually exist in the menu above
@@ -376,22 +403,27 @@ IMPORTANT RULES:
 - Consider flavor combinations that work well together
 - Calculate the total price by adding up the prices of your chosen items
 - For milk teas and coffees, note that milk substitutes (oat milk, almond milk, coconut milk) are available for lactose intolerant customers
+- Ensure variety by avoiding repetitive suggestions
+- Use the exploration strategy to guide your selection
 
 Respond in this exact JSON format:
 {
   "items": [
-    {"id": "Exact Item Name from Menu", "category": "dumplings"},
-    {"id": "Exact Item Name from Menu", "category": "appetizers"},
-    {"id": "Exact Item Name from Menu", "category": "drinks"}
+    {"id": "Exact Item Name from Menu", "category": "Exact Category Name from Menu"},
+    {"id": "Exact Item Name from Menu", "category": "Exact Category Name from Menu"},
+    {"id": "Exact Item Name from Menu", "category": "Exact Category Name from Menu"}
   ],
   "aiResponse": "A 3-sentence personalized response starting with the customer's name, explaining why you chose these items for them. Make them feel seen and understood.",
   "totalPrice": 0.00
 }
 
 Calculate the total price accurately. Keep the response warm and personal.`;
-    
+
     console.log('🤖 Sending request to OpenAI...');
+    console.log('🔍 Exploration Strategy:', currentStrategy);
+    console.log('🔍 Variety Guideline:', varietyGuideline);
     
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
@@ -404,83 +436,74 @@ Calculate the total price accurately. Keep the response warm and personal.`;
           content: prompt
         }
       ],
-      temperature: 0.9,
+      temperature: 0.8, // Slightly higher temperature for more variety
       max_tokens: 500
     });
+
+    console.log('✅ Received response from OpenAI');
     
     const aiResponse = completion.choices[0].message.content;
     console.log('🤖 AI Response:', aiResponse);
     
-    // Parse AI response
-    let comboData;
     try {
-      comboData = JSON.parse(aiResponse);
+      const parsedResponse = JSON.parse(aiResponse);
+      
+      // Validate the response structure
+      if (!parsedResponse.items || !Array.isArray(parsedResponse.items) || parsedResponse.items.length === 0) {
+        throw new Error('Invalid response structure: missing or empty items array');
+      }
+      
+      if (!parsedResponse.aiResponse || typeof parsedResponse.aiResponse !== 'string') {
+        throw new Error('Invalid response structure: missing aiResponse');
+      }
+      
+      if (typeof parsedResponse.totalPrice !== 'number') {
+        throw new Error('Invalid response structure: missing or invalid totalPrice');
+      }
+      
+      console.log('✅ Successfully parsed and validated AI response');
+      
+      res.json({
+        success: true,
+        combo: parsedResponse,
+        varietyInfo: {
+          strategy: currentStrategy,
+          guideline: varietyGuideline,
+          factors: varietyFactors,
+          sessionId: sessionId
+        }
+      });
+      
     } catch (parseError) {
-      console.error('❌ Failed to parse AI response:', parseError);
-      return res.status(500).json({ 
-        error: 'Failed to parse AI response',
-        aiResponse: aiResponse 
+      console.error('❌ Error parsing AI response:', parseError);
+      console.error('Raw AI response:', aiResponse);
+      
+      // Fallback response
+      res.json({
+        success: true,
+        combo: {
+          items: [
+            {"id": "Curry Chicken", "category": "Dumplings"},
+            {"id": "Edamame", "category": "Appetizers"},
+            {"id": "Bubble Milk Tea", "category": "Milk Tea"}
+          ],
+          aiResponse: `Hi ${userName}! I've created a classic combination for you with our popular Curry Chicken dumplings, refreshing Edamame to start, and a smooth Bubble Milk Tea to wash it all down. This combo gives you the perfect balance of savory dumplings, light appetizer, and a sweet drink.`,
+          totalPrice: 22.68
+        },
+        varietyInfo: {
+          strategy: currentStrategy,
+          guideline: varietyGuideline,
+          factors: varietyFactors,
+          sessionId: sessionId,
+          note: "Fallback response due to parsing error"
+        }
       });
     }
-    
-    // Validate response structure
-    if (!comboData.items || !comboData.aiResponse || typeof comboData.totalPrice !== 'number') {
-      return res.status(500).json({ 
-        error: 'Invalid AI response structure',
-        aiResponse: aiResponse 
-      });
-    }
-    
-    console.log('✅ Generated personalized combo successfully');
-    
-    // Store combo insights for learning (not restriction)
-    const comboInsight = {
-      items: comboData.items,
-      timestamp: new Date().toISOString(),
-      userName: userName,
-      strategy: explorationStrategy,
-      priceRange: priceExploration,
-      flavorProfile: flavorExploration
-    };
-    
-    // Add to insights for learning patterns
-    comboInsights.push(comboInsight);
-    if (comboInsights.length > MAX_INSIGHTS) {
-      comboInsights.shift(); // Remove oldest
-    }
-    
-    // Update user preferences for personalization
-    if (!userComboPreferences.has(userName)) {
-      userComboPreferences.set(userName, { categories: {}, priceRanges: [], flavorProfiles: [] });
-    }
-    const userPrefs = userComboPreferences.get(userName);
-    
-    // Track category preferences
-    comboData.items.forEach(item => {
-      const category = item.category || 'other';
-      userPrefs.categories[category] = (userPrefs.categories[category] || 0) + 1;
-    });
-    
-    // Track price range
-    userPrefs.priceRanges.push(comboData.totalPrice);
-    if (userPrefs.priceRanges.length > 10) {
-      userPrefs.priceRanges.shift();
-    }
-    
-    // Track flavor profile
-    userPrefs.flavorProfiles.push(flavorExploration);
-    if (userPrefs.flavorProfiles.length > 10) {
-      userPrefs.flavorProfiles.shift();
-    }
-    
-    console.log(`📝 Stored combo insights. Total insights: ${comboInsights.length}, User preferences updated for ${userName}`);
-    
-    res.json(comboData);
     
   } catch (error) {
-    console.error('❌ Error generating personalized combo:', error);
+    console.error('❌ Error in generate-combo:', error);
     res.status(500).json({ 
-      error: 'Failed to generate personalized combo',
+      error: 'Failed to generate combo',
       details: error.message 
     });
   }

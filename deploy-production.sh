@@ -1,46 +1,54 @@
 #!/bin/bash
 
-echo "🚀 Restaurant Demo Production Deployment"
-echo "========================================"
+echo "🚀 Deploying Restaurant Demo to Render..."
+echo "=========================================="
 
-# Check if git is clean
-if [ -n "$(git status --porcelain)" ]; then
-    echo "❌ Git working directory is not clean. Please commit your changes first."
+# Check if render.yaml exists
+if [ ! -f "render.yaml" ]; then
+    echo "❌ render.yaml not found!"
     exit 1
 fi
 
-echo "✅ Git working directory is clean"
-
-# Check if we're on main branch
-current_branch=$(git branch --show-current)
-if [ "$current_branch" != "main" ]; then
-    echo "⚠️  You're on branch '$current_branch'. Consider switching to main for production deployment."
-    read -p "Continue anyway? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
+# Check if backend-deploy directory exists
+if [ ! -d "backend-deploy" ]; then
+    echo "❌ backend-deploy directory not found!"
+    exit 1
 fi
 
-echo "📤 Pushing to GitHub..."
-git push origin $current_branch
+echo "✅ Configuration files found"
 
-echo "✅ Code pushed to GitHub"
+# Check if user is logged into Render
+if ! render whoami > /dev/null 2>&1; then
+    echo "🔐 Please log in to Render first:"
+    echo "   render login"
+    exit 1
+fi
+
+echo "✅ Authenticated with Render"
+
+# Create a new service using render.yaml
+echo "📦 Creating service from render.yaml..."
 echo ""
-echo "🌐 Render will automatically deploy your changes"
-echo "📱 Your iOS app is now configured for production"
+echo "This will create a new web service called 'restaurant-stripe-server'"
+echo "with the following configuration:"
+echo "- Environment: Node.js"
+echo "- Root Directory: backend-deploy"
+echo "- Build Command: npm install"
+echo "- Start Command: npm start"
 echo ""
-echo "🔧 Next steps:"
-echo "1. Go to https://dashboard.render.com/"
-echo "2. Find your 'restaurant-stripe-server' service"
-echo "3. Add environment variables:"
-echo "   - STRIPE_SECRET_KEY=sk_live_your_key_here"
-echo "   - OPENAI_API_KEY=your_openai_key_here"
-echo "   - NODE_ENV=production"
+
+# Use render CLI to create service from yaml
+echo "🔄 Creating service..."
+render services create --from-yaml render.yaml
+
 echo ""
-echo "📱 To test on any iPhone:"
-echo "1. Archive your app in Xcode"
-echo "2. Distribute via TestFlight or Ad Hoc"
-echo "3. Install on any iPhone anywhere!"
+echo "🎉 Deployment initiated!"
 echo ""
-echo "🎉 Your app will work globally once deployed!" 
+echo "Next steps:"
+echo "1. Go to https://dashboard.render.com to monitor the deployment"
+echo "2. Set up your environment variables in the Render dashboard:"
+echo "   - OPENAI_API_KEY (your OpenAI API key)"
+echo "   - FIREBASE_SERVICE_ACCOUNT_KEY (if using service account)"
+echo "3. The app will be available at: https://restaurant-stripe-server.onrender.com"
+echo ""
+echo "Note: The first deployment may take 5-10 minutes to complete." 
