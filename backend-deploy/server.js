@@ -220,6 +220,9 @@ ${allMenuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} $
     `.trim();
     
     // Create AI prompt that lets ChatGPT actually choose the items
+    const currentTime = new Date().toISOString();
+    const randomSeed = Math.floor(Math.random() * 1000);
+    
     const prompt = `You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. 
 
 Customer: ${userName}
@@ -236,6 +239,14 @@ Please create a personalized combo for ${userName} with:
 4. Optionally one sauce or condiment (choose from items that seem like sauces/dips above) - only if it complements the combo well
 
 Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
+
+CRITICAL VARIETY REQUIREMENTS:
+- You MUST choose different items each time you generate a combo
+- Randomly select from the available options - don't favor the same items repeatedly
+- Consider the current time (${currentTime}) and random seed (${randomSeed}) to ensure variety
+- Mix up your selections across all categories (dumplings, appetizers, drinks, sauces)
+- If you've suggested similar items before, choose different ones this time
+- Vary the price ranges and flavor profiles
 
 IMPORTANT RULES:
 - Choose items that actually exist in the menu above
@@ -265,14 +276,14 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       messages: [
         {
           role: "system",
-          content: "You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. Always respond with valid JSON in the exact format requested."
+          content: "You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. Always respond with valid JSON in the exact format requested. IMPORTANT: You must provide variety in your selections and avoid repeating the same combinations."
         },
         {
           role: "user",
           content: prompt
         }
       ],
-      temperature: 0.7,
+      temperature: 0.9,
       max_tokens: 500
     });
     
