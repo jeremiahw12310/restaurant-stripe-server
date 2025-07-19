@@ -217,11 +217,26 @@ app.post('/generate-combo', async (req, res) => {
     const spicePreference = dietaryPreferences.likesSpicyFood ? 
       'The customer enjoys spicy food. ' : '';
     
-    // Create menu items text for AI - send the FULL current menu
+    // Create menu items text for AI - organize by Firebase categories
+    const menuByCategory = {};
+    
+    // Group items by their Firebase category
+    allMenuItems.forEach(item => {
+      if (!menuByCategory[item.category]) {
+        menuByCategory[item.category] = [];
+      }
+      menuByCategory[item.category].push(item);
+    });
+    
+    // Create organized menu text by category
     const menuText = `
 Available menu items (current as of ${new Date().toLocaleString()}):
 
-${allMenuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} ${item.isDumpling ? '(dumpling)' : item.isDrink ? '(drink)' : ''}`).join('\n')}
+${Object.entries(menuByCategory).map(([category, items]) => {
+  const categoryTitle = category.charAt(0).toUpperCase() + category.slice(1);
+  const itemsList = items.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n');
+  return `${categoryTitle}:\n${itemsList}`;
+}).join('\n\n')}
     `.trim();
     
     // Create AI prompt that encourages variety while letting ChatGPT choose intelligently
@@ -312,10 +327,10 @@ ${menuText}
 IMPORTANT: You must choose items from the EXACT menu above. Do not make up items.
 
 Please create a personalized combo for ${userName} with:
-1. One dumpling option (choose from items marked as dumplings above)
-2. One appetizer or side dish (choose from non-dumpling, non-drink items above)  
-3. One drink (choose from items marked as drinks above)
-4. Optionally one sauce or condiment (choose from items that seem like sauces/dips above) - only if it complements the combo well
+1. One item from the dumplings category
+2. One item from the appetizers category (or another non-drink category)
+3. One item from the drinks category
+4. Optionally one sauce or condiment (from sauces category) - only if it complements the combo well
 
 Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
 
