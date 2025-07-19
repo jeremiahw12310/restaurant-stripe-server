@@ -61,142 +61,71 @@ app.post('/generate-combo', async (req, res) => {
       });
     }
     
-    // Fetch menu data from Firestore or use fallback static data
-    console.log('🔍 Fetching menu data from Firestore...');
-    let allMenuItems = [];
+    // Use the menu items from the request (which come from Firebase)
+    let allMenuItems = menuItems || [];
     
-    if (admin.apps.length) {
-      try {
-        const db = admin.firestore();
-        
-        // Get all menu categories
-        const categoriesSnapshot = await db.collection('menu').get();
-        
-        for (const categoryDoc of categoriesSnapshot.docs) {
-          const categoryId = categoryDoc.id;
-          console.log(`🔍 Processing category: ${categoryId}`);
+    // If no menu items provided, fetch from Firebase
+    if (!allMenuItems || allMenuItems.length === 0) {
+      console.log('🔍 No menu items in request, fetching from Firestore...');
+      
+      if (admin.apps.length) {
+        try {
+          const db = admin.firestore();
           
-          // Get all items in this category
-          const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
+          // Get all menu categories
+          const categoriesSnapshot = await db.collection('menu').get();
           
-          for (const itemDoc of itemsSnapshot.docs) {
-            try {
-              const itemData = itemDoc.data();
-              const menuItem = {
-                id: itemData.id || itemDoc.id,
-                description: itemData.description || '',
-                price: itemData.price || 0.0,
-                imageURL: itemData.imageURL || '',
-                isAvailable: itemData.isAvailable !== false,
-                paymentLinkID: itemData.paymentLinkID || '',
-                isDumpling: itemData.isDumpling || false,
-                isDrink: itemData.isDrink || false,
-                category: categoryId
-              };
-              allMenuItems.push(menuItem);
-              console.log(`✅ Added item: ${menuItem.id} (${categoryId})`);
-            } catch (error) {
-              console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
+          for (const categoryDoc of categoriesSnapshot.docs) {
+            const categoryId = categoryDoc.id;
+            console.log(`🔍 Processing category: ${categoryId}`);
+            
+            // Get all items in this category
+            const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
+            
+            for (const itemDoc of itemsSnapshot.docs) {
+              try {
+                const itemData = itemDoc.data();
+                const menuItem = {
+                  id: itemData.id || itemDoc.id,
+                  description: itemData.description || '',
+                  price: itemData.price || 0.0,
+                  imageURL: itemData.imageURL || '',
+                  isAvailable: itemData.isAvailable !== false,
+                  paymentLinkID: itemData.paymentLinkID || '',
+                  category: categoryId
+                };
+                allMenuItems.push(menuItem);
+                console.log(`✅ Added item: ${menuItem.id} (${categoryId})`);
+              } catch (error) {
+                console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
+              }
             }
           }
+          
+          console.log(`✅ Successfully fetched ${allMenuItems.length} menu items from Firestore`);
+        } catch (error) {
+          console.error('❌ Error fetching from Firestore:', error);
+          return res.status(500).json({ 
+            error: 'Failed to fetch menu from Firebase',
+            details: error.message 
+          });
         }
-        
-        console.log(`✅ Successfully fetched ${allMenuItems.length} menu items from Firestore`);
-      } catch (error) {
-        console.error('❌ Error fetching from Firestore, using fallback data:', error);
-        // Fallback to static data if Firestore fails
-        allMenuItems = [
-          // Dumplings
-          { id: "No.9 Pork (12)", price: 13.99, description: "Classic pork dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.2 Pork & Chive (12)", price: 15.99, description: "Pork and chive dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.4 Pork Shrimp (12)", price: 16.99, description: "Pork and shrimp dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.5 Pork & Cabbage (12)", price: 14.99, description: "Pork and cabbage dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.3 Spicy Pork (12)", price: 14.99, description: "Spicy pork dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.7 Curry Chicken (12)", price: 12.99, description: "Curry chicken dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.8 Chicken & Coriander (12)", price: 13.99, description: "Chicken and coriander dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.1 Chicken & Mushroom (12)", price: 14.99, description: "Chicken and mushroom dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.10 Curry Beef & Onion (12)", price: 15.99, description: "Curry beef and onion dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.6 Veggie (12)", price: 13.99, description: "Vegetable dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          
-          // Appetizers
-          { id: "Edamame", price: 4.99, description: "Steamed soybeans", isDumpling: false, isDrink: false, category: "appetizers" },
-          { id: "Asian Pickled Cucumbers", price: 5.75, description: "Pickled cucumbers", isDumpling: false, isDrink: false, category: "appetizers" },
-          { id: "(Crab & Shrimp) Cold Noodle w/ Peanut Sauce", price: 8.35, description: "Cold noodles with peanut sauce", isDumpling: false, isDrink: false, category: "appetizers" },
-          { id: "Peanut Butter Pork Dumplings", price: 7.99, description: "Peanut butter pork dumplings", isDumpling: false, isDrink: false, category: "appetizers" },
-          { id: "Spicy Tofu", price: 5.99, description: "Spicy tofu", isDumpling: false, isDrink: false, category: "appetizers" },
-          { id: "Curry Rice w/ Chicken", price: 7.75, description: "Curry rice with chicken", isDumpling: false, isDrink: false, category: "appetizers" },
-          { id: "Jasmine White Rice", price: 2.75, description: "Jasmine white rice", isDumpling: false, isDrink: false, category: "appetizers" },
-          { id: "Cold Tofu", price: 5.99, description: "Cold tofu", isDumpling: false, isDrink: false, category: "appetizers" },
-          
-          // Soups
-          { id: "Hot & Sour Soup", price: 5.95, description: "Hot and sour soup", isDumpling: false, isDrink: false, category: "soups" },
-          { id: "Pork Wonton Soup", price: 6.95, description: "Pork wonton soup", isDumpling: false, isDrink: false, category: "soups" },
-          
-          // Drinks
-          { id: "Bubble Milk Tea w/ Tapioca", price: 5.90, description: "Bubble milk tea with tapioca", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Fresh Milk Tea", price: 5.90, description: "Fresh milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Capped Thai Brown Sugar", price: 6.90, description: "Capped Thai brown sugar milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Strawberry Fresh", price: 6.75, description: "Strawberry fresh milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Peach Fresh", price: 6.50, description: "Peach fresh milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Lychee Dragon Fruit", price: 6.50, description: "Lychee dragon fruit tea", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Peach Strawberry", price: 6.75, description: "Peach strawberry fruit tea", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Coffee Latte", price: 5.50, description: "Coffee latte", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Coke", price: 2.25, description: "Coca Cola", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Bottle Water", price: 1.00, description: "Bottle water", isDumpling: false, isDrink: true, category: "drinks" },
-          
-          // Sauces
-          { id: "Peanut Sauce", price: 1.50, description: "Peanut sauce", isDumpling: false, isDrink: false, category: "sauces" },
-          { id: "SPICY Peanut Sauce", price: 1.50, description: "Spicy peanut sauce", isDumpling: false, isDrink: false, category: "sauces" },
-          { id: "Curry Sauce w/ Chicken", price: 1.50, description: "Curry sauce with chicken", isDumpling: false, isDrink: false, category: "sauces" }
-        ];
+      } else {
+        console.error('❌ Firebase not configured');
+        return res.status(500).json({ 
+          error: 'Firebase not configured - FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing',
+          details: 'Please configure Firebase service account key in production environment'
+        });
       }
-    } else {
-      console.log('⚠️ Firebase not configured, using fallback static menu data...');
-      // Use the same fallback data as above
-      allMenuItems = [
-        // Dumplings
-        { id: "No.9 Pork (12)", price: 13.99, description: "Classic pork dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.2 Pork & Chive (12)", price: 15.99, description: "Pork and chive dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.4 Pork Shrimp (12)", price: 16.99, description: "Pork and shrimp dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.5 Pork & Cabbage (12)", price: 14.99, description: "Pork and cabbage dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.3 Spicy Pork (12)", price: 14.99, description: "Spicy pork dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.7 Curry Chicken (12)", price: 12.99, description: "Curry chicken dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.8 Chicken & Coriander (12)", price: 13.99, description: "Chicken and coriander dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.1 Chicken & Mushroom (12)", price: 14.99, description: "Chicken and mushroom dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.10 Curry Beef & Onion (12)", price: 15.99, description: "Curry beef and onion dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        { id: "No.6 Veggie (12)", price: 13.99, description: "Vegetable dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-        
-        // Appetizers
-        { id: "Edamame", price: 4.99, description: "Steamed soybeans", isDumpling: false, isDrink: false, category: "appetizers" },
-        { id: "Asian Pickled Cucumbers", price: 5.75, description: "Pickled cucumbers", isDumpling: false, isDrink: false, category: "appetizers" },
-        { id: "(Crab & Shrimp) Cold Noodle w/ Peanut Sauce", price: 8.35, description: "Cold noodles with peanut sauce", isDumpling: false, isDrink: false, category: "appetizers" },
-        { id: "Peanut Butter Pork Dumplings", price: 7.99, description: "Peanut butter pork dumplings", isDumpling: false, isDrink: false, category: "appetizers" },
-        { id: "Spicy Tofu", price: 5.99, description: "Spicy tofu", isDumpling: false, isDrink: false, category: "appetizers" },
-        { id: "Curry Rice w/ Chicken", price: 7.75, description: "Curry rice with chicken", isDumpling: false, isDrink: false, category: "appetizers" },
-        { id: "Jasmine White Rice", price: 2.75, description: "Jasmine white rice", isDumpling: false, isDrink: false, category: "appetizers" },
-        { id: "Cold Tofu", price: 5.99, description: "Cold tofu", isDumpling: false, isDrink: false, category: "appetizers" },
-        
-        // Soups
-        { id: "Hot & Sour Soup", price: 5.95, description: "Hot and sour soup", isDumpling: false, isDrink: false, category: "soups" },
-        { id: "Pork Wonton Soup", price: 6.95, description: "Pork wonton soup", isDumpling: false, isDrink: false, category: "soups" },
-        
-        // Drinks
-        { id: "Bubble Milk Tea w/ Tapioca", price: 5.90, description: "Bubble milk tea with tapioca", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Fresh Milk Tea", price: 5.90, description: "Fresh milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Capped Thai Brown Sugar", price: 6.90, description: "Capped Thai brown sugar milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Strawberry Fresh", price: 6.75, description: "Strawberry fresh milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Peach Fresh", price: 6.50, description: "Peach fresh milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Lychee Dragon Fruit", price: 6.50, description: "Lychee dragon fruit tea", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Peach Strawberry", price: 6.75, description: "Peach strawberry fruit tea", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Coffee Latte", price: 5.50, description: "Coffee latte", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Coke", price: 2.25, description: "Coca Cola", isDumpling: false, isDrink: true, category: "drinks" },
-        { id: "Bottle Water", price: 1.00, description: "Bottle water", isDumpling: false, isDrink: true, category: "drinks" },
-        
-        // Sauces
-        { id: "Peanut Sauce", price: 1.50, description: "Peanut sauce", isDumpling: false, isDrink: false, category: "sauces" },
-        { id: "SPICY Peanut Sauce", price: 1.50, description: "Spicy peanut sauce", isDumpling: false, isDrink: false, category: "sauces" },
-        { id: "Curry Sauce w/ Chicken", price: 1.50, description: "Curry sauce with chicken", isDumpling: false, isDrink: false, category: "sauces" }
-      ];
+    }
+    
+    // If still no menu items, return error
+    if (!allMenuItems || allMenuItems.length === 0) {
+      console.error('❌ No menu items available');
+      return res.status(500).json({ 
+        error: 'No menu items available',
+        details: 'Unable to fetch menu from Firebase or request'
+      });
     }
     
     console.log(`🔍 Fetched ${allMenuItems.length} current menu items`);
