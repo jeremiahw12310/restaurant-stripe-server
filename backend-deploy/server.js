@@ -219,77 +219,102 @@ Available menu items (current as of ${new Date().toLocaleString()}):
 ${allMenuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} ${item.isDumpling ? '(dumpling)' : item.isDrink ? '(drink)' : ''}`).join('\n')}
     `.trim();
     
-    // Create AI prompt that lets ChatGPT actually choose the items
+    // Create deterministic item selection based on random seed
     const currentTime = new Date().toISOString();
     const randomSeed = Math.floor(Math.random() * 1000);
     const sessionId = Math.random().toString(36).substring(2, 15);
+    const timestamp = new Date();
+    const minute = timestamp.getMinutes();
+    const second = timestamp.getSeconds();
     
-    // Create a more dynamic and varied prompt
-    const varietyInstructions = [
-      "Use the random seed to select items - if seed ends in 0-2, choose budget-friendly options",
-      "If seed ends in 3-5, choose premium items",
-      "If seed ends in 6-8, mix budget and premium",
-      "If seed ends in 9, choose the most popular items",
-      "Use the timestamp to vary selections - different minutes should yield different choices",
-      "Consider the session ID for additional randomness"
-    ];
+    // Parse menu items to categorize them
+    const menuItems = menuText.split('\n').filter(line => line.trim() && line.includes('$'));
+    const dumplings = [];
+    const appetizers = [];
+    const drinks = [];
+    
+    menuItems.forEach(item => {
+      const priceMatch = item.match(/\$(\d+\.?\d*)/);
+      if (priceMatch) {
+        const price = parseFloat(priceMatch[1]);
+        const itemName = item.split('$')[0].trim();
+        
+        if (item.toLowerCase().includes('dumpling') || item.toLowerCase().includes('bao')) {
+          dumplings.push({ name: itemName, price: price });
+        } else if (item.toLowerCase().includes('tea') || item.toLowerCase().includes('coffee') || 
+                   item.toLowerCase().includes('drink') || item.toLowerCase().includes('milk')) {
+          drinks.push({ name: itemName, price: price });
+        } else {
+          appetizers.push({ name: itemName, price: price });
+        }
+      }
+    });
+    
+    // Deterministic selection based on random seed and timestamp
+    const seedLastDigit = randomSeed % 10;
+    const minuteIndex = minute % 10;
+    const secondIndex = second % 10;
+    
+    // Select items based on strategy
+    let selectedDumpling, selectedAppetizer, selectedDrink;
+    
+    // Dumpling selection
+    if (dumplings.length > 0) {
+      const dumplingIndex = (seedLastDigit + minuteIndex) % dumplings.length;
+      selectedDumpling = dumplings[dumplingIndex];
+    }
+    
+    // Appetizer selection  
+    if (appetizers.length > 0) {
+      const appetizerIndex = (seedLastDigit + secondIndex) % appetizers.length;
+      selectedAppetizer = appetizers[appetizerIndex];
+    }
+    
+    // Drink selection
+    if (drinks.length > 0) {
+      const drinkIndex = (minuteIndex + secondIndex) % drinks.length;
+      selectedDrink = drinks[drinkIndex];
+    }
+    
+    // Create the selected items array
+    const selectedItems = [];
+    if (selectedDumpling) {
+      selectedItems.push({ id: selectedDumpling.name, category: "dumplings" });
+    }
+    if (selectedAppetizer) {
+      selectedItems.push({ id: selectedAppetizer.name, category: "appetizers" });
+    }
+    if (selectedDrink) {
+      selectedItems.push({ id: selectedDrink.name, category: "drinks" });
+    }
+    
+    // Calculate total price
+    const totalPrice = [selectedDumpling, selectedAppetizer, selectedDrink]
+      .filter(item => item)
+      .reduce((sum, item) => sum + item.price, 0);
     
     const prompt = `You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. 
 
 Customer: ${userName}
 ${restrictionsText}${spicePreference}
 
-${menuText}
+I have already selected the following items for ${userName}'s personalized combo:
+${selectedItems.map(item => `- ${item.id} (${item.category})`).join('\n')}
 
-IMPORTANT: You must choose items from the EXACT menu above. Do not make up items.
+Total Price: $${totalPrice.toFixed(2)}
 
-Please create a personalized combo for ${userName} with:
-1. One dumpling option (choose from items marked as dumplings above)
-2. One appetizer or side dish (choose from non-dumpling, non-drink items above)  
-3. One drink (choose from items marked as drinks above)
-4. Optionally one sauce or condiment (choose from items that seem like sauces/dips above) - only if it complements the combo well
+Please create a personalized response explaining why you chose these specific items for ${userName}. Consider their dietary preferences and restrictions. The combo should feel balanced and appealing.
 
-Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
-
-CRITICAL VARIETY REQUIREMENTS:
-- You MUST choose different items each time you generate a combo
-- Randomly select from the available options - don't favor the same items repeatedly
-- Current time: ${currentTime}
-- Random seed: ${randomSeed}
-- Session ID: ${sessionId}
-- ${varietyInstructions.join('. ')}
-- Mix up your selections across all categories (dumplings, appetizers, drinks, sauces)
-- If you've suggested similar items before, choose different ones this time
-- Vary the price ranges and flavor profiles
-- Use the random seed to determine your selection strategy
-
-SELECTION STRATEGY:
-- If random seed ends in 0-2: Choose budget-friendly items (under $10 each)
-- If random seed ends in 3-5: Choose premium items (over $12 each)  
-- If random seed ends in 6-8: Mix budget and premium items
-- If random seed ends in 9: Choose the most popular items
-- Use the timestamp minute to determine which specific items to pick within each category
-
-IMPORTANT RULES:
-- Choose items that actually exist in the menu above
-- Consider dietary restrictions carefully
-- Create variety - don't always choose the same items
-- Consider flavor combinations that work well together
-- Calculate the total price by adding up the prices of your chosen items
-- For milk teas and coffees, note that milk substitutes (oat milk, almond milk, coconut milk) are available for lactose intolerant customers
+IMPORTANT: Do not change the items - use exactly the items I provided above.
 
 Respond in this exact JSON format:
 {
-  "items": [
-    {"id": "Exact Item Name from Menu", "category": "dumplings"},
-    {"id": "Exact Item Name from Menu", "category": "appetizers"},
-    {"id": "Exact Item Name from Menu", "category": "drinks"}
-  ],
+  "items": ${JSON.stringify(selectedItems)},
   "aiResponse": "A 3-sentence personalized response starting with the customer's name, explaining why you chose these items for them. Make them feel seen and understood.",
-  "totalPrice": 0.00
+  "totalPrice": ${totalPrice.toFixed(2)}
 }
 
-Calculate the total price accurately. Keep the response warm and personal.`;
+Keep the response warm and personal.`;
     
     console.log('🤖 Sending request to OpenAI...');
     
