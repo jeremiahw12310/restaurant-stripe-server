@@ -35,7 +35,7 @@ const userComboPreferences = new Map(); // Track user preferences for personaliz
 
 // NEW: Recommendation history to prevent cycling
 const recommendationHistory = new Map(); // Track recent recommendations per user
-const MAX_HISTORY_PER_USER = 6; // Keep last 6 items recommended to each user
+const MAX_HISTORY_PER_USER = 12; // Keep last 12 items recommended to each user (increased from 6)
 
 // Health check endpoint
 app.get('/', (req, res) => {
@@ -259,6 +259,8 @@ ${menuText}
 
 IMPORTANT: You must choose items from the EXACT menu above. Do not make up items.
 
+CRITICAL ANTI-CYCLING RULE: You MUST NOT recommend any of these recently suggested items: ${recentItems.length > 0 ? recentItems.join(', ') : 'None'}. Choose completely different items.
+
 Please create a personalized combo for ${userName} with:
 1. One dumpling option (choose from items marked as dumplings above)
 2. One appetizer or side dish (choose from non-dumpling, non-drink items above)  
@@ -301,6 +303,7 @@ VARIETY GUIDELINES:
 - Consider the current time of day and day of week for appropriate choices
 - Use the millisecond-based factor for additional randomness
 - CRITICAL: Avoid recommending items from the recent history list above
+- ABSOLUTELY DO NOT RECOMMEND: ${recentItems.length > 0 ? recentItems.join(', ') : 'None'}
 
 IMPORTANT RULES:
 - Choose items that actually exist in the menu above
