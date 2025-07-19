@@ -33,6 +33,10 @@ const comboInsights = []; // Track combo patterns for insights, not restrictions
 const MAX_INSIGHTS = 100;
 const userComboPreferences = new Map(); // Track user preferences for personalization
 
+// NEW: Recommendation history to prevent cycling
+const recommendationHistory = new Map(); // Track recent recommendations per user
+const MAX_HISTORY_PER_USER = 6; // Keep last 6 items recommended to each user
+
 // Health check endpoint
 app.get('/', (req, res) => {
   res.json({ 
@@ -107,81 +111,17 @@ app.post('/generate-combo', async (req, res) => {
           console.log(`✅ Successfully fetched ${allMenuItems.length} menu items from Firestore`);
         } catch (error) {
           console.error('❌ Error fetching from Firestore:', error);
-          // Use fallback static data
-          allMenuItems = [
-            // Dumplings
-            { id: "No.9 Pork (12)", price: 13.99, description: "Classic pork dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-            { id: "No.2 Pork & Chive (12)", price: 15.99, description: "Pork and chive dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-            { id: "No.4 Pork Shrimp (12)", price: 16.99, description: "Pork and shrimp dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-            { id: "No.5 Pork & Cabbage (12)", price: 14.99, description: "Pork and cabbage dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-            { id: "No.3 Spicy Pork (12)", price: 14.99, description: "Spicy pork dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-            { id: "No.7 Curry Chicken (12)", price: 12.99, description: "Curry chicken dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-            { id: "No.8 Chicken & Coriander (12)", price: 13.99, description: "Chicken and coriander dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-            { id: "No.1 Chicken & Mushroom (12)", price: 14.99, description: "Chicken and mushroom dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-            { id: "No.10 Curry Beef & Onion (12)", price: 15.99, description: "Curry beef and onion dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-            { id: "No.6 Veggie (12)", price: 13.99, description: "Vegetable dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-            
-            // Appetizers
-            { id: "Edamame", price: 4.99, description: "Steamed soybeans", isDumpling: false, isDrink: false, category: "appetizers" },
-            { id: "Asian Pickled Cucumbers", price: 5.75, description: "Pickled cucumbers", isDumpling: false, isDrink: false, category: "appetizers" },
-            { id: "Spicy Tofu", price: 5.99, description: "Spicy tofu", isDumpling: false, isDrink: false, category: "appetizers" },
-            { id: "Curry Rice w/ Chicken", price: 7.75, description: "Curry rice with chicken", isDumpling: false, isDrink: false, category: "appetizers" },
-            { id: "Jasmine White Rice", price: 2.75, description: "Jasmine white rice", isDumpling: false, isDrink: false, category: "appetizers" },
-            
-            // Drinks
-            { id: "Bubble Milk Tea w/ Tapioca", price: 5.90, description: "Bubble milk tea with tapioca", isDumpling: false, isDrink: true, category: "drinks" },
-            { id: "Capped Thai Brown Sugar", price: 6.90, description: "Capped Thai brown sugar milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-            { id: "Peach Strawberry", price: 6.75, description: "Peach strawberry fruit tea", isDumpling: false, isDrink: true, category: "drinks" },
-            { id: "Peach Fresh", price: 6.50, description: "Peach fresh milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-            { id: "Lychee Dragon Fruit", price: 6.50, description: "Lychee dragon fruit tea", isDumpling: false, isDrink: true, category: "drinks" },
-            { id: "Coffee Latte", price: 5.50, description: "Coffee latte", isDumpling: false, isDrink: true, category: "drinks" },
-            { id: "Coke", price: 2.25, description: "Coca Cola", isDumpling: false, isDrink: true, category: "drinks" },
-            { id: "Bottle Water", price: 1.00, description: "Bottle water", isDumpling: false, isDrink: true, category: "drinks" },
-            
-            // Sauces
-            { id: "Peanut Sauce", price: 1.50, description: "Peanut sauce", isDumpling: false, isDrink: false, category: "sauces" },
-            { id: "SPICY Peanut Sauce", price: 1.50, description: "Spicy peanut sauce", isDumpling: false, isDrink: false, category: "sauces" },
-            { id: "Curry Sauce w/ Chicken", price: 1.50, description: "Curry sauce with chicken", isDumpling: false, isDrink: false, category: "sauces" }
-          ];
+          return res.status(500).json({ 
+            error: 'Failed to fetch menu from Firebase',
+            details: error.message 
+          });
         }
       } else {
-        console.log('⚠️ Firebase not configured, using fallback static menu data...');
-        // Use the same fallback data as above
-        allMenuItems = [
-          // Dumplings
-          { id: "No.9 Pork (12)", price: 13.99, description: "Classic pork dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.2 Pork & Chive (12)", price: 15.99, description: "Pork and chive dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.4 Pork Shrimp (12)", price: 16.99, description: "Pork and shrimp dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.5 Pork & Cabbage (12)", price: 14.99, description: "Pork and cabbage dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.3 Spicy Pork (12)", price: 14.99, description: "Spicy pork dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.7 Curry Chicken (12)", price: 12.99, description: "Curry chicken dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.8 Chicken & Coriander (12)", price: 13.99, description: "Chicken and coriander dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.1 Chicken & Mushroom (12)", price: 14.99, description: "Chicken and mushroom dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.10 Curry Beef & Onion (12)", price: 15.99, description: "Curry beef and onion dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          { id: "No.6 Veggie (12)", price: 13.99, description: "Vegetable dumplings", isDumpling: true, isDrink: false, category: "dumplings" },
-          
-          // Appetizers
-          { id: "Edamame", price: 4.99, description: "Steamed soybeans", isDumpling: false, isDrink: false, category: "appetizers" },
-          { id: "Asian Pickled Cucumbers", price: 5.75, description: "Pickled cucumbers", isDumpling: false, isDrink: false, category: "appetizers" },
-          { id: "Spicy Tofu", price: 5.99, description: "Spicy tofu", isDumpling: false, isDrink: false, category: "appetizers" },
-          { id: "Curry Rice w/ Chicken", price: 7.75, description: "Curry rice with chicken", isDumpling: false, isDrink: false, category: "appetizers" },
-          { id: "Jasmine White Rice", price: 2.75, description: "Jasmine white rice", isDumpling: false, isDrink: false, category: "appetizers" },
-          
-          // Drinks
-          { id: "Bubble Milk Tea w/ Tapioca", price: 5.90, description: "Bubble milk tea with tapioca", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Capped Thai Brown Sugar", price: 6.90, description: "Capped Thai brown sugar milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Peach Strawberry", price: 6.75, description: "Peach strawberry fruit tea", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Peach Fresh", price: 6.50, description: "Peach fresh milk tea", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Lychee Dragon Fruit", price: 6.50, description: "Lychee dragon fruit tea", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Coffee Latte", price: 5.50, description: "Coffee latte", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Coke", price: 2.25, description: "Coca Cola", isDumpling: false, isDrink: true, category: "drinks" },
-          { id: "Bottle Water", price: 1.00, description: "Bottle water", isDumpling: false, isDrink: true, category: "drinks" },
-          
-          // Sauces
-          { id: "Peanut Sauce", price: 1.50, description: "Peanut sauce", isDumpling: false, isDrink: false, category: "sauces" },
-          { id: "SPICY Peanut Sauce", price: 1.50, description: "Spicy peanut sauce", isDumpling: false, isDrink: false, category: "sauces" },
-          { id: "Curry Sauce w/ Chicken", price: 1.50, description: "Curry sauce with chicken", isDumpling: false, isDrink: false, category: "sauces" }
-        ];
+        console.error('❌ Firebase not configured');
+        return res.status(500).json({ 
+          error: 'Firebase not configured - cannot fetch menu',
+          details: 'Firebase service account not available'
+        });
       }
     }
     
@@ -291,6 +231,11 @@ ${allMenuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} $
     // Get user's previous combo preferences for personalization (not restriction)
     const userPreferences = userComboPreferences.get(userName) || { categories: {}, priceRanges: [], flavorProfiles: [] };
     
+    // NEW: Get user's recent recommendation history to prevent cycling
+    const userHistory = recommendationHistory.get(userName) || [];
+    const recentItems = userHistory.map(h => h.itemId);
+    console.log(`📝 User ${userName} recent items: ${recentItems.join(', ')}`);
+    
     // Enhanced variety encouragement
     const varietyEncouragement = `
 VARIETY ENCOURAGEMENT:
@@ -302,6 +247,7 @@ VARIETY ENCOURAGEMENT:
 - Balance familiarity with discovery
 - Consider the current time and day for appropriate choices
 - Use the enhanced random seed for maximum variety
+- AVOID RECENTLY RECOMMENDED ITEMS: ${recentItems.length > 0 ? recentItems.join(', ') : 'None'}
 `;
 
     const prompt = `You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. 
@@ -339,6 +285,11 @@ ${userPreferences.categories && Object.keys(userPreferences.categories).length >
   `Previous category preferences: ${Object.entries(userPreferences.categories).map(([cat, count]) => `${cat} (${count} times)`).join(', ')}` : 
   'No previous preferences recorded - great opportunity to explore!'}
 
+RECENT RECOMMENDATION HISTORY (AVOID THESE ITEMS):
+${recentItems.length > 0 ? 
+  `Recently recommended items to avoid: ${recentItems.join(', ')}` : 
+  'No recent recommendations - full menu available!'}
+
 VARIETY GUIDELINES:
 - Use the exploration strategy to guide your choices
 - Consider the time-based factors for seasonal appropriateness
@@ -349,6 +300,7 @@ VARIETY GUIDELINES:
 - Explore different combinations that work well together
 - Consider the current time of day and day of week for appropriate choices
 - Use the millisecond-based factor for additional randomness
+- CRITICAL: Avoid recommending items from the recent history list above
 
 IMPORTANT RULES:
 - Choose items that actually exist in the menu above
@@ -453,6 +405,17 @@ Calculate the total price accurately. Keep the response warm and personal.`;
     if (userPrefs.flavorProfiles.length > 10) {
       userPrefs.flavorProfiles.shift();
     }
+
+    // Add to recommendation history
+    const newHistoryItem = {
+      itemId: comboData.items[0].id, // Assuming the first item is the main choice
+      timestamp: new Date().toISOString()
+    };
+    userHistory.push(newHistoryItem);
+    if (userHistory.length > MAX_HISTORY_PER_USER) {
+      userHistory.shift();
+    }
+    recommendationHistory.set(userName, userHistory);
     
     console.log(`📝 Stored combo insights. Total insights: ${comboInsights.length}, User preferences updated for ${userName}`);
     
