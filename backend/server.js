@@ -380,7 +380,9 @@ Remember: You're not just an assistant—you love helping people discover the be
               (id.toLowerCase().includes('beef') && (fullText.includes('12pc') || fullText.includes('12 piece'))) ||
               (id.toLowerCase().includes('veggie') && (fullText.includes('12pc') || fullText.includes('12 piece'))) ||
               (id.toLowerCase().includes('curry') && (fullText.includes('12pc') || fullText.includes('12 piece'))) ||
-              (id.toLowerCase().includes('spicy') && (fullText.includes('12pc') || fullText.includes('12 piece')))) {
+              (id.toLowerCase().includes('spicy') && (fullText.includes('12pc') || fullText.includes('12 piece'))) ||
+              // Special case for items that are clearly dumplings but might be missing portion indicator
+              (id.toLowerCase() === 'pork' && !fullText.includes('wonton') && !fullText.includes('peanut butter'))) {
             category = 'Dumplings';
           }
           // Soups - must contain "soup" or "wonton"
@@ -394,7 +396,8 @@ Remember: You're not just an assistant—you love helping people discover the be
           // Appetizers - specific appetizer items
           else if (fullText.includes('edamame') || fullText.includes('cucumber') ||
                    fullText.includes('cold noodle') || fullText.includes('curry rice') ||
-                   fullText.includes('peanut butter pork') || fullText.includes('spicy tofu')) {
+                   fullText.includes('peanut butter pork') || fullText.includes('spicy tofu') ||
+                   fullText.includes('cold noodles')) {
             category = 'Appetizers';
           }
           // Coffee - must contain "coffee" or "latte"
