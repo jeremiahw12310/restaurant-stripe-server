@@ -64,6 +64,87 @@ app.post('/generate-combo', async (req, res) => {
     // Use the menu items from the request (which come from Firebase)
     let allMenuItems = menuItems || [];
     
+    // Helper function to categorize items from their descriptions
+    function categorizeFromDescriptions(items) {
+      const categorizedItems = [];
+      
+      items.forEach(item => {
+        const description = item.description || '';
+        const id = item.id || '';
+        const fullText = `${id} ${description}`.toLowerCase();
+        
+        let category = 'Other';
+        
+        // Dumplings - ONLY items that are actually dumplings (12pc, 12 piece, or specific dumpling names)
+        if (fullText.includes('12pc') || fullText.includes('12 piece') || 
+            (id.toLowerCase().includes('pork') && (fullText.includes('12pc') || fullText.includes('12 piece'))) ||
+            (id.toLowerCase().includes('chicken') && (fullText.includes('12pc') || fullText.includes('12 piece'))) ||
+            (id.toLowerCase().includes('beef') && (fullText.includes('12pc') || fullText.includes('12 piece'))) ||
+            (id.toLowerCase().includes('veggie') && (fullText.includes('12pc') || fullText.includes('12 piece'))) ||
+            (id.toLowerCase().includes('curry') && (fullText.includes('12pc') || fullText.includes('12 piece'))) ||
+            (id.toLowerCase().includes('spicy') && (fullText.includes('12pc') || fullText.includes('12 piece'))) ||
+            // Special case for items that are clearly dumplings but might be missing portion indicator
+            (id.toLowerCase() === 'pork' && !fullText.includes('wonton') && !fullText.includes('peanut butter'))) {
+          category = 'Dumplings';
+        }
+        // Soups - must contain "soup" or "wonton"
+        else if (fullText.includes('soup') || fullText.includes('wonton')) {
+          category = 'Soup';
+        }
+        // Sauces - must contain "sauce" or "peanut sauce"
+        else if (fullText.includes('sauce') || fullText.includes('peanut sauce')) {
+          category = 'Sauces';
+        }
+        // Appetizers - specific appetizer items
+        else if (fullText.includes('edamame') || fullText.includes('cucumber') ||
+                 fullText.includes('cold noodle') || fullText.includes('curry rice') ||
+                 fullText.includes('peanut butter pork') || fullText.includes('spicy tofu') ||
+                 fullText.includes('cold noodles')) {
+          category = 'Appetizers';
+        }
+        // Coffee - must contain "coffee" or "latte"
+        else if (fullText.includes('coffee') || fullText.includes('latte')) {
+          category = 'Coffee';
+        }
+        // Milk Tea - specific milk tea indicators
+        else if (fullText.includes('milk tea') || fullText.includes('bubble milk tea') ||
+                 fullText.includes('fresh milk tea') || fullText.includes('thai tea') ||
+                 fullText.includes('biscoff milk') || fullText.includes('chocolate milk') ||
+                 fullText.includes('peach 🍑 milk') || fullText.includes('pineapple 🍍 milk') ||
+                 fullText.includes('milk tea with taro') || fullText.includes('strawberry 🍓 milk')) {
+          category = 'Milk Tea';
+        }
+        // Fruit Tea - specific fruit tea indicators
+        else if (fullText.includes('fruit tea') || fullText.includes('dragon') ||
+                 fullText.includes('peach strawberry tea') || fullText.includes('pineapple fruit tea') ||
+                 fullText.includes('tropical passion fruit tea') || fullText.includes('watermelon code') ||
+                 fullText.includes('kiwi booster')) {
+          category = 'Fruit Tea';
+        }
+        // Sodas - specific soda names
+        else if (fullText.includes('coke') || fullText.includes('sprite') || 
+                 fullText.includes('diet coke')) {
+          category = 'Soda';
+        }
+        // Other drinks - items that don't fit other categories but are clearly drinks
+        else if (fullText.includes('tea') || fullText.includes('slush') || 
+                 fullText.includes('tiramisu coco') || fullText.includes('full of mango') ||
+                 fullText.includes('grape magic slush') || fullText.includes('lychee dragonfruit')) {
+          category = 'Other';
+        }
+        
+        const categorizedItem = {
+          ...item,
+          category: category
+        };
+        
+        categorizedItems.push(categorizedItem);
+        console.log(`✅ Categorized: ${item.id} -> ${category}`);
+      });
+      
+      return categorizedItems;
+    }
+    
     // If no menu items provided, try to fetch from Firebase
     if (!allMenuItems || allMenuItems.length === 0) {
       console.log('🔍 No menu items in request, trying to fetch from Firestore...');
@@ -109,6 +190,12 @@ app.post('/generate-combo', async (req, res) => {
         }
       } else {
         console.log('⚠️ Firebase not configured, will use menu items from request if available');
+        
+        // Categorize items from request if they don't have categories
+        if (allMenuItems.length > 0) {
+          console.log('🔍 Categorizing menu items from request...');
+          allMenuItems = categorizeFromDescriptions(allMenuItems);
+        }
       }
     }
     
