@@ -306,10 +306,11 @@ Remember: You're not just an assistant—you love helping people discover the be
       
       let allMenuItems = menuItems;
       
-      // If menu items don't have proper categories, fetch from Firebase
+      // If menu items don't have proper categories, try to categorize them from descriptions
       if (!hasProperCategories) {
-        console.log('🔍 Menu items lack proper categories, fetching from Firebase...');
+        console.log('🔍 Menu items lack proper categories, attempting to categorize from descriptions...');
         
+        // First try Firebase if available
         if (admin.apps.length) {
           try {
             const db = admin.firestore();
@@ -347,13 +348,84 @@ Remember: You're not just an assistant—you love helping people discover the be
             console.log(`✅ Successfully fetched ${allMenuItems.length} menu items from Firestore`);
           } catch (error) {
             console.error('❌ Error fetching from Firestore:', error);
-            // Continue with original menu items if Firebase fetch fails
+            // Fall back to parsing descriptions
+            console.log('🔄 Falling back to parsing categories from descriptions...');
+            allMenuItems = categorizeFromDescriptions(menuItems);
           }
         } else {
-          console.error('❌ Firebase not configured, using original menu items');
+          console.log('🔄 Firebase not configured, parsing categories from descriptions...');
+          allMenuItems = categorizeFromDescriptions(menuItems);
         }
       } else {
         console.log('✅ Menu items have proper categories, using as-is');
+      }
+      
+      // Helper function to categorize items from their descriptions
+      function categorizeFromDescriptions(items) {
+        const categorizedItems = [];
+        
+        items.forEach(item => {
+          const description = item.description || '';
+          const id = item.id || '';
+          const fullText = `${id} ${description}`.toLowerCase();
+          
+          let category = 'Other';
+          
+          // Dumplings (items with "12pc", "12 piece", or specific dumpling names)
+          if (fullText.includes('12pc') || fullText.includes('12 piece') || 
+              fullText.includes('dumpling') || 
+              id.toLowerCase().includes('pork') || id.toLowerCase().includes('chicken') ||
+              id.toLowerCase().includes('beef') || id.toLowerCase().includes('veggie') ||
+              id.toLowerCase().includes('curry') || id.toLowerCase().includes('spicy')) {
+            category = 'Dumplings';
+          }
+          // Drinks - Coffee
+          else if (fullText.includes('coffee') || fullText.includes('latte')) {
+            category = 'Coffee';
+          }
+          // Drinks - Milk Tea
+          else if (fullText.includes('milk tea') || fullText.includes('bubble milk tea') ||
+                   fullText.includes('fresh milk tea') || fullText.includes('thai tea')) {
+            category = 'Milk Tea';
+          }
+          // Drinks - Fruit Tea
+          else if (fullText.includes('fruit tea') || fullText.includes('tea') && 
+                   (fullText.includes('peach') || fullText.includes('mango') || 
+                    fullText.includes('lychee') || fullText.includes('grape') ||
+                    fullText.includes('kiwi') || fullText.includes('watermelon') ||
+                    fullText.includes('pineapple') || fullText.includes('tropical'))) {
+            category = 'Fruit Tea';
+          }
+          // Sodas
+          else if (fullText.includes('coke') || fullText.includes('sprite') || 
+                   fullText.includes('diet coke')) {
+            category = 'Soda';
+          }
+          // Soups
+          else if (fullText.includes('soup') || fullText.includes('wonton')) {
+            category = 'Soup';
+          }
+          // Appetizers
+          else if (fullText.includes('edamame') || fullText.includes('cucumber') ||
+                   fullText.includes('tofu') || fullText.includes('cold noodle') ||
+                   fullText.includes('curry rice') || fullText.includes('peanut butter')) {
+            category = 'Appetizers';
+          }
+          // Sauces
+          else if (fullText.includes('sauce') || fullText.includes('peanut sauce')) {
+            category = 'Sauces';
+          }
+          
+          const categorizedItem = {
+            ...item,
+            category: category
+          };
+          
+          categorizedItems.push(categorizedItem);
+          console.log(`✅ Categorized: ${item.id} -> ${category}`);
+        });
+        
+        return categorizedItems;
       }
       
       // Send the FULL menu to ChatGPT - no filtering, let ChatGPT decide
