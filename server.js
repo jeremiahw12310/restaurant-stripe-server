@@ -5,21 +5,6 @@ const cors = require('cors');
 const fs = require('fs');
 const { OpenAI } = require('openai');
 
-// Initialize Stripe only if API key is available
-let stripe = null;
-if (process.env.STRIPE_SECRET_KEY) {
-  stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-}
-
-// Updated for Render deployment with latest OpenAI model
-// ROOT SERVER.JS - USING GPT-4O MODEL
-const app = express();
-const upload = multer({ dest: 'uploads/' });
-app.use(cors());
-app.use(express.json());
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
 
@@ -38,6 +23,11 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
   console.warn('⚠️ FIREBASE_SERVICE_ACCOUNT_KEY not found - Firebase features will not work');
 }
 
+const app = express();
+const upload = multer({ dest: 'uploads/' });
+app.use(cors());
+app.use(express.json());
+
 // Enhanced combo variety system to encourage exploration
 const comboInsights = []; // Track combo patterns for insights, not restrictions
 const MAX_INSIGHTS = 100;
@@ -49,7 +39,7 @@ app.get('/', (req, res) => {
     status: 'Server is running!', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    server: 'MAIN server.js with gpt-4o-mini',
+    server: 'BACKEND server.js with gpt-4o-mini',
     firebaseConfigured: !!admin.apps.length,
     openaiConfigured: !!process.env.OPENAI_API_KEY
   });
@@ -61,7 +51,7 @@ app.post('/generate-combo', async (req, res) => {
     console.log('🤖 Received personalized combo request');
     console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
     
-    const { userName, dietaryPreferences } = req.body;
+    const { userName, dietaryPreferences, menuItems } = req.body;
     
     if (!userName || !dietaryPreferences) {
       console.log('❌ Missing required fields. Received:', { userName: !!userName, dietaryPreferences: !!dietaryPreferences });
@@ -71,13 +61,8 @@ app.post('/generate-combo', async (req, res) => {
       });
     }
     
-    // Fetch the complete, current menu from Firestore
-    console.log('🔍 Fetching current menu...');
-    
-    let allMenuItems = [];
-    
     // Use the menu items from the request (which come from Firebase)
-    let menuItems = req.body.menuItems || [];
+    let allMenuItems = menuItems || [];
     
     // If no menu items provided, fetch from Firebase
     if (!allMenuItems || allMenuItems.length === 0) {
@@ -144,7 +129,7 @@ app.post('/generate-combo', async (req, res) => {
     }
     
     console.log(`🔍 Fetched ${allMenuItems.length} current menu items`);
-    console.log(`🔍 Menu items:`, allMenuItems.map(item => `${item.id} (${item.category})`));
+    console.log(`🔍 Menu items:`, allMenuItems.map(item => `${item.id} (${item.isDumpling ? 'dumpling' : item.isDrink ? 'drink' : 'other'})`));
     console.log(`🔍 Dietary preferences:`, dietaryPreferences);
     
     // Create dietary restrictions string
@@ -421,187 +406,6 @@ Calculate the total price accurately. Keep the response warm and personal.`;
   }
 });
 
-// MARK: - Stripe Checkout Endpoints
-
-// Create checkout session endpoint
-app.post('/create-checkout-session', async (req, res) => {
-  try {
-    const { line_items } = req.body;
-    
-    console.log('🛒 Received line items:', line_items);
-    
-    if (!process.env.STRIPE_SECRET_KEY || !stripe) {
-      console.error('❌ STRIPE_SECRET_KEY not configured');
-      return res.status(500).json({ error: 'Stripe not configured. Please set STRIPE_SECRET_KEY in environment variables.' });
-    }
-    
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      line_items: line_items,
-      mode: 'payment',
-      success_url: 'https://restaurant-stripe-server-1.onrender.com/success?session_id={CHECKOUT_SESSION_ID}',
-      cancel_url: 'https://restaurant-stripe-server-1.onrender.com/cancel',
-      metadata: {
-        source: 'ios_app'
-      }
-    });
-    
-    console.log('✅ Created Stripe session:', session.id);
-    
-    res.json({ 
-      url: session.url,
-      sessionId: session.id 
-    });
-  } catch (error) {
-    console.error('❌ Error creating checkout session:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Success page that auto-redirects to app
-app.get('/success', (req, res) => {
-  const sessionId = req.query.session_id;
-  console.log('🎉 Payment success for session:', sessionId);
-  
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Payment Successful</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 40px; }
-            .success { color: #28a745; font-size: 24px; margin-bottom: 20px; }
-            .button { background: #007AFF; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; display: inline-block; margin: 10px; }
-            .auto-redirect { color: #666; font-size: 14px; margin-top: 20px; }
-        </style>
-    </head>
-    <body>
-        <div class="success">✅ Payment Successful!</div>
-        <p>Your order has been placed successfully.</p>
-        <a href="restaurantdemo://success" class="button">Return to App</a>
-        <div class="auto-redirect">Redirecting to app in 2 seconds...</div>
-        <script>
-            setTimeout(function() {
-                window.location.href = 'restaurantdemo://success';
-            }, 2000);
-        </script>
-    </body>
-    </html>
-  `);
-});
-
-// Cancel page
-app.get('/cancel', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Payment Cancelled</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; padding: 40px; }
-            .cancel { color: #dc3545; font-size: 24px; margin-bottom: 20px; }
-            .button { background: #007AFF; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; display: inline-block; margin: 10px; }
-        </style>
-    </head>
-    <body>
-        <div class="cancel">❌ Payment Cancelled</div>
-        <p>Your payment was cancelled.</p>
-        <a href="restaurantdemo://cancel" class="button">Return to App</a>
-    </body>
-    </html>
-  `);
-});
-
-// MARK: - Order Management Endpoints
-
-// Create order endpoint
-app.post('/orders', async (req, res) => {
-  try {
-    console.log('📦 Received order creation request:', req.body);
-    
-    const { items, customerName, customerPhone, orderType } = req.body;
-    
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'Items array is required and must not be empty' });
-    }
-    
-    // Calculate total amount
-    const totalAmount = items.reduce((sum, item) => {
-      return sum + (item.price * item.quantity);
-    }, 0);
-    
-    // Generate order ID
-    const orderId = 'ORD-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-    
-    // Create order object
-    const order = {
-      id: orderId,
-      items: items,
-      customerName: customerName || 'Anonymous',
-      customerPhone: customerPhone || '',
-      orderType: orderType || 'takeout',
-      status: 'preparing',
-      createdAt: new Date().toISOString(),
-      estimatedReadyTime: new Date(Date.now() + 20 * 60 * 1000).toISOString(), // 20 minutes from now
-      estimatedMinutes: 20,
-      totalAmount: totalAmount,
-      statusHistory: [
-        {
-          status: 'preparing',
-          timestamp: new Date().toISOString(),
-          message: 'Order received and being prepared'
-        }
-      ]
-    };
-    
-    console.log('✅ Created order:', orderId);
-    
-    res.json({
-      success: true,
-      order: order
-    });
-    
-  } catch (error) {
-    console.error('❌ Error creating order:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get order status endpoint
-app.get('/orders/:orderId', async (req, res) => {
-  try {
-    const { orderId } = req.params;
-    console.log('📋 Requesting order status for:', orderId);
-    
-    // For now, return a mock order status
-    // In a real app, you'd fetch this from a database
-    const mockOrder = {
-      id: orderId,
-      status: 'preparing',
-      estimatedReadyTime: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      estimatedMinutes: 15,
-      statusHistory: [
-        {
-          status: 'preparing',
-          timestamp: new Date().toISOString(),
-          message: 'Order is being prepared'
-        }
-      ]
-    };
-    
-    res.json({
-      success: true,
-      order: mockOrder
-    });
-    
-  } catch (error) {
-    console.error('❌ Error fetching order status:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // Check if OpenAI API key is configured
 if (!process.env.OPENAI_API_KEY) {
   console.error('❌ OPENAI_API_KEY environment variable is not set!');
@@ -611,7 +415,16 @@ if (!process.env.OPENAI_API_KEY) {
       message: 'Please configure the OpenAI API key in your environment variables'
     });
   });
+  
+  app.post('/chat', (req, res) => {
+    res.status(500).json({ 
+      error: 'Server configuration error: OPENAI_API_KEY not set',
+      message: 'Please configure the OpenAI API key in your environment variables'
+    });
+  });
 } else {
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
   app.post('/analyze-receipt', upload.single('image'), async (req, res) => {
     try {
       console.log('📥 Received receipt analysis request');
@@ -626,20 +439,12 @@ if (!process.env.OPENAI_API_KEY) {
       const imagePath = req.file.path;
       const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
 
-      const prompt = `
-You are a receipt parser. Extract the following fields from the receipt image:
-- orderNumber: The order or transaction number (if present)
-- orderTotal: The total amount paid (as a number, e.g. 23.45)
-- orderDate: The date of the order (in MM/DD/YYYY or YYYY-MM-DD format)
-
-Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderDate": "..."}
-If a field is missing, use null.
-`;
+      const prompt = `\nYou are a receipt parser. Extract the following fields from the receipt image:\n- orderNumber: Look for the largest number on the receipt that appears as white text inside a black container/box. This is typically located under \"Nashville, TN\" and next to \"Walk In\". This is the order number.\n- orderTotal: The total amount paid (as a number, e.g. 23.45)\n- orderDate: The date of the order (in MM/DD/YYYY or YYYY-MM-DD format)\n\nRespond ONLY as a JSON object: {\"orderNumber\": \"...\", \"orderTotal\": ..., \"orderDate\": \"...\"}\nIf a field is missing, use null.\n`;
 
       console.log('🤖 Sending request to OpenAI...');
       
       const response = await openai.chat.completions.create({
-        model: "gpt-4.1-nano",
+        model: "gpt-4o",
         messages: [
           {
             role: "user",
@@ -675,174 +480,6 @@ If a field is missing, use null.
       res.status(500).json({ error: err.message });
     }
   });
-  
-  // Menu endpoint for restaurant information
-  app.get('/menu', (req, res) => {
-    const menuData = {
-      restaurant: {
-        name: "Dumpling House",
-        address: "2117 Belcourt Ave, Nashville, TN 37212",
-        phone: "+1 (615) 891-4728",
-        hours: "Sunday - Thursday 11:30 AM - 9:00 PM, Friday - Saturday 11:30 AM - 10:00 PM",
-        cuisine: "Authentic Chinese dumplings and Asian cuisine"
-      },
-      menu: {
-        appetizers: [
-          { name: "Edamame", price: 4.99 },
-          { name: "Asian Pickled Cucumbers", price: 5.75 },
-          { name: "(Crab & Shrimp) Cold Noodle w/ Peanut Sauce", price: 8.35 },
-          { name: "Peanut Butter Pork Dumplings", price: 7.99 },
-          { name: "Spicy Tofu", price: 5.99 },
-          { name: "Curry Rice w/ Chicken", price: 7.75 },
-          { name: "Jasmine White Rice", price: 2.75 },
-          { name: "Cold Tofu", price: 5.99 }
-        ],
-        soups: [
-          { name: "Hot & Sour Soup", price: 5.95 },
-          { name: "Pork Wonton Soup", price: 6.95 }
-        ],
-        pizzaDumplings: [
-          { name: "Pork (6)", price: 8.99 },
-          { name: "Curry Beef & Onion (6)", price: 10.99 }
-        ],
-        lunchSpecials: [
-          { name: "No.9 Pork (6)", price: 7.50 },
-          { name: "No.2 Pork & Chive (6)", price: 8.50 },
-          { name: "No.4 Pork Shrimp (6)", price: 9.00 },
-          { name: "No.5 Pork & Cabbage (6)", price: 8.00 },
-          { name: "No.3 Spicy Pork (6)", price: 8.00 },
-          { name: "No.7 Curry Chicken (6)", price: 7.00 },
-          { name: "No.8 Chicken & Coriander (6)", price: 7.50 },
-          { name: "No.1 Chicken & Mushroom (6)", price: 8.00 },
-          { name: "No.10 Curry Beef & Onion (6)", price: 8.50 },
-          { name: "No.6 Veggie (6)", price: 7.50 }
-        ],
-        dumplings: [
-          { name: "No.9 Pork (12)", price: 13.99 },
-          { name: "No.2 Pork & Chive (12)", price: 15.99 },
-          { name: "No.4 Pork Shrimp (12)", price: 16.99 },
-          { name: "No.5 Pork & Cabbage (12)", price: 14.99 },
-          { name: "No.3 Spicy Pork (12)", price: 14.99 },
-          { name: "No.7 Curry Chicken (12)", price: 12.99 },
-          { name: "No.8 Chicken & Coriander (12)", price: 13.99 },
-          { name: "No.1 Chicken & Mushroom (12)", price: 14.99 },
-          { name: "No.10 Curry Beef & Onion (12)", price: 15.99 },
-          { name: "No.6 Veggie (12)", price: 13.99 },
-          { name: "No.12 Half/Half (12)", price: 15.99 }
-        ],
-        drinks: {
-          fruitTea: [
-            { name: "Lychee Dragon Fruit", price: 6.50 },
-            { name: "Grape Magic w/ Cheese Foam", price: 6.90 },
-            { name: "Full of Mango w/ Cheese Foam", price: 6.90 },
-            { name: "Peach Strawberry", price: 6.75 },
-            { name: "Kiwi Booster", price: 6.75 },
-            { name: "Watermelon Code w/ Boba Jelly", price: 6.50 },
-            { name: "Pineapple", price: 6.90 },
-            { name: "Winter Melon Black", price: 6.50 },
-            { name: "Peach Oolong w/ Cheese Foam", price: 6.50 },
-            { name: "Ice Green", price: 5.00 },
-            { name: "Ice Black", price: 5.00 }
-          ],
-          milkTea: [
-            { name: "Bubble Milk Tea w/ Tapioca", price: 5.90 },
-            { name: "Fresh Milk Tea", price: 5.90 },
-            { name: "Cookies n' Cream (Biscoff)", price: 6.65 },
-            { name: "Capped Thai Brown Sugar", price: 6.90 },
-            { name: "Strawberry Fresh", price: 6.75 },
-            { name: "Peach Fresh", price: 6.50 },
-            { name: "Pineapple Fresh", price: 6.50 },
-            { name: "Tiramisu Coco", price: 6.85 },
-            { name: "Coconut Coffee w/ Coffee Jelly", price: 6.90 },
-            { name: "Purple Yam Taro Fresh", price: 6.85 },
-            { name: "Oreo Chocolate", price: 6.75 }
-          ],
-          coffee: [
-            { name: "Jasmine Latte w/ Sea Salt", price: 6.25 },
-            { name: "Oreo Chocolate Latte", price: 6.90 },
-            { name: "Coconut Coffee w/ Coffee Jelly", price: 6.90 },
-            { name: "Matcha White Chocolate", price: 6.90 },
-            { name: "Coffee Latte", price: 5.50 }
-          ],
-          lemonade: [
-            { name: "Pineapple", price: 5.50 },
-            { name: "Lychee Mint", price: 5.50 },
-            { name: "Peach Mint", price: 5.50 },
-            { name: "Passion Fruit", price: 5.25 },
-            { name: "Mango", price: 5.50 },
-            { name: "Strawberry", price: 5.50 },
-            { name: "Grape", price: 5.25 },
-            { name: "Original Lemonade", price: 5.50 }
-          ],
-          soda: [
-            { name: "Pineapple", price: 5.50 },
-            { name: "Lychee Mint", price: 5.50 },
-            { name: "Peach Mint", price: 5.50 },
-            { name: "Passion Fruit", price: 5.25 },
-            { name: "Mango", price: 5.50 },
-            { name: "Strawberry", price: 5.50 },
-            { name: "Grape", price: 5.25 }
-          ],
-          other: [
-            { name: "Coke", price: 2.25 },
-            { name: "Diet Coke", price: 2.25 },
-            { name: "Sprite", price: 2.25 },
-            { name: "Bottle Water", price: 1.00 },
-            { name: "Cup Water", price: 1.00 },
-            { name: "Soda", price: 2.25 }
-          ]
-        },
-        toppings: [
-          { name: "Coffee Jelly", price: 0.50 },
-          { name: "Boba Jelly", price: 0.50 },
-          { name: "Lychee Popping Jelly", price: 0.50 },
-          { name: "Pineapple Nada Jelly", price: 0.50 },
-          { name: "Tiramisu Foam", price: 0.75 },
-          { name: "Brown Sugar Boba Jelly", price: 0.50 },
-          { name: "Mango Star Jelly", price: 0.50 },
-          { name: "Whipped Cream", price: 0.25 },
-          { name: "Cheese Foam", price: 0.75 },
-          { name: "Tapioca", price: 0.50 }
-        ],
-        sauces: [
-          { name: "Peanut Sauce", price: 1.50 },
-          { name: "SPICY Peanut Sauce", price: 1.50 },
-          { name: "Curry Sauce w/ Chicken", price: 1.50 }
-        ]
-      },
-      dietary: {
-        veggieIngredients: ["cabbage", "carrots", "onions", "celery", "shiitake mushrooms", "glass noodles"],
-        containsGluten: true,
-        containsPeanutButter: ["cold noodles with peanut sauce", "cold tofu", "peanut butter pork"],
-        containsShellfish: ["pork and shrimp", "cold noodles"],
-        containsDairy: ["curry chicken", "curry sauce", "curry rice"],
-        containsOnion: ["pork", "curry chicken", "curry beef and onion"],
-        vegan: false,
-        delivery: false,
-        milkSubstitutions: ["oat milk", "almond milk", "coconut milk"],
-        drinkCustomizations: {
-          iceLevels: ["25%", "50%", "75%", "100%"],
-          sugarLevels: ["25%", "50%", "75%", "100%"],
-          realFruitDrinks: [
-            "strawberry fresh milk tea", "peach fresh milk tea", "pineapple fresh milk tea",
-            "lychee dragon fruit tea", "grape magic fruit tea", "full of mango fruit tea", 
-            "peach strawberry fruit tea", "pineapple fruit tea", "kiwi booster fruit tea", 
-            "watermelon code fruit tea", "lychee mint lemonade", "strawberry lemonade", 
-            "mango lemonade", "pineapple lemonade"
-          ]
-        }
-      },
-      policies: {
-        reservations: "No reservations needed for groups under 8",
-        largeGroups: "Large groups (8+): Please call ahead",
-        parking: "Paid street parking available in front of the restaurant",
-        payment: "We accept cash and all major credit cards",
-        gratuity: "15% gratuity added for groups of 6+"
-      }
-    };
-    
-    res.json(menuData);
-  });
 
   // Chat endpoint for restaurant assistant
   app.post('/chat', async (req, res) => {
@@ -859,7 +496,7 @@ If a field is missing, use null.
       console.log('👤 User first name:', userFirstName || 'Not provided');
       console.log('⚙️ User preferences:', userPreferences || 'Not provided');
       
-      // Create the optimized system prompt
+      // Create the system prompt with restaurant information
       const userGreeting = userFirstName ? `Hello ${userFirstName}! ` : '';
       
       // Build user preferences context
@@ -886,20 +523,83 @@ Your tone is humorous, professional, and casual. Feel free to make light-hearted
 
 You're passionate about dumplings and love helping customers discover our authentic Chinese cuisine.
 
+CRITICAL HONESTY GUIDELINES:
+- NEVER make up information about menu items, ingredients, or restaurant details
+- If you don't know specific details about something, simply don't mention those specifics
+- Focus on what you do know from the provided menu and information
+- If asked about something not covered in your knowledge, suggest calling the restaurant directly
+- Always prioritize accuracy over speculation
+
+MULTILINGUAL CAPABILITIES:
+- You can communicate fluently in multiple languages including but not limited to: English, Spanish, French, German, Italian, Portuguese, Chinese (Mandarin/Cantonese), Japanese, Korean, Vietnamese, Thai, Arabic, Russian, Hindi, and many others.
+- ALWAYS respond in the same language that the customer uses to communicate with you.
+- If a customer speaks to you in a language other than English, respond naturally in that language.
+- Maintain the same warm, enthusiastic personality regardless of the language you're speaking.
+- Use appropriate cultural context and expressions for the language being used.
+- If you're unsure about a language, respond in English and ask if they'd prefer another language.
+
 IMPORTANT: If a user's first name is provided (${userFirstName || 'none'}), you should use their first name in your responses to make them feel welcome and personalized.
 
 RESTAURANT INFORMATION:
 - Name: Dumpling House
 - Address: 2117 Belcourt Ave, Nashville, TN 37212
 - Phone: +1 (615) 891-4728
-- Hours: Monday - Thursday 11:30 AM - 9:00 PM
+- Hours: Sunday - Thursday 11:30 AM - 9:00 PM , Friday and Saturday 11:30 AM - 10:00 PM
+- Lunch Special Hours: Monday - Friday only, ends at 4:00 PM
 - Cuisine: Authentic Chinese dumplings and Asian cuisine
 
-MENU ACCESS: When users ask about menu items, prices, or dietary information, tell them you can access the full menu at /menu endpoint. For quick reference, you know we serve dumplings, appetizers, soups, drinks, and more.
+MOST POPULAR ITEMS (ACCURATE DATA):
+🥟 Most Popular Dumplings:
+1. #7 Curry Chicken - $12.99 (12 pieces) / $7.00 (6 pieces lunch special)
+2. #3 Spicy Pork - $14.99 (12 pieces) / $8.00 (6 pieces lunch special)  
+3. #5 Pork & Cabbage - $14.99 (12 pieces) / $8.00 (6 pieces lunch special)
 
-DIETARY NOTES: Veggie dumplings contain cabbage, carrots, onions, celery, shiitake mushrooms, glass noodles. Everything has gluten. No vegan options. No delivery. Peanut butter in cold noodles, cold tofu, peanut butter pork. Shellfish in pork and shrimp, cold noodles. Dairy in curry items. Onion in pork, curry chicken, curry beef.
+🧋 Most Popular Milk Tea: Capped Thai Brown Sugar - $6.90
+🍹 Most Popular Fruit Tea: Peach Strawberry - $6.75
 
-SERVICES: Dine-in and takeout. No delivery. Catering available. Loyalty program with points.
+DETAILED MENU INFORMATION:
+🥟 Appetizers: Edamame $4.99, Asian Pickled Cucumbers $5.75, (Crab & Shrimp) Cold Noodle w/ Peanut Sauce $8.35, Peanut Butter Pork Dumplings $7.99, Spicy Tofu $5.99, Curry Rice w/ Chicken $7.75, Jasmine White Rice $2.75 | 🍲 Soup: Hot & Sour Soup $5.95, Pork Wonton Soup $6.95 | 🍕 Pizza Dumplings: Pork (6) $8.99, Curry Beef & Onion (6) $10.99 | 🍱 Lunch Special (6): No.9 Pork $7.50, No.2 Pork & Chive $8.50, No.4 Pork Shrimp $9.00, No.5 Pork & Cabbage $8.00, No.3 Spicy Pork $8.00, No.7 Curry Chicken $7.00, No.8 Chicken & Coriander $7.50, No.1 Chicken & Mushroom $8.00, No.10 Curry Beef & Onion $8.50, No.6 Veggie $7.50 (Available Monday-Friday only, ends at 4:00 PM) | 🥟 Dumplings (12): No.9 Pork $13.99, No.2 Pork & Chive $15.99, No.4 Pork Shrimp $16.99, No.5 Pork & Cabbage $14.99, No.3 Spicy Pork $14.99, No.7 Curry Chicken $12.99, No.8 Chicken & Coriander $13.99, No.1 Chicken & Mushroom $14.99, No.10 Curry Beef & Onion $15.99, No.6 Veggie $13.99, No.12 Half/Half $15.99 | 🍹 Fruit Tea: Lychee Dragon Fruit $6.50, Grape Magic w/ Cheese Foam $6.90, Full of Mango w/ Cheese Foam $6.90, Peach Strawberry $6.75, Kiwi Booster $6.75, Watermelon Code w/ Boba Jelly $6.50, Pineapple $6.90, Winter Melon Black $6.50, Peach Oolong w/ Cheese Foam $6.50, Ice Green $5.00, Ice Black $5.00 | ✨ Toppings: Coffee Jelly $0.50, Boba Jelly $0.50, Lychee Popping Jelly $0.50 | 🧋 Milk Tea: Bubble Milk Tea w/ Tapioca $5.90, Fresh Milk Tea $5.90, Cookies n' Cream (Biscoff) $6.65, Capped Thai Brown Sugar $6.90, Strawberry Fresh $6.75, Peach Fresh $6.50, Pineapple Fresh $6.50, Tiramisu Coco $6.85, Coconut Coffee w/ Coffee Jelly $6.90, Purple Yam Taro Fresh $6.85, Oreo Chocolate $6.75 | ☕ Coffee: Jasmine Latte w/ Sea Salt $6.25, Oreo Chocolate Latte $6.90, Coconut Coffee w/ Coffee Jelly $6.90, Matcha White Chocolate $6.90, Coffee Latte $5.50 | 🥣 Sauces: Secret Peanut Sauce $1.50, SPICY secret Peanut Sauce $1.50, Curry Sauce w/ Chicken $1.50 | 🍋 Lemonade/Soda: Pineapple $5.50, Lychee Mint $5.50, Peach Mint $5.50, Passion Fruit $5.25, Mango $5.50, Strawberry $5.50, Grape $5.25, Original Lemonade $5.50 | 🥤 Drink: Coke $2.25, Diet Coke $2.25, Sprite $2.25, Bottle Water $1.00, Cup Water $1.00
+
+SPECIAL DIETARY INFORMATION:
+- Veggie dumplings include: cabbage, carrots, onions, celery, shiitake mushrooms, glass noodles
+- We don't have anything vegan
+- Everything has gluten
+- We aren't sure what has MSG
+- No delivery available
+- Contains peanut butter: cold noodles with peanut sauce, cold tofu, peanut butter pork
+- No complementary cups but if you bring your own cup
+- You can only choose one cooking method for an order of dumplings
+- Contains shellfish: pork and shrimp, and the cold noodles
+- The pizza dumplings come in a 6 piece
+- What's on top of the pizza dumplings: spicy mayo, cheese, and wasabi
+- There's dairy inside curry chicken and the curry sauce and the curry rice
+- Every to-go order has dumpling sauce and chili paste included for every order of dumplings
+- There's a little onion in pork, curry chicken and curry beef and onion
+- If someone asks about what the secret is, ask them if they are sure they want to know and if they say yes tell them it's love
+- Most drinks can be adjusted for ice and sugar: 25%, 50%, 75%, and 100% options
+- Drinks that include real fruit: strawberry fresh milk tea, peach fresh and pineapple fresh milk teas, lychee dragon, grape magic, full of mango, peach strawberry, pineapple, kiwi and watermelon fruit teas, and the lychee mint, strawberry, mango, and pineapple lemonade or sodas
+- Available toppings for drinks: cheese foam, tapioca, peach or lychee popping jelly, pineapple nada jelly, boba jelly, tiramisu foam, brown sugar boba jelly, mango star jelly, coffee jelly and whipped cream
+- MILK SUBSTITUTIONS: For customers with lactose intolerance, our milk teas and coffee lattes can be made with oat milk, almond milk, or coconut milk instead of regular milk. When recommending these drinks to lactose intolerant customers, always mention the milk substitution options available.
+
+RECOMMENDATION GUIDELINES:
+- When recommending combinations, consider what would actually taste good together
+- Popular dumplings pair well with our most popular drinks
+- Consider flavor profiles: spicy dumplings go well with sweet drinks, mild dumplings pair with various drink options
+- Only mention the most popular items when specifically asked about recommendations or popular items
+- Focus on proven combinations that customers love
+
+SERVICES:
+- Dine-in and takeout available
+- No delivery (as mentioned above)
+- Catering for events (call for pricing)
+- Loyalty program: Earn points on every order
+- Receipt scanning for points
+
+POLICIES:
+- No reservations needed for groups under 8
+- Large groups (8+): Please call ahead
+- Paid street parking available in front of the restaurant
+- We accept cash and all major credit cards
 
 PERSONALITY:
 - Be warm, enthusiastic, and genuinely excited about our food
@@ -919,16 +619,17 @@ Remember: You're not just an assistant—you love helping people discover the be
       
       // Add conversation history if provided
       if (conversation_history && Array.isArray(conversation_history)) {
-        messages.push(...conversation_history.slice(-2)); // Keep last 2 messages for context
+        messages.push(...conversation_history.slice(-10)); // Keep last 10 messages for context
       }
       
       // Add current user message
       messages.push({ role: 'user', content: message });
 
       console.log('🤖 Sending request to OpenAI...');
+      console.log('📋 System prompt preview:', systemPrompt.substring(0, 200) + '...');
       
       const response = await openai.chat.completions.create({
-        model: "gpt-4.1-nano", // Using the newest most cost-effective model
+        model: "gpt-4o-mini",
         messages: messages,
         max_tokens: 300,
         temperature: 0.7
@@ -945,340 +646,74 @@ Remember: You're not just an assistant—you love helping people discover the be
       res.status(500).json({ error: err.message });
     }
   });
-  
-  // MARK: - Order Management Endpoints
-  
-  // In-memory storage for orders (in production, use a database)
-  let orders = new Map();
-  let orderCounter = 1;
-  
-  // Create a new order - FIXED ENDPOINT PATH
-  app.post('/orders', async (req, res) => {
+
+  // Fetch complete menu from Firestore endpoint
+  app.get('/firestore-menu', async (req, res) => {
     try {
-      console.log('📦 Received order creation request');
+      console.log('🔍 Fetching complete menu from Firestore...');
       
-      const { items, customerName, customerPhone, orderType } = req.body;
-      
-      if (!items || !Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: 'Items array is required and cannot be empty' });
-      }
-      
-      if (!customerName || !customerPhone) {
-        return res.status(400).json({ error: 'Customer name and phone are required' });
-      }
-      
-      // Calculate estimated time based on order type
-      const hasDumplings = items.some(item => 
-        item.name.toLowerCase().includes('dumpling') || 
-        item.name.toLowerCase().includes('potsticker')
-      );
-      
-      const hasDrinksOnly = items.every(item => 
-        item.name.toLowerCase().includes('tea') || 
-        item.name.toLowerCase().includes('coffee') || 
-        item.name.toLowerCase().includes('soda') || 
-        item.name.toLowerCase().includes('bubble tea') ||
-        item.name.toLowerCase().includes('drink')
-      );
-      
-      const hasAppetizersOnly = items.every(item => 
-        item.name.toLowerCase().includes('spring roll') || 
-        item.name.toLowerCase().includes('edamame') || 
-        item.name.toLowerCase().includes('appetizer')
-      );
-      
-      let estimatedMinutes;
-      if (hasDrinksOnly || hasAppetizersOnly) {
-        estimatedMinutes = Math.floor(Math.random() * 6) + 10; // 10-15 minutes
-      } else if (hasDumplings) {
-        estimatedMinutes = Math.floor(Math.random() * 6) + 20; // 20-25 minutes
-      } else {
-        estimatedMinutes = Math.floor(Math.random() * 6) + 15; // 15-20 minutes for mixed orders
-      }
-      
-      const orderId = `DH${String(orderCounter).padStart(4, '0')}`;
-      const createdAt = new Date();
-      const estimatedReadyTime = new Date(createdAt.getTime() + estimatedMinutes * 60000);
-      
-      const order = {
-        id: orderId,
-        items: items,
-        customerName: customerName,
-        customerPhone: customerPhone,
-        orderType: orderType || 'takeout',
-        status: 'preparing',
-        createdAt: createdAt.toISOString(),
-        estimatedReadyTime: estimatedReadyTime.toISOString(),
-        estimatedMinutes: estimatedMinutes,
-        totalAmount: items.reduce((sum, item) => sum + (item.price * item.quantity), 0),
-        statusHistory: [
-          {
-            status: 'preparing',
-            timestamp: createdAt.toISOString(),
-            message: 'Order received and being prepared'
-          }
-        ]
-      };
-      
-      orders.set(orderId, order);
-      orderCounter++;
-      
-      console.log('✅ Order created:', orderId);
-      
-      res.json({
-        success: true,
-        order: order
-      });
-    } catch (err) {
-      console.error('❌ Error creating order:', err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-  
-  // Get order status
-  app.get('/orders/:orderId', async (req, res) => {
-    try {
-      const { orderId } = req.params;
-      
-      const order = orders.get(orderId);
-      if (!order) {
-        return res.status(404).json({ error: 'Order not found' });
-      }
-      
-      res.json({
-        success: true,
-        order: order
-      });
-    } catch (err) {
-      console.error('❌ Error fetching order:', err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-  
-  // Update order status
-  app.put('/orders/:orderId/status', async (req, res) => {
-    try {
-      const { orderId } = req.params;
-      const { status, message } = req.body;
-      
-      const order = orders.get(orderId);
-      if (!order) {
-        return res.status(404).json({ error: 'Order not found' });
-      }
-      
-      const validStatuses = ['preparing', 'ready', 'completed', 'cancelled'];
-      if (!validStatuses.includes(status)) {
-        return res.status(400).json({ error: 'Invalid status' });
-      }
-      
-      order.status = status;
-      order.statusHistory.push({
-        status: status,
-        timestamp: new Date().toISOString(),
-        message: message || `Order status updated to ${status}`
-      });
-      
-      // Update estimated time if status changes
-      if (status === 'ready') {
-        order.estimatedReadyTime = new Date().toISOString();
-        order.estimatedMinutes = 0;
-      }
-      
-      orders.set(orderId, order);
-      
-      console.log('✅ Order status updated:', orderId, 'to', status);
-      
-      res.json({
-        success: true,
-        order: order
-      });
-    } catch (err) {
-      console.error('❌ Error updating order status:', err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-  
-  // Get recent orders for a customer
-  app.get('/orders/customer/:phone', async (req, res) => {
-    try {
-      const { phone } = req.params;
-      
-      const customerOrders = Array.from(orders.values())
-        .filter(order => order.customerPhone === phone)
-        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-        .slice(0, 10); // Get last 10 orders
-      
-      res.json({
-        success: true,
-        orders: customerOrders
-      });
-    } catch (err) {
-      console.error('❌ Error fetching customer orders:', err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-  
-  // Simulate order progress (for testing)
-  app.post('/orders/:orderId/simulate-progress', async (req, res) => {
-    try {
-      const { orderId } = req.params;
-      
-      const order = orders.get(orderId);
-      if (!order) {
-        return res.status(404).json({ error: 'Order not found' });
-      }
-      
-      // Simulate order progression
-      const statuses = ['preparing', 'ready', 'completed'];
-      const currentIndex = statuses.indexOf(order.status);
-      
-      if (currentIndex < statuses.length - 1) {
-        const nextStatus = statuses[currentIndex + 1];
-        order.status = nextStatus;
-        order.statusHistory.push({
-          status: nextStatus,
-          timestamp: new Date().toISOString(),
-          message: `Order ${nextStatus}`
+      if (!admin.apps.length) {
+        return res.status(500).json({ 
+          error: 'Firebase not initialized - FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
         });
-        
-        if (nextStatus === 'ready') {
-          order.estimatedReadyTime = new Date().toISOString();
-          order.estimatedMinutes = 0;
-        }
-        
-        orders.set(orderId, order);
       }
+      
+      const db = admin.firestore();
+      
+      // Get all menu categories
+      const categoriesSnapshot = await db.collection('menu').get();
+      const allMenuItems = [];
+      
+      for (const categoryDoc of categoriesSnapshot.docs) {
+        const categoryId = categoryDoc.id;
+        console.log(`🔍 Processing category: ${categoryId}`);
+        
+        // Get all items in this category
+        const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
+        
+        for (const itemDoc of itemsSnapshot.docs) {
+          try {
+            const itemData = itemDoc.data();
+            const menuItem = {
+              id: itemData.id || itemDoc.id,
+              description: itemData.description || '',
+              price: itemData.price || 0.0,
+              imageURL: itemData.imageURL || '',
+              isAvailable: itemData.isAvailable !== false,
+              paymentLinkID: itemData.paymentLinkID || '',
+              isDumpling: itemData.isDumpling || false,
+              isDrink: itemData.isDrink || false,
+              category: categoryId
+            };
+            allMenuItems.push(menuItem);
+            console.log(`✅ Added item: ${menuItem.id} (${categoryId})`);
+          } catch (error) {
+            console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
+          }
+        }
+      }
+      
+      console.log(`✅ Fetched ${allMenuItems.length} menu items from Firestore`);
       
       res.json({
         success: true,
-        order: order
+        menuItems: allMenuItems,
+        totalItems: allMenuItems.length,
+        categories: categoriesSnapshot.docs.map(doc => doc.id)
       });
-    } catch (err) {
-      console.error('❌ Error simulating order progress:', err);
-      res.status(500).json({ error: err.message });
+      
+    } catch (error) {
+      console.error('❌ Error fetching menu from Firestore:', error);
+      res.status(500).json({ 
+        error: 'Failed to fetch menu from Firestore',
+        details: error.message 
+      });
     }
   });
 }
 
-// Orders endpoint - handles order creation
-app.post('/orders', async (req, res) => {
-  try {
-    console.log('📦 Received order creation request');
-    console.log('Order data:', JSON.stringify(req.body, null, 2));
-    
-    const { items, totalAmount, customerInfo, paymentMethod = 'stripe' } = req.body;
-    
-    // Validate required fields
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ 
-        error: 'Items array is required and cannot be empty' 
-      });
-    }
-    
-    if (!totalAmount || typeof totalAmount !== 'number') {
-      return res.status(400).json({ 
-        error: 'Total amount is required and must be a number' 
-      });
-    }
-    
-    // Generate a mock order ID
-    const orderId = `ORDER_${Date.now()}_${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-    
-    // Create order object
-    const order = {
-      id: orderId,
-      items: items,
-      totalAmount: totalAmount,
-      customerInfo: customerInfo || {},
-      paymentMethod: paymentMethod,
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-      estimatedCompletionTime: new Date(Date.now() + 15 * 60 * 1000).toISOString() // 15 minutes from now
-    };
-    
-    console.log('✅ Order created successfully:', orderId);
-    
-    // In a real app, you would save this to a database
-    // For now, we'll just return the order data
-    res.status(201).json({
-      success: true,
-      order: order,
-      message: 'Order created successfully'
-    });
-    
-  } catch (err) {
-    console.error('❌ Error creating order:', err);
-    res.status(500).json({ 
-      error: 'Failed to create order',
-      details: err.message 
-    });
-  }
-});
-
-// Get order status endpoint
-app.get('/orders/:orderId', (req, res) => {
-  try {
-    const { orderId } = req.params;
-    console.log(`📋 Fetching order status for: ${orderId}`);
-    
-    // In a real app, you would fetch this from a database
-    // For now, return a mock response
-    const mockOrder = {
-      id: orderId,
-      status: 'in_progress',
-      estimatedCompletionTime: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-      updates: [
-        {
-          timestamp: new Date().toISOString(),
-          status: 'confirmed',
-          message: 'Order confirmed and being prepared'
-        }
-      ]
-    };
-    
-    res.json({
-      success: true,
-      order: mockOrder
-    });
-    
-  } catch (err) {
-    console.error('❌ Error fetching order:', err);
-    res.status(500).json({ 
-      error: 'Failed to fetch order',
-      details: err.message 
-    });
-  }
-});
-
-// Stripe checkout session endpoint
-app.post('/create-checkout-session', async (req, res) => {
-  try {
-    if (!stripe) {
-      return res.status(500).json({ 
-        error: 'Stripe not configured - STRIPE_SECRET_KEY environment variable missing' 
-      });
-    }
-
-    const { line_items } = req.body;
-    console.log('🛒 Creating Stripe checkout session');
-    console.log('Line items:', line_items);
-    
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      line_items: line_items,
-      mode: 'payment',
-      success_url: 'restaurantdemo://success',
-      cancel_url: 'restaurantdemo://cancel',
-    });
-
-    console.log('✅ Stripe session created:', session.id);
-    res.json({ url: session.url });
-    
-  } catch (error) {
-    console.error('❌ Error creating checkout session:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+// Force production environment
+process.env.NODE_ENV = 'production';
 
 const port = process.env.PORT || 3001;
 
@@ -1286,6 +721,7 @@ app.listen(port, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${port}`);
   console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔑 OpenAI API Key configured: ${process.env.OPENAI_API_KEY ? 'Yes' : 'No'}`);
-  console.log(`💳 Stripe configured: ${process.env.STRIPE_SECRET_KEY ? 'Yes' : 'No'}`);
   console.log(`🔥 Firebase configured: ${admin.apps.length ? 'Yes' : 'No'}`);
 });
+// Force redeploy - Sat Jul 19 14:12:02 CDT 2025
+// Force complete redeploy - Sat Jul 19 14:15:27 CDT 2025
