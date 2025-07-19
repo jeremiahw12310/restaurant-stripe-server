@@ -35,19 +35,10 @@ app.post('/generate-combo', async (req, res) => {
       });
     }
     
-    // Filter menu items by category for better organization
-    const dumplings = menuItems.filter(item => item.isDumpling);
-    const appetizers = menuItems.filter(item => 
-      item.id.toLowerCase().includes('appetizer') || 
-      item.id.toLowerCase().includes('spring roll') ||
-      item.id.toLowerCase().includes('wonton') ||
-      item.id.toLowerCase().includes('edamame')
-    );
-    const drinks = menuItems.filter(item => item.isDrink);
-    const sauces = menuItems.filter(item => 
-      item.id.toLowerCase().includes('sauce') ||
-      item.id.toLowerCase().includes('dipping')
-    );
+    // Send the FULL menu to ChatGPT - no filtering, let ChatGPT decide
+    console.log('🔍 DEBUG: All menu items received:', menuItems.length);
+    console.log('🔍 DEBUG: All menu items:', menuItems.map(item => `${item.id} (${item.isDumpling ? 'dumpling' : item.isDrink ? 'drink' : 'other'})`));
+    console.log('🔍 DEBUG: Dietary preferences:', dietaryPreferences);
     
     // Create dietary restrictions string
     const restrictions = [];
@@ -63,21 +54,11 @@ app.post('/generate-combo', async (req, res) => {
     const spicePreference = dietaryPreferences.likesSpicyFood ? 
       'The customer enjoys spicy food. ' : '';
     
-    // Create menu items text for AI with better organization
+    // Create menu items text for AI - send the FULL menu
     const menuText = `
 Available menu items:
 
-Dumplings:
-${dumplings.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
-
-Appetizers:
-${appetizers.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
-
-Drinks:
-${drinks.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
-
-Sauces:
-${sauces.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
+${menuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} ${item.isDumpling ? '(dumpling)' : item.isDrink ? '(drink)' : ''}`).join('\n')}
     `.trim();
     
     // Create AI prompt that lets ChatGPT actually choose the items
@@ -91,10 +72,10 @@ ${menuText}
 IMPORTANT: You must choose items from the EXACT menu above. Do not make up items.
 
 Please create a personalized combo for ${userName} with:
-1. One dumpling option (choose from the Dumplings section above)
-2. One appetizer (choose from the Appetizers section above)  
-3. One drink (choose from the Drinks section above)
-4. Optionally one sauce (choose from the Sauces section above) - only if it complements the combo well
+1. One dumpling option (choose from items marked as dumplings above)
+2. One appetizer or side dish (choose from non-dumpling, non-drink items above)  
+3. One drink (choose from items marked as drinks above)
+4. Optionally one sauce or condiment (choose from items that seem like sauces/dips above) - only if it complements the combo well
 
 Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
 
@@ -104,6 +85,7 @@ IMPORTANT RULES:
 - Create variety - don't always choose the same items
 - Consider flavor combinations that work well together
 - Calculate the total price by adding up the prices of your chosen items
+- For milk teas and coffees, note that milk substitutes (oat milk, almond milk, coconut milk) are available for lactose intolerant customers
 
 Respond in this exact JSON format:
 {

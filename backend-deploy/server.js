@@ -274,109 +274,10 @@ Remember: You're not just an assistant—you love helping people discover the be
         });
       }
       
-      // Enhanced filtering logic with comprehensive dietary considerations
-      let dumplings = menuItems.filter(item => item.isDumpling);
-      let appetizers = menuItems.filter(item => 
-        !item.isDumpling && !item.isDrink && 
-        (item.id.toLowerCase().includes('appetizer') || 
-         item.id.toLowerCase().includes('edamame') ||
-         item.id.toLowerCase().includes('cucumber') ||
-         item.id.toLowerCase().includes('tofu') ||
-         item.id.toLowerCase().includes('rice') ||
-         item.id.toLowerCase().includes('noodle') ||
-         item.id.toLowerCase().includes('soup') ||
-         item.id.toLowerCase().includes('wonton'))
-      );
-      
-      let drinks = menuItems.filter(item => item.isDrink);
-      let sauces = menuItems.filter(item => 
-        !item.isDumpling && !item.isDrink && 
-        (item.id.toLowerCase().includes('sauce') || 
-         item.id.toLowerCase().includes('dipping'))
-      );
-      
-      // Apply dietary preference filters
-      
-      // 1. Vegetarian filtering
-      if (dietaryPreferences.isVegetarian) {
-        // Filter out non-vegetarian items
-        dumplings = dumplings.filter(item => 
-          item.id.toLowerCase().includes('veggie') ||
-          item.id.toLowerCase().includes('vegetable') ||
-          !item.id.toLowerCase().includes('pork') &&
-          !item.id.toLowerCase().includes('chicken') &&
-          !item.id.toLowerCase().includes('beef') &&
-          !item.id.toLowerCase().includes('shrimp') &&
-          !item.id.toLowerCase().includes('crab')
-        );
-        
-        appetizers = appetizers.filter(item =>
-          item.id.toLowerCase().includes('edamame') ||
-          item.id.toLowerCase().includes('cucumber') ||
-          item.id.toLowerCase().includes('tofu') ||
-          item.id.toLowerCase().includes('rice') ||
-          !item.id.toLowerCase().includes('pork') &&
-          !item.id.toLowerCase().includes('chicken') &&
-          !item.id.toLowerCase().includes('beef') &&
-          !item.id.toLowerCase().includes('shrimp') &&
-          !item.id.toLowerCase().includes('crab')
-        );
-      }
-      
-      // 2. Pork restriction filtering
-      if (dietaryPreferences.doesntEatPork) {
-        dumplings = dumplings.filter(item => 
-          !item.id.toLowerCase().includes('pork')
-        );
-        
-        appetizers = appetizers.filter(item =>
-          !item.id.toLowerCase().includes('pork')
-        );
-      }
-      
-      // 3. Peanut allergy filtering
-      if (dietaryPreferences.hasPeanutAllergy) {
-        // Filter out items with peanuts
-        dumplings = dumplings.filter(item => 
-          !item.id.toLowerCase().includes('peanut')
-        );
-        
-        appetizers = appetizers.filter(item =>
-          !item.id.toLowerCase().includes('peanut') &&
-          !item.id.toLowerCase().includes('cold noodle') // Contains peanut sauce
-        );
-        
-        sauces = sauces.filter(item =>
-          !item.id.toLowerCase().includes('peanut')
-        );
-      }
-      
-      // 4. Spicy food preferences
-      if (dietaryPreferences.dislikesSpicyFood) {
-        dumplings = dumplings.filter(item => 
-          !item.id.toLowerCase().includes('spicy')
-        );
-        
-        appetizers = appetizers.filter(item =>
-          !item.id.toLowerCase().includes('spicy')
-        );
-        
-        sauces = sauces.filter(item =>
-          !item.id.toLowerCase().includes('spicy')
-        );
-      }
-      
-      // 5. Lactose intolerance filtering for drinks
-      if (dietaryPreferences.hasLactoseIntolerance) {
-        // For lactose intolerant users, only include drinks that have milk substitution options
-        drinks = drinks.filter(item => item.milkSubModifiersEnabled && item.availableMilkSubIDs.length > 0);
-      }
-      
-      console.log('📋 Available items after dietary filtering:');
-      console.log('Dumplings:', dumplings.map(item => item.id));
-      console.log('Appetizers:', appetizers.map(item => item.id));
-      console.log('Drinks:', drinks.map(item => item.id));
-      console.log('Sauces:', sauces.map(item => item.id));
+      // Send the FULL menu to ChatGPT - no filtering, let ChatGPT decide
+      console.log('🔍 DEBUG: All menu items received:', menuItems.length);
+      console.log('🔍 DEBUG: All menu items:', menuItems.map(item => `${item.id} (${item.isDumpling ? 'dumpling' : item.isDrink ? 'drink' : 'other'})`));
+      console.log('🔍 DEBUG: Dietary preferences:', dietaryPreferences);
       
       // Create dietary restrictions string
       const restrictions = [];
@@ -392,21 +293,11 @@ Remember: You're not just an assistant—you love helping people discover the be
       const spicePreference = dietaryPreferences.likesSpicyFood ? 
         'The customer enjoys spicy food. ' : '';
       
-      // Create menu items text for AI with better organization
+      // Create menu items text for AI - send the FULL menu
       const menuText = `
 Available menu items:
 
-Dumplings:
-${dumplings.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
-
-Appetizers:
-${appetizers.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
-
-Drinks:
-${drinks.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
-
-Sauces:
-${sauces.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}
+${menuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} ${item.isDumpling ? '(dumpling)' : item.isDrink ? '(drink)' : ''}`).join('\n')}
       `.trim();
       
       // Create AI prompt that lets ChatGPT actually choose the items
@@ -420,10 +311,10 @@ ${menuText}
 IMPORTANT: You must choose items from the EXACT menu above. Do not make up items.
 
 Please create a personalized combo for ${userName} with:
-1. One dumpling option (choose from the Dumplings section above)
-2. One appetizer (choose from the Appetizers section above)  
-3. One drink (choose from the Drinks section above)
-4. Optionally one sauce (choose from the Sauces section above) - only if it complements the combo well
+1. One dumpling option (choose from items marked as dumplings above)
+2. One appetizer or side dish (choose from non-dumpling, non-drink items above)  
+3. One drink (choose from items marked as drinks above)
+4. Optionally one sauce or condiment (choose from items that seem like sauces/dips above) - only if it complements the combo well
 
 Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
 
@@ -433,6 +324,7 @@ IMPORTANT RULES:
 - Create variety - don't always choose the same items
 - Consider flavor combinations that work well together
 - Calculate the total price by adding up the prices of your chosen items
+- For milk teas and coffees, note that milk substitutes (oat milk, almond milk, coconut milk) are available for lactose intolerant customers
 
 Respond in this exact JSON format:
 {
