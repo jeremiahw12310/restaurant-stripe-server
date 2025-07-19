@@ -222,6 +222,17 @@ ${allMenuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} $
     // Create AI prompt that lets ChatGPT actually choose the items
     const currentTime = new Date().toISOString();
     const randomSeed = Math.floor(Math.random() * 1000);
+    const sessionId = Math.random().toString(36).substring(2, 15);
+    
+    // Create a more dynamic and varied prompt
+    const varietyInstructions = [
+      "Use the random seed to select items - if seed ends in 0-2, choose budget-friendly options",
+      "If seed ends in 3-5, choose premium items",
+      "If seed ends in 6-8, mix budget and premium",
+      "If seed ends in 9, choose the most popular items",
+      "Use the timestamp to vary selections - different minutes should yield different choices",
+      "Consider the session ID for additional randomness"
+    ];
     
     const prompt = `You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. 
 
@@ -243,10 +254,21 @@ Consider their dietary preferences and restrictions. The combo should be balance
 CRITICAL VARIETY REQUIREMENTS:
 - You MUST choose different items each time you generate a combo
 - Randomly select from the available options - don't favor the same items repeatedly
-- Consider the current time (${currentTime}) and random seed (${randomSeed}) to ensure variety
+- Current time: ${currentTime}
+- Random seed: ${randomSeed}
+- Session ID: ${sessionId}
+- ${varietyInstructions.join('. ')}
 - Mix up your selections across all categories (dumplings, appetizers, drinks, sauces)
 - If you've suggested similar items before, choose different ones this time
 - Vary the price ranges and flavor profiles
+- Use the random seed to determine your selection strategy
+
+SELECTION STRATEGY:
+- If random seed ends in 0-2: Choose budget-friendly items (under $10 each)
+- If random seed ends in 3-5: Choose premium items (over $12 each)  
+- If random seed ends in 6-8: Mix budget and premium items
+- If random seed ends in 9: Choose the most popular items
+- Use the timestamp minute to determine which specific items to pick within each category
 
 IMPORTANT RULES:
 - Choose items that actually exist in the menu above
@@ -276,14 +298,14 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       messages: [
         {
           role: "system",
-          content: "You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. Always respond with valid JSON in the exact format requested. IMPORTANT: You must provide variety in your selections and avoid repeating the same combinations."
+          content: "You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant. Always respond with valid JSON in the exact format requested. IMPORTANT: You must provide maximum variety in your selections and avoid repeating the same combinations. Use the random seed and timestamp to ensure each response is unique."
         },
         {
           role: "user",
           content: prompt
         }
       ],
-      temperature: 0.9,
+      temperature: 1.0,
       max_tokens: 500
     });
     
