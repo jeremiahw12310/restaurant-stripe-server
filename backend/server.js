@@ -283,7 +283,7 @@ Remember: You're not just an assistant—you love helping people discover the be
       
       // Send the FULL menu to ChatGPT - no filtering, let ChatGPT decide
       console.log('🔍 DEBUG: All menu items received:', menuItems.length);
-      console.log('🔍 DEBUG: All menu items:', menuItems.map(item => `${item.id} (${item.isDumpling ? 'dumpling' : item.isDrink ? 'drink' : 'other'})`));
+      console.log('🔍 DEBUG: All menu items:', menuItems.map(item => `${item.id} (${item.category || 'uncategorized'})`));
       console.log('🔍 DEBUG: Dietary preferences:', dietaryPreferences);
       
       // Create dietary restrictions string
@@ -300,11 +300,23 @@ Remember: You're not just an assistant—you love helping people discover the be
       const spicePreference = dietaryPreferences.likesSpicyFood ? 
         'The customer enjoys spicy food. ' : '';
       
-      // Create menu items text for AI - send the FULL menu
+      // Group menu items by their Firebase categories
+      const menuByCategory = {};
+      menuItems.forEach(item => {
+        const category = item.category || 'Other';
+        if (!menuByCategory[category]) {
+          menuByCategory[category] = [];
+        }
+        menuByCategory[category].push(item);
+      });
+      
+      // Create menu items text for AI organized by categories
       const menuText = `
-Available menu items:
+Available menu items by category:
 
-${menuItems.map(item => `- ${item.id}: $${item.price} - ${item.description} ${item.isDumpling ? '(dumpling)' : item.isDrink ? '(drink)' : ''}`).join('\n')}
+${Object.entries(menuByCategory).map(([category, items]) => 
+  `${category}:\n${items.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n')}`
+).join('\n\n')}
     `.trim();
       
       // Create AI prompt that encourages variety while letting ChatGPT choose intelligently
@@ -395,10 +407,10 @@ ${menuText}
 IMPORTANT: You must choose items from the EXACT menu above. Do not make up items.
 
 Please create a personalized combo for ${userName} with:
-1. One dumpling option (choose from items marked as dumplings above)
-2. One appetizer or side dish (choose from non-dumpling, non-drink items above)  
-3. One drink (choose from items marked as drinks above)
-4. Optionally one sauce or condiment (choose from items that seem like sauces/dips above) - only if it complements the combo well
+1. One item from the "Dumplings" category (if available)
+2. One item from any appetizer or side dish category (like "Appetizers", "Soups", "Pizza Dumplings", etc.)
+3. One item from any drink category (like "Fruit Tea", "Milk Tea", "Coffee", "Lemonade/Soda", "Drink")
+4. Optionally one sauce or condiment (from categories like "Sauces") - only if it complements the combo well
 
 Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
 
@@ -439,9 +451,9 @@ IMPORTANT RULES:
 Respond in this exact JSON format:
 {
   "items": [
-    {"id": "Exact Item Name from Menu", "category": "dumplings"},
-    {"id": "Exact Item Name from Menu", "category": "appetizers"},
-    {"id": "Exact Item Name from Menu", "category": "drinks"}
+    {"id": "Exact Item Name from Menu", "category": "Exact Category Name from Menu"},
+    {"id": "Exact Item Name from Menu", "category": "Exact Category Name from Menu"},
+    {"id": "Exact Item Name from Menu", "category": "Exact Category Name from Menu"}
   ],
   "aiResponse": "A 3-sentence personalized response starting with the customer's name, explaining why you chose these items for them. Make them feel seen and understood.",
   "totalPrice": 0.00
