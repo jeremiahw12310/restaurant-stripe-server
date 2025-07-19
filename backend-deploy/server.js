@@ -342,10 +342,14 @@ Remember: You're not just an assistant—you love helping people discover the be
   app.post('/generate-combo', async (req, res) => {
     try {
       console.log('🤖 Received personalized combo request');
+      console.log('📝 Request body:', JSON.stringify(req.body, null, 2));
       
       const { userName, dietaryPreferences } = req.body;
       
       if (!userName || !dietaryPreferences) {
+        console.log('❌ Missing required fields');
+        console.log('👤 userName:', userName);
+        console.log('🥗 dietaryPreferences:', dietaryPreferences);
         return res.status(400).json({ 
           error: 'Missing required fields: userName, dietaryPreferences' 
         });
@@ -484,6 +488,7 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       
       // Validate response structure
       if (!comboData.items || !comboData.aiResponse || typeof comboData.totalPrice !== 'number') {
+        console.error('❌ Invalid AI response structure:', comboData);
         return res.status(500).json({ 
           error: 'Invalid AI response structure',
           aiResponse: aiResponse 
@@ -491,6 +496,7 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       }
       
       console.log('✅ Generated personalized combo successfully');
+      console.log('📤 Sending response:', JSON.stringify(comboData, null, 2));
       
       res.json(comboData);
       
