@@ -157,14 +157,14 @@ app.post('/generate-combo', async (req, res) => {
       menuByCategory[item.category].push(item);
     });
     
-    // Create organized menu text by category
+    // Create organized menu text by category with brackets
     const menuText = `
 Available menu items (current as of ${new Date().toLocaleString()}):
 
 ${Object.entries(menuByCategory).map(([category, items]) => {
   const categoryTitle = category.charAt(0).toUpperCase() + category.slice(1);
   const itemsList = items.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n');
-  return `${categoryTitle}:\n${itemsList}`;
+  return `[${categoryTitle}]:\n${itemsList}`;
 }).join('\n\n')}
     `.trim();
     
