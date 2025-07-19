@@ -2,7 +2,7 @@ services:
   - type: web
     name: restaurant-stripe-server
     env: node
-    buildCommand: npm install
+    buildCommand: chmod +x build.sh && ./build.sh
     startCommand: npm start  
     rootDir: backend-deploy
     envVars:
@@ -13,7 +13,9 @@ services:
       - key: FIREBASE_SERVICE_ACCOUNT_KEY
         sync: false
       - key: FIREBASE_AUTH_TYPE
-        value: service-account
+        value: adc
       - key: GOOGLE_CLOUD_PROJECT
         value: dumplinghouseapp
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /opt/render/project/src/service-account.json
     healthCheckPath: / 
