@@ -311,7 +311,7 @@ app.post('/generate-combo', async (req, res) => {
       return shuffled;
     };
 
-    // Create organized menu text by category with randomized item order
+    // Create organized menu text by category with randomized item order (names and prices only)
     const menuText = `
 Available menu items by category:
 
@@ -319,7 +319,7 @@ ${Object.entries(menuByCategory).map(([category, items]) => {
   const categoryTitle = category.charAt(0).toUpperCase() + category.slice(1);
   // Randomize items within each category using the session seed for consistency
   const shuffledItems = shuffleArray(items);
-  const itemsList = shuffledItems.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n');
+  const itemsList = shuffledItems.map(item => `- ${item.id}: $${item.price}`).join('\n');
   return `[${categoryTitle}]:\n${itemsList}`;
 }).join('\n\n')}
     `.trim();
