@@ -476,7 +476,9 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       
       res.json({
         success: true,
-        combo: parsedResponse,
+        items: parsedResponse.items,
+        aiResponse: parsedResponse.aiResponse,
+        totalPrice: parsedResponse.totalPrice,
         varietyInfo: {
           strategy: currentStrategy,
           guideline: varietyGuideline,
@@ -492,15 +494,13 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       // Fallback response
       res.json({
         success: true,
-        combo: {
-          items: [
-            {"id": "Curry Chicken", "category": "Dumplings"},
-            {"id": "Edamame", "category": "Appetizers"},
-            {"id": "Bubble Milk Tea", "category": "Milk Tea"}
-          ],
-          aiResponse: `Hi ${userName}! I've created a classic combination for you with our popular Curry Chicken dumplings, refreshing Edamame to start, and a smooth Bubble Milk Tea to wash it all down. This combo gives you the perfect balance of savory dumplings, light appetizer, and a sweet drink.`,
-          totalPrice: 22.68
-        },
+        items: [
+          {"id": "Curry Chicken", "category": "Dumplings"},
+          {"id": "Edamame", "category": "Appetizers"},
+          {"id": "Bubble Milk Tea", "category": "Milk Tea"}
+        ],
+        aiResponse: `Hi ${userName}! I've created a classic combination for you with our popular Curry Chicken dumplings, refreshing Edamame to start, and a smooth Bubble Milk Tea to wash it all down. This combo gives you the perfect balance of savory dumplings, light appetizer, and a sweet drink.`,
+        totalPrice: 22.68,
         varietyInfo: {
           strategy: currentStrategy,
           guideline: varietyGuideline,
