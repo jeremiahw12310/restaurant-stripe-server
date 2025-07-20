@@ -301,13 +301,25 @@ app.post('/generate-combo', async (req, res) => {
       menuByCategory[item.category].push(item);
     });
     
-    // Create organized menu text by category with brackets
+    // Function to shuffle array using Fisher-Yates algorithm
+    const shuffleArray = (array) => {
+      const shuffled = [...array];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      return shuffled;
+    };
+
+    // Create organized menu text by category with randomized item order
     const menuText = `
 Available menu items by category:
 
 ${Object.entries(menuByCategory).map(([category, items]) => {
   const categoryTitle = category.charAt(0).toUpperCase() + category.slice(1);
-  const itemsList = items.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n');
+  // Randomize items within each category using the session seed for consistency
+  const shuffledItems = shuffleArray(items);
+  const itemsList = shuffledItems.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n');
   return `[${categoryTitle}]:\n${itemsList}`;
 }).join('\n\n')}
     `.trim();
