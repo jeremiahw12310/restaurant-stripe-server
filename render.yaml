@@ -18,4 +18,5 @@ services:
         value: dumplinghouseapp
       - key: GOOGLE_APPLICATION_CREDENTIALS
         value: /opt/render/project/src/service-account.json
-    healthCheckPath: / 
+    healthCheckPath: /
+    # Force redeploy - Enhanced Variety System Update - Sat Jul 19 23:59:00 CDT 2025 
