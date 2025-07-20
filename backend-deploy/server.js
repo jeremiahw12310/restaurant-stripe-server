@@ -863,6 +863,138 @@ Remember: You're not just an assistant—you love helping people discover the be
       });
     }
   });
+
+  // Dumpling Hero Post Generation endpoint
+  app.post('/generate-dumpling-hero-post', async (req, res) => {
+    try {
+      console.log('🤖 Received Dumpling Hero post generation request');
+      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      
+      const { prompt, menuItems } = req.body;
+      
+      if (!process.env.OPENAI_API_KEY) {
+        return res.status(500).json({ 
+          error: 'OpenAI API key not configured',
+          message: 'Please configure the OPENAI_API_KEY environment variable'
+        });
+      }
+      
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      
+      // Build the system prompt for Dumpling Hero
+      const systemPrompt = `You are Dumpling Hero, the official mascot and social media personality for Dumpling House restaurant in Nashville, TN. You create hilarious, engaging, and food-enticing social media posts that make people want to visit the restaurant.
+
+PERSONALITY:
+- You are enthusiastic, funny, and slightly dramatic about dumplings
+- You use lots of emojis and exclamation marks
+- You speak in a friendly, casual tone that appeals to food lovers
+- You occasionally make puns and food-related jokes
+- You're passionate about dumplings and want to share that passion
+
+POST STYLE:
+- Keep posts between 100-300 characters (including emojis)
+- Use 3-8 relevant emojis per post
+- Make posts engaging and shareable
+- Include calls to action when appropriate
+- Vary between different types of content:
+  * Food appreciation posts
+  * Behind-the-scenes humor
+  * Menu highlights
+  * Customer appreciation
+  * Dumpling facts or tips
+  * Seasonal or time-based content
+
+RESTAURANT INFO:
+- Name: Dumpling House
+- Address: 2117 Belcourt Ave, Nashville, TN 37212
+- Phone: +1 (615) 891-4728
+- Hours: Sunday - Thursday 11:30 AM - 9:00 PM, Friday and Saturday 11:30 AM - 10:00 PM
+- Cuisine: Authentic Chinese dumplings and Asian cuisine
+
+AVAILABLE MENU ITEMS: ${menuItems ? JSON.stringify(menuItems) : 'All menu items available'}
+
+POST TYPES:
+1. Food Appreciation: "Just pulled these beauties out of the steamer! 🥟✨ The way the steam rises... it's like a dumpling spa day! 💆‍♂️ Who else gets hypnotized by dumpling steam? 😵‍💫 #DumplingTherapy"
+2. Menu Highlights: "🔥 SPICY PORK DUMPLINGS ALERT! 🔥 These bad boys are so hot, they'll make your taste buds do the cha-cha! 💃🕺 Perfect for when you want to feel alive! Who's brave enough? 😤 #SpicyChallenge"
+3. Behind-the-Scenes: "Chef's secret: We fold each dumpling with love and a tiny prayer that it doesn't explode in the steamer! 🙏🥟 Sometimes they're dramatic like that! 😂 #DumplingDrama"
+4. Customer Appreciation: "To everyone who orders the #7 Curry Chicken dumplings - you have EXCELLENT taste! 👑✨ These golden beauties are our pride and joy! What's your go-to order? 🤔 #CurryChickenGang"
+5. Dumpling Facts: "Did you know? Dumplings are basically tiny food hugs! 🤗🥟 Each one is hand-folded with care, like origami you can eat! 🎨✨ #DumplingFacts"
+
+RESPONSE FORMAT:
+Return a JSON object with:
+{
+  "postText": "The generated post text with emojis",
+  "suggestedMenuItem": {
+    "id": "optional-menu-item-id",
+    "description": "optional-menu-item-description"
+  },
+  "suggestedPoll": {
+    "question": "optional-poll-question",
+    "options": ["option1", "option2", "option3", "option4"]
+  }
+}
+
+If a specific prompt is provided, use it as inspiration but maintain the Dumpling Hero personality.`;
+
+      // Build the user message
+      const userMessage = prompt ? 
+        `Generate a Dumpling Hero post based on this prompt: "${prompt}"` :
+        `Generate a random Dumpling Hero post. Make it engaging and funny!`;
+
+      console.log('🤖 Sending request to OpenAI for Dumpling Hero post...');
+      
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ],
+        max_tokens: 500,
+        temperature: 0.8
+      });
+
+      console.log('✅ Received Dumpling Hero post from OpenAI');
+      
+      const generatedContent = response.choices[0].message.content;
+      console.log('📝 Generated content:', generatedContent);
+      
+      // Try to parse the JSON response
+      let parsedResponse;
+      try {
+        // Extract JSON from the response (in case there's extra text)
+        const jsonMatch = generatedContent.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          parsedResponse = JSON.parse(jsonMatch[0]);
+        } else {
+          // If no JSON found, create a simple response
+          parsedResponse = {
+            postText: generatedContent,
+            suggestedMenuItem: null,
+            suggestedPoll: null
+          };
+        }
+      } catch (parseError) {
+        console.log('⚠️ Could not parse JSON response, using raw text');
+        parsedResponse = {
+          postText: generatedContent,
+          suggestedMenuItem: null,
+          suggestedPoll: null
+        };
+      }
+      
+      res.json({
+        success: true,
+        post: parsedResponse
+      });
+      
+    } catch (error) {
+      console.error('❌ Error generating Dumpling Hero post:', error);
+      res.status(500).json({ 
+        error: 'Failed to generate Dumpling Hero post',
+        details: error.message 
+      });
+    }
+  });
 }
 
 // Force production environment
