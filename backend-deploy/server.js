@@ -73,7 +73,7 @@ app.post('/generate-combo', async (req, res) => {
     console.log('🤖 Received personalized combo request');
     console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
     
-    const { userName, dietaryPreferences, menuItems } = req.body;
+    const { userName, dietaryPreferences, menuItems, previousRecommendations } = req.body;
     
     if (!userName || !dietaryPreferences) {
       console.log('❌ Missing required fields. Received:', { userName: !!userName, dietaryPreferences: !!dietaryPreferences });
@@ -362,6 +362,39 @@ ${Object.entries(menuByCategory).map(([category, items]) => {
       "USER_PERSONALIZATION: Adapt to the user's specific preferences and restrictions"
     ];
     
+    // Build previous recommendations text if available
+    let previousRecommendationsText = '';
+    if (previousRecommendations && Array.isArray(previousRecommendations) && previousRecommendations.length > 0) {
+      const recentCombos = previousRecommendations.slice(-3); // Get last 3 recommendations
+      previousRecommendationsText = `
+PREVIOUS RECOMMENDATIONS (AVOID THESE FOR BETTER VARIETY):
+${recentCombos.map((combo, index) => {
+  const comboNumber = recentCombos.length - index;
+  const itemsList = combo.items.map(item => item.id).join(', ');
+  return `${comboNumber}. ${itemsList}`;
+}).join('\n')}
+
+IMPORTANT: Try not to use these past suggestions for better variety. Choose different items and combinations.`;
+    }
+    
+    // Drink type randomizer
+    const drinkTypes = ['Milk Tea', 'Fruit Tea', 'Coffee'];
+    const randomDrinkType = drinkTypes[Math.floor(Math.random() * drinkTypes.length)];
+    const drinkTypeText = `DRINK PREFERENCE: Please include a ${randomDrinkType} in this combo.`;
+    
+    // Appetizer/Soup randomizer
+    const appetizerSoupOptions = ['Appetizer', 'Soup', 'Both'];
+    const randomAppetizerSoup = appetizerSoupOptions[Math.floor(Math.random() * appetizerSoupOptions.length)];
+    let appetizerSoupText = '';
+    
+    if (randomAppetizerSoup === 'Appetizer') {
+      appetizerSoupText = `APPETIZER PREFERENCE: Please include an appetizer (like "Appetizers", "Pizza Dumplings", etc.) in this combo.`;
+    } else if (randomAppetizerSoup === 'Soup') {
+      appetizerSoupText = `SOUP PREFERENCE: Please include a soup in this combo.`;
+    } else {
+      appetizerSoupText = `APPETIZER & SOUP PREFERENCE: Please include both an appetizer and a soup in this combo.`;
+    }
+    
     // Get current exploration strategy
     const currentStrategy = getExplorationStrategy();
     const varietyGuideline = varietyGuidelines[varietyFactors.sessionBased];
@@ -377,8 +410,8 @@ ${menuText}
 
 IMPORTANT: You must choose items from the EXACT menu above. Do not make up items. Please create a personalized combo for ${userName} with:
 1. One item from the "Dumplings" category (if available)
-2. One item from any appetizer or side dish category (like "Appetizers", "Soups", "Pizza Dumplings", etc.)
-3. One item from any drink category (like "Fruit Tea", "Milk Tea", "Coffee", "Lemonade/Soda", "Drink")
+2. ${appetizerSoupText}
+3. One item from the drink category - ${drinkTypeText}
 4. Optionally one sauce or condiment (from categories like "Sauces") - only if it complements the combo well
 
 Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
@@ -395,6 +428,8 @@ VARIETY GUIDELINE: ${varietyGuideline}
 USER PREFERENCES INSIGHTS (for personalization, not restriction):
 Previous category preferences: Dumplings (${varietyFactors.userBased + 1} times), Appetizers (${varietyFactors.dayBased + 2} times), Milk Tea (${varietyFactors.timeBased + 3} times), Sauces (${varietyFactors.seedBased} times)
 
+${previousRecommendationsText}
+
 VARIETY GUIDELINES:
 - Use the exploration strategy to guide your choices
 - Consider the time-based factors for seasonal appropriateness
@@ -406,6 +441,7 @@ VARIETY GUIDELINES:
 - Avoid suggesting the same items repeatedly
 - Consider the user's specific dietary restrictions carefully
 - Create combinations that complement each other flavor-wise
+- IMPORTANT: Avoid using items from previous recommendations to ensure variety
 
 IMPORTANT RULES:
 - Choose items that actually exist in the menu above
@@ -416,6 +452,7 @@ IMPORTANT RULES:
 - For milk teas and coffees, note that milk substitutes (oat milk, almond milk, coconut milk) are available for lactose intolerant customers
 - Ensure variety by avoiding repetitive suggestions
 - Use the exploration strategy to guide your selection
+- AVOID using items from previous recommendations to maintain variety
 
 Respond in this exact JSON format:
 {
@@ -433,6 +470,8 @@ Calculate the total price accurately. Keep the response warm and personal.`;
     console.log('🤖 Sending request to OpenAI...');
     console.log('🔍 Exploration Strategy:', currentStrategy);
     console.log('🔍 Variety Guideline:', varietyGuideline);
+    console.log('🥤 Selected Drink Type:', randomDrinkType);
+    console.log('🥗 Selected Appetizer/Soup Type:', randomAppetizerSoup);
     
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const completion = await openai.chat.completions.create({
