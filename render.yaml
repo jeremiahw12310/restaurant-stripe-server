@@ -2,9 +2,9 @@ services:
   - type: web
     name: restaurant-stripe-server
     env: node
-    buildCommand: chmod +x build.sh && ./build.sh
-    startCommand: npm start  
-    rootDir: backend-deploy
+    buildCommand: cd backend-deploy && chmod +x build.sh && ./build.sh
+    startCommand: cd backend-deploy && npm start  
+    rootDir: .
     envVars:
       - key: NODE_ENV
         value: production
@@ -17,6 +17,6 @@ services:
       - key: GOOGLE_CLOUD_PROJECT
         value: dumplinghouseapp
       - key: GOOGLE_APPLICATION_CREDENTIALS
-        value: /opt/render/project/src/service-account.json
+        value: /opt/render/project/src/backend-deploy/service-account.json
     healthCheckPath: /
     # Force redeploy - Enhanced Variety System Update - Sat Jul 19 23:59:00 CDT 2025 
