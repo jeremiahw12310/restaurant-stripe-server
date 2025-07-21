@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: restaurant-stripe-server-v2
+    name: restaurant-stripe-server-1
     env: node
     buildCommand: npm install
     startCommand: npm start  
