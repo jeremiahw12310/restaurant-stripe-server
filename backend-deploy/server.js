@@ -302,7 +302,7 @@ app.post('/generate-combo', async (req, res) => {
       'The customer enjoys spicy food. ' : '';
     
     const tastePreference = dietaryPreferences.tastePreferences && dietaryPreferences.tastePreferences.trim() !== '' ? 
-      `Taste preferences: ${dietaryPreferences.tastePreferences}. ` : '';
+      `TASTE PREFERENCES (HIGH PRIORITY): ${dietaryPreferences.tastePreferences}. ` : '';
     
     // Create menu items text for AI - organize by Firebase categories
     const menuByCategory = {};
@@ -459,7 +459,9 @@ IMPORTANT: You must choose items from the EXACT menu above. Do not make up items
 3. One item from the drink category - ${drinkTypeText}
 4. Optionally one sauce or condiment (from categories like "Sauces") - only if it complements the combo well
 
-Consider their dietary preferences and restrictions. The combo should be balanced and appealing.
+**CRITICAL: The customer's taste preferences above are the HIGHEST PRIORITY. Choose items that specifically match their stated taste preferences. If they mention specific flavors, ingredients, or preferences, prioritize those over variety considerations.**
+
+Consider their dietary preferences and restrictions. The combo should be balanced and appealing while honoring their taste preferences.
 
 ENHANCED VARIETY SYSTEM:
 Current time: ${currentTime}
@@ -476,7 +478,8 @@ Previous category preferences: Dumplings (${varietyFactors.userBased + 1} times)
 ${previousRecommendationsText}
 
 VARIETY GUIDELINES:
-- Use the exploration strategy to guide your choices
+- **TASTE PREFERENCES OVERRIDE VARIETY: If the customer has specific taste preferences, prioritize those over variety considerations**
+- Use the exploration strategy to guide your choices (only when no specific taste preferences are stated)
 - Consider the time-based factors for seasonal appropriateness
 - Mix familiar favorites with new discoveries
 - Balance price ranges and flavor profiles
@@ -489,14 +492,15 @@ VARIETY GUIDELINES:
 - IMPORTANT: Avoid using items from previous recommendations to ensure variety
 
 IMPORTANT RULES:
+- **TASTE PREFERENCES ARE MANDATORY: If the customer states specific taste preferences, you MUST choose items that match those preferences**
 - Choose items that actually exist in the menu above
 - Consider dietary restrictions carefully
 - Create enjoyable, balanced combinations
 - Consider flavor combinations that work well together
 - Calculate the total price by adding up the prices of your chosen items
 - For milk teas and coffees, note that milk substitutes (oat milk, almond milk, coconut milk) are available for lactose intolerant customers
-- Ensure variety by avoiding repetitive suggestions
-- Use the exploration strategy to guide your selection
+- Ensure variety by avoiding repetitive suggestions (only when no specific taste preferences are stated)
+- Use the exploration strategy to guide your selection (only when no specific taste preferences are stated)
 - AVOID using items from previous recommendations to maintain variety
 
 Respond in this exact JSON format:
