@@ -1275,6 +1275,461 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       });
     }
   });
+
+  // Dumpling Hero Comment Preview endpoint (for preview before posting)
+  app.post('/preview-dumpling-hero-comment', async (req, res) => {
+    try {
+      console.log('🤖 Received Dumpling Hero comment preview request');
+      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      
+      const { prompt, postContext } = req.body;
+      
+      if (!process.env.OPENAI_API_KEY) {
+        return res.status(500).json({ 
+          error: 'OpenAI API key not configured',
+          message: 'Please configure the OPENAI_API_KEY environment variable'
+        });
+      }
+      
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      
+      // Build the system prompt for simple Dumpling Hero comments
+      const systemPrompt = `You are Dumpling Hero, the official mascot and social media personality for Dumpling House restaurant in Nashville, TN. You're now responding to comments and posts with your signature enthusiasm and dumpling love.
+
+PERSONALITY:
+- You are enthusiastic, funny, and slightly dramatic about dumplings
+- You use lots of emojis and exclamation marks
+- You speak in a friendly, casual tone that appeals to food lovers
+- You occasionally make puns and food-related jokes
+- You're passionate about dumplings and want to share that passion
+- You're genuinely excited about the food and want to share that excitement
+- You're supportive and encouraging to other users
+
+COMMENT STYLE:
+- Keep comments between 50-200 characters (including emojis)
+- Use 2-5 relevant emojis per comment
+- Make comments naturally engaging and supportive
+- Respond appropriately to the context of what you're replying to
+- Vary between different types of responses:
+  * Agreement and enthusiasm ("Yes! That's exactly right! 🥟✨")
+  * Food appreciation ("Those dumplings look amazing! 🤤")
+  * Encouragement ("You're going to love it! 💪")
+  * Humor ("Dumpling power! 🥟⚡")
+  * Support ("We've got your back! 🙌")
+  * Food facts ("Did you know? Dumplings are happiness in a wrapper! 🎁")
+
+RESTAURANT INFO:
+- Name: Dumpling House
+- Address: 2117 Belcourt Ave, Nashville, TN 37212
+- Phone: +1 (615) 891-4728
+- Hours: Sunday - Thursday 11:30 AM - 9:00 PM, Friday and Saturday 11:30 AM - 10:00 PM
+- Cuisine: Authentic Chinese dumplings and Asian cuisine
+
+POST CONTEXT AWARENESS:
+You will receive detailed information about the post you're commenting on. You MUST use this context to make your comments specific and relevant:
+
+- If the post has images/videos: Reference what you see in the media
+- If the post mentions specific menu items: Show enthusiasm for those specific items and mention them by name
+- If the post has a poll: Engage with the poll question and options specifically
+- If the post has hashtags: Use them naturally in your response
+- If the post is about a specific dish: Show knowledge and excitement about that specific dish
+- If the post has text content: Respond directly to what was said
+
+CRITICAL: You MUST reference specific details from the post context. Don't give generic responses - make it personal to the actual content provided.
+
+COMMENT EXAMPLES:
+1. Agreement: "Absolutely! Those steamed dumplings are pure magic! ✨🥟"
+2. Encouragement: "You're going to love it! The flavors are incredible! 🤤"
+3. Humor: "Dumpling power activated! 🥟⚡ Ready to conquer hunger!"
+4. Support: "We've got your back! 🙌🥟 Dumpling House family!"
+5. Food Appreciation: "That looks delicious! 🤤 The perfect dumpling moment!"
+6. Enthusiasm: "Yes! That's the spirit! 🥟✨ Dumpling love all around!"
+
+RESPONSE FORMAT:
+Return a JSON object with:
+{ "commentText": "The generated comment text with emojis" }
+
+IMPORTANT: 
+- Make the comment feel like you're genuinely responding to the context
+- Keep it supportive and encouraging
+- Don't be overly promotional - focus on being helpful and enthusiastic
+- If replying to a specific comment, acknowledge what they said
+- Make it naturally engaging so people want to continue the conversation
+- If a specific prompt is provided, use it as inspiration but maintain the Dumpling Hero personality
+- CRITICAL: You MUST reference specific details from the post context when provided`;
+
+      // Build the user message with post context
+      let userMessage = "";
+      
+      // Add post context if available
+      if (postContext && Object.keys(postContext).length > 0) {
+        console.log('🔍 Post Context Analysis for Preview Endpoint:');
+        console.log('✅ Post context received:');
+        console.log('   - Content:', postContext.content);
+        console.log('   - Author:', postContext.authorName);
+        console.log('   - Type:', postContext.postType);
+        
+        userMessage += "POST CONTEXT:\n";
+        userMessage += `- Content: "${postContext.content}"\n`;
+        userMessage += `- Author: ${postContext.authorName}\n`;
+        userMessage += `- Post Type: ${postContext.postType}\n`;
+        
+        if (postContext.caption) {
+          userMessage += `- Caption: "${postContext.caption}"\n`;
+        }
+        
+        if (postContext.imageURLs && postContext.imageURLs.length > 0) {
+          userMessage += `- Images: ${postContext.imageURLs.length} image(s) attached\n`;
+        }
+        
+        if (postContext.videoURL) {
+          userMessage += `- Video: Video content attached\n`;
+        }
+        
+        if (postContext.hashtags && postContext.hashtags.length > 0) {
+          userMessage += `- Hashtags: ${postContext.hashtags.join(', ')}\n`;
+        }
+        
+        if (postContext.attachedMenuItem) {
+          const item = postContext.attachedMenuItem;
+          userMessage += `- Menu Item: ${item.description} ($${item.price}) - ${item.category}\n`;
+          if (item.isDumpling) userMessage += `  * This is a dumpling item! 🥟\n`;
+          if (item.isDrink) userMessage += `  * This is a drink item! 🥤\n`;
+        }
+        
+        if (postContext.poll) {
+          const poll = postContext.poll;
+          userMessage += `- Poll: "${poll.question}"\n`;
+          userMessage += `  Options: ${poll.options.map(opt => `"${opt.text}" (${opt.voteCount} votes)`).join(', ')}\n`;
+          userMessage += `  Total Votes: ${poll.totalVotes}\n`;
+        }
+        
+        userMessage += "\n";
+      }
+      
+      // Add prompt or instruction
+      if (prompt) {
+        userMessage += `Generate a Dumpling Hero comment based on this prompt: "${prompt}"`;
+        if (postContext && Object.keys(postContext).length > 0) {
+          userMessage += " You MUST reference specific details from the post context above.";
+        }
+      } else {
+        if (postContext && Object.keys(postContext).length > 0) {
+          // When we have post context but no prompt, create a specific instruction
+          userMessage += "Generate a Dumpling Hero comment that DIRECTLY REFERENCES the post context above. ";
+          userMessage += "You MUST reference: ";
+          
+          if (postContext.content) {
+            userMessage += `- The post content: "${postContext.content}" `;
+          }
+          
+          if (postContext.caption) {
+            userMessage += `- The caption: "${postContext.caption}" `;
+          }
+          
+          if (postContext.videoURL) {
+            userMessage += `- The video content `;
+          }
+          
+          if (postContext.attachedMenuItem) {
+            const item = postContext.attachedMenuItem;
+            userMessage += `- The menu item: ${item.description} ($${item.price}) `;
+            if (item.isDumpling) userMessage += "(this is a dumpling!) ";
+            if (item.isDrink) userMessage += "(this is a drink!) ";
+          }
+          
+          if (postContext.poll) {
+            userMessage += `- The poll question: "${postContext.poll.question}" `;
+          }
+          
+          if (postContext.imageURLs && postContext.imageURLs.length > 0) {
+            userMessage += `- The ${postContext.imageURLs.length} image(s) in the post `;
+          }
+          
+          userMessage += "Make your comment feel like you're genuinely responding to these specific details, not just giving a generic response!";
+        } else {
+          userMessage += "Generate a random Dumpling Hero comment. Make it supportive and enthusiastic!";
+        }
+      }
+
+      console.log('🤖 Sending request to OpenAI for Dumpling Hero comment preview...');
+      console.log('📝 User message being sent to ChatGPT:');
+      console.log(userMessage);
+      
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ],
+        max_tokens: 200,
+        temperature: 0.8
+      });
+
+      console.log('✅ Received Dumpling Hero comment preview from OpenAI');
+      
+      const generatedContent = response.choices[0].message.content;
+      console.log('📝 Generated content:', generatedContent);
+      
+      // Try to parse the JSON response
+      let parsedResponse;
+      try {
+        // Extract JSON from the response (in case there's extra text)
+        const jsonMatch = generatedContent.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          parsedResponse = JSON.parse(jsonMatch[0]);
+        } else {
+          // If no JSON found, create a simple response
+          parsedResponse = {
+            commentText: generatedContent
+          };
+        }
+      } catch (parseError) {
+        console.log('⚠️ Could not parse JSON response, using raw text');
+        parsedResponse = {
+          commentText: generatedContent
+        };
+      }
+      
+      res.json({
+        success: true,
+        comment: parsedResponse
+      });
+      
+    } catch (error) {
+      console.error('❌ Error generating Dumpling Hero comment preview:', error);
+      res.status(500).json({ 
+        error: 'Failed to generate Dumpling Hero comment preview',
+        details: error.message 
+      });
+    }
+  });
+
+  // Simple Dumpling Hero Comment Generation endpoint (for external use)
+  app.post('/generate-dumpling-hero-comment-simple', async (req, res) => {
+    try {
+      console.log('🤖 Received simple Dumpling Hero comment generation request');
+      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      
+      const { prompt, postContext } = req.body;
+      
+      if (!process.env.OPENAI_API_KEY) {
+        return res.status(500).json({ 
+          error: 'OpenAI API key not configured',
+          message: 'Please configure the OPENAI_API_KEY environment variable'
+        });
+      }
+      
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      
+      // Build the system prompt for simple Dumpling Hero comments
+      const systemPrompt = `You are Dumpling Hero, the official mascot and social media personality for Dumpling House restaurant in Nashville, TN. You're now responding to comments and posts with your signature enthusiasm and dumpling love.
+
+PERSONALITY:
+- You are enthusiastic, funny, and slightly dramatic about dumplings
+- You use lots of emojis and exclamation marks
+- You speak in a friendly, casual tone that appeals to food lovers
+- You occasionally make puns and food-related jokes
+- You're passionate about dumplings and want to share that passion
+- You're genuinely excited about the food and want to share that excitement
+- You're supportive and encouraging to other users
+
+COMMENT STYLE:
+- Keep comments between 50-200 characters (including emojis)
+- Use 2-5 relevant emojis per comment
+- Make comments naturally engaging and supportive
+- Respond appropriately to the context of what you're replying to
+- Vary between different types of responses:
+  * Agreement and enthusiasm ("Yes! That's exactly right! 🥟✨")
+  * Food appreciation ("Those dumplings look amazing! 🤤")
+  * Encouragement ("You're going to love it! 💪")
+  * Humor ("Dumpling power! 🥟⚡")
+  * Support ("We've got your back! 🙌")
+  * Food facts ("Did you know? Dumplings are happiness in a wrapper! 🎁")
+
+RESTAURANT INFO:
+- Name: Dumpling House
+- Address: 2117 Belcourt Ave, Nashville, TN 37212
+- Phone: +1 (615) 891-4728
+- Hours: Sunday - Thursday 11:30 AM - 9:00 PM, Friday and Saturday 11:30 AM - 10:00 PM
+- Cuisine: Authentic Chinese dumplings and Asian cuisine
+
+POST CONTEXT AWARENESS:
+You will receive detailed information about the post you're commenting on. You MUST use this context to make your comments specific and relevant:
+
+- If the post has images/videos: Reference what you see in the media
+- If the post mentions specific menu items: Show enthusiasm for those specific items and mention them by name
+- If the post has a poll: Engage with the poll question and options specifically
+- If the post has hashtags: Use them naturally in your response
+- If the post is about a specific dish: Show knowledge and excitement about that specific dish
+- If the post has text content: Respond directly to what was said
+
+CRITICAL: You MUST reference specific details from the post context. Don't give generic responses - make it personal to the actual content provided.
+
+COMMENT EXAMPLES:
+1. Agreement: "Absolutely! Those steamed dumplings are pure magic! ✨🥟"
+2. Encouragement: "You're going to love it! The flavors are incredible! 🤤"
+3. Humor: "Dumpling power activated! 🥟⚡ Ready to conquer hunger!"
+4. Support: "We're here for you! 🙌🥟 Dumpling House family!"
+5. Food Appreciation: "That looks delicious! 🤤 The perfect dumpling moment!"
+6. Enthusiasm: "Yes! That's the spirit! 🥟✨ Dumpling love all around!"
+
+RESPONSE FORMAT:
+Return a JSON object with:
+{ "commentText": "The generated comment text with emojis" }
+
+IMPORTANT: 
+- Make the comment feel like you're genuinely responding to the context
+- Keep it supportive and encouraging
+- Don't be overly promotional - focus on being helpful and enthusiastic
+- If replying to a specific comment, acknowledge what they said
+- Make it naturally engaging so people want to continue the conversation
+- If a specific prompt is provided, use it as inspiration but maintain the Dumpling Hero personality
+- CRITICAL: You MUST reference specific details from the post context when provided`;
+
+      // Build the user message with post context
+      let userMessage = "";
+      
+      // Add post context if available
+      if (postContext && Object.keys(postContext).length > 0) {
+        console.log('🔍 Post Context Analysis for Simple Endpoint:');
+        console.log('✅ Post context received:');
+        console.log('   - Content:', postContext.content);
+        console.log('   - Author:', postContext.authorName);
+        console.log('   - Type:', postContext.postType);
+        
+        userMessage += "POST CONTEXT:\n";
+        userMessage += `- Content: "${postContext.content}"\n`;
+        userMessage += `- Author: ${postContext.authorName}\n`;
+        userMessage += `- Post Type: ${postContext.postType}\n`;
+        
+        if (postContext.caption) {
+          userMessage += `- Caption: "${postContext.caption}"\n`;
+        }
+        
+        if (postContext.imageURLs && postContext.imageURLs.length > 0) {
+          userMessage += `- Images: ${postContext.imageURLs.length} image(s) attached\n`;
+        }
+        
+        if (postContext.videoURL) {
+          userMessage += `- Video: Video content attached\n`;
+        }
+        
+        if (postContext.hashtags && postContext.hashtags.length > 0) {
+          userMessage += `- Hashtags: ${postContext.hashtags.join(', ')}\n`;
+        }
+        
+        if (postContext.attachedMenuItem) {
+          const item = postContext.attachedMenuItem;
+          userMessage += `- Menu Item: ${item.description} ($${item.price}) - ${item.category}\n`;
+          if (item.isDumpling) userMessage += `  * This is a dumpling item! 🥟\n`;
+          if (item.isDrink) userMessage += `  * This is a drink item! 🥤\n`;
+        }
+        
+        if (postContext.poll) {
+          const poll = postContext.poll;
+          userMessage += `- Poll: "${poll.question}"\n`;
+          userMessage += `  Options: ${poll.options.map(opt => `"${opt.text}" (${opt.voteCount} votes)`).join(', ')}\n`;
+          userMessage += `  Total Votes: ${poll.totalVotes}\n`;
+        }
+        
+        userMessage += "\n";
+      }
+      
+      // Add prompt or instruction
+      if (prompt) {
+        userMessage += `Generate a Dumpling Hero comment based on this prompt: "${prompt}"`;
+        if (postContext && Object.keys(postContext).length > 0) {
+          userMessage += " You MUST reference specific details from the post context above.";
+        }
+      } else {
+        if (postContext && Object.keys(postContext).length > 0) {
+          // When we have post context but no prompt, create a specific instruction
+          userMessage += "Generate a Dumpling Hero comment that DIRECTLY REFERENCES the post context above. ";
+          userMessage += "You MUST reference: ";
+          
+          if (postContext.content) {
+            userMessage += `- The post content: "${postContext.content}" `;
+          }
+          
+          if (postContext.caption) {
+            userMessage += `- The caption: "${postContext.caption}" `;
+          }
+          
+          if (postContext.videoURL) {
+            userMessage += `- The video content `;
+          }
+          
+          if (postContext.attachedMenuItem) {
+            const item = postContext.attachedMenuItem;
+            userMessage += `- The menu item: ${item.description} ($${item.price}) `;
+            if (item.isDumpling) userMessage += "(this is a dumpling!) ";
+            if (item.isDrink) userMessage += "(this is a drink!) ";
+          }
+          
+          if (postContext.poll) {
+            userMessage += `- The poll question: "${postContext.poll.question}" `;
+          }
+          
+          if (postContext.imageURLs && postContext.imageURLs.length > 0) {
+            userMessage += `- The ${postContext.imageURLs.length} image(s) in the post `;
+          }
+          
+          userMessage += "Make your comment feel like you're genuinely responding to these specific details, not just giving a generic response!";
+        } else {
+          userMessage += "Generate a random Dumpling Hero comment. Make it supportive and enthusiastic!";
+        }
+      }
+
+      console.log('🤖 Sending request to OpenAI for simple Dumpling Hero comment...');
+      console.log('📝 User message being sent to ChatGPT:');
+      console.log(userMessage);
+      
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ],
+        max_tokens: 200,
+        temperature: 0.8
+      });
+
+      console.log('✅ Received simple Dumpling Hero comment from OpenAI');
+      
+      const generatedContent = response.choices[0].message.content;
+      console.log('📝 Generated content:', generatedContent);
+      
+      // Try to parse the JSON response
+      let parsedResponse;
+      try {
+        // Extract JSON from the response (in case there's extra text)
+        const jsonMatch = generatedContent.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          parsedResponse = JSON.parse(jsonMatch[0]);
+        } else {
+          // If no JSON found, create a simple response
+          parsedResponse = {
+            commentText: generatedContent
+          };
+        }
+      } catch (parseError) {
+        console.log('⚠️ Could not parse JSON response, using raw text');
+        parsedResponse = {
+          commentText: generatedContent
+        };
+      }
+      
+      res.json(parsedResponse);
+      
+    } catch (error) {
+      console.error('❌ Error generating simple Dumpling Hero comment:', error);
+      res.status(500).json({ 
+        error: 'Failed to generate Dumpling Hero comment',
+        details: error.message 
+      });
+    }
+  });
 }
 
 // Force production environment
