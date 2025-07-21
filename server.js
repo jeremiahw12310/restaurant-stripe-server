@@ -1040,6 +1040,26 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       
       const { prompt, replyingTo, postContext } = req.body;
       
+      // Debug logging for post context
+      console.log('🔍 Post Context Analysis:');
+      if (postContext && Object.keys(postContext).length > 0) {
+        console.log('✅ Post context received:');
+        console.log('   - Content:', postContext.content);
+        console.log('   - Author:', postContext.authorName);
+        console.log('   - Type:', postContext.postType);
+        console.log('   - Images:', postContext.imageURLs?.length || 0);
+        console.log('   - Has Menu Item:', !!postContext.attachedMenuItem);
+        console.log('   - Has Poll:', !!postContext.poll);
+        if (postContext.attachedMenuItem) {
+          console.log('   - Menu Item:', postContext.attachedMenuItem.description);
+        }
+        if (postContext.poll) {
+          console.log('   - Poll Question:', postContext.poll.question);
+        }
+      } else {
+        console.log('❌ No post context received or empty context');
+      }
+      
       if (!process.env.OPENAI_API_KEY) {
         return res.status(500).json({ 
           error: 'OpenAI API key not configured',
@@ -1172,6 +1192,10 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       }
 
       console.log('🤖 Sending request to OpenAI for Dumpling Hero comment...');
+      console.log('📤 Final user message being sent to OpenAI:');
+      console.log('---START OF MESSAGE---');
+      console.log(userMessage);
+      console.log('---END OF MESSAGE---');
       
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
