@@ -1038,7 +1038,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       console.log('🤖 Received Dumpling Hero comment generation request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
       
-      const { prompt, replyingTo } = req.body;
+      const { prompt, replyingTo, postContext } = req.body;
       
       if (!process.env.OPENAI_API_KEY) {
         return res.status(500).json({ 
@@ -1068,7 +1068,7 @@ COMMENT STYLE:
 - Respond appropriately to the context of what you're replying to
 - Vary between different types of responses:
   * Agreement and enthusiasm ("Yes! That's exactly right! 🥟✨")
-  * Food appreciation ("Those dumplings look amazing! 🤤")
+  * Food appreciation ("Those dumplings are pure magic! 🤤")
   * Encouragement ("You're going to love it! 💪")
   * Humor ("Dumpling power! 🥟⚡")
   * Support ("We've got your back! 🙌")
@@ -1080,6 +1080,15 @@ RESTAURANT INFO:
 - Phone: +1 (615) 891-4728
 - Hours: Sunday - Thursday 11:30 AM - 9:00 PM, Friday and Saturday 11:30 AM - 10:00 PM
 - Cuisine: Authentic Chinese dumplings and Asian cuisine
+
+POST CONTEXT AWARENESS:
+You will receive detailed information about the post you're commenting on. Use this context to make your comments more relevant and engaging:
+
+- If the post has images/videos: Reference what you see in the media
+- If the post mentions specific menu items: Show enthusiasm for those items
+- If the post has a poll: Engage with the poll question and options
+- If the post has hashtags: Use them naturally in your response
+- If the post is about a specific dish: Show knowledge and excitement about that dish
 
 COMMENT EXAMPLES:
 1. Agreement: "Absolutely! Those steamed dumplings are pure magic! ✨🥟"
@@ -1101,22 +1110,65 @@ IMPORTANT:
 - Don't be overly promotional - focus on being helpful and enthusiastic
 - If replying to a specific comment, acknowledge what they said
 - Make it naturally engaging so people want to continue the conversation
+- Reference specific details from the post context when relevant
 
 If a specific prompt is provided, use it as inspiration but maintain the Dumpling Hero personality.`;
 
-      // Build the user message
-      let userMessage;
+      // Build the user message with post context
+      let userMessage = "";
+      
+      // Add post context if available
+      if (postContext && Object.keys(postContext).length > 0) {
+        userMessage += "POST CONTEXT:\n";
+        userMessage += `- Content: "${postContext.content}"\n`;
+        userMessage += `- Author: ${postContext.authorName}\n`;
+        userMessage += `- Post Type: ${postContext.postType}\n`;
+        
+        if (postContext.caption) {
+          userMessage += `- Caption: "${postContext.caption}"\n`;
+        }
+        
+        if (postContext.imageURLs && postContext.imageURLs.length > 0) {
+          userMessage += `- Images: ${postContext.imageURLs.length} image(s) attached\n`;
+        }
+        
+        if (postContext.videoURL) {
+          userMessage += `- Video: Video content attached\n`;
+        }
+        
+        if (postContext.hashtags && postContext.hashtags.length > 0) {
+          userMessage += `- Hashtags: ${postContext.hashtags.join(', ')}\n`;
+        }
+        
+        if (postContext.attachedMenuItem) {
+          const item = postContext.attachedMenuItem;
+          userMessage += `- Menu Item: ${item.description} ($${item.price}) - ${item.category}\n`;
+          if (item.isDumpling) userMessage += `  * This is a dumpling item! 🥟\n`;
+          if (item.isDrink) userMessage += `  * This is a drink item! 🥤\n`;
+        }
+        
+        if (postContext.poll) {
+          const poll = postContext.poll;
+          userMessage += `- Poll: "${poll.question}"\n`;
+          userMessage += `  Options: ${poll.options.map(opt => `"${opt.text}" (${opt.voteCount} votes)`).join(', ')}\n`;
+          userMessage += `  Total Votes: ${poll.totalVotes}\n`;
+        }
+        
+        userMessage += "\n";
+      }
+      
+      // Add prompt or instruction
       if (prompt) {
-        userMessage = `Generate a Dumpling Hero comment based on this prompt: "${prompt}"`;
+        userMessage += `Generate a Dumpling Hero comment based on this prompt: "${prompt}"`;
         if (replyingTo) {
           userMessage += ` You're replying to: "${replyingTo}"`;
         }
       } else {
-        let instruction = "Generate a random Dumpling Hero comment. Make it supportive and enthusiastic!";
+        let instruction = "Generate a Dumpling Hero comment that's relevant to the post context above. Make it supportive and enthusiastic!";
         if (replyingTo) {
           instruction += ` You're replying to: "${replyingTo}"`;
         }
-        userMessage = instruction;
+        userMessage += instruction;
       }
 
       console.log('🤖 Sending request to OpenAI for Dumpling Hero comment...');
