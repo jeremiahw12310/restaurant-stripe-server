@@ -182,6 +182,15 @@ app.post('/generate-combo', async (req, res) => {
                  fullText.includes('diet coke')) {
           category = 'Soda';
         }
+        // Lemonade/Soda - specific lemonade items
+        else if (fullText.includes('lemonade') || fullText.includes('pineapple') ||
+                 fullText.includes('lychee mint') || fullText.includes('peach mint') ||
+                 fullText.includes('passion fruit') || fullText.includes('mango') ||
+                 fullText.includes('strawberry') || fullText.includes('grape') ||
+                 (fullText.includes('mint') && (fullText.includes('lychee') || fullText.includes('peach')))) {
+          category = 'Lemonade/Soda';
+          console.log(`🍋 Categorized as Lemonade/Soda: ${item.id}`);
+        }
         // Other drinks - items that don't fit other categories but are clearly drinks
         else if (fullText.includes('tea') || fullText.includes('slush') || 
                  fullText.includes('tiramisu coco') || fullText.includes('full of mango') ||
@@ -390,6 +399,7 @@ IMPORTANT: Try not to use these past suggestions for better variety. Choose diff
     const drinkTypes = ['Milk Tea', 'Fruit Tea', 'Coffee', 'Lemonade/Soda'];
     const randomDrinkType = drinkTypes[Math.floor(Math.random() * drinkTypes.length)];
     const drinkTypeText = `DRINK PREFERENCE: Please include a ${randomDrinkType} in this combo.`;
+    console.log(`🥤 Selected Drink Type: ${randomDrinkType}`);
     
     // Appetizer/Soup randomizer
     const appetizerSoupOptions = ['Appetizer', 'Soup', 'Both'];
