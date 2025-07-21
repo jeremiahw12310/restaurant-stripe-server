@@ -301,25 +301,13 @@ app.post('/generate-combo', async (req, res) => {
       menuByCategory[item.category].push(item);
     });
     
-    // Function to shuffle array using Fisher-Yates algorithm
-    const shuffleArray = (array) => {
-      const shuffled = [...array];
-      for (let i = shuffled.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-      }
-      return shuffled;
-    };
-
-    // Create organized menu text by category with randomized item order (names and prices only)
+    // Create organized menu text by category with brackets
     const menuText = `
 Available menu items by category:
 
 ${Object.entries(menuByCategory).map(([category, items]) => {
   const categoryTitle = category.charAt(0).toUpperCase() + category.slice(1);
-  // Randomize items within each category using the session seed for consistency
-  const shuffledItems = shuffleArray(items);
-  const itemsList = shuffledItems.map(item => `- ${item.id}: $${item.price}`).join('\n');
+  const itemsList = items.map(item => `- ${item.id}: $${item.price} - ${item.description}`).join('\n');
   return `[${categoryTitle}]:\n${itemsList}`;
 }).join('\n\n')}
     `.trim();
@@ -374,6 +362,10 @@ ${Object.entries(menuByCategory).map(([category, items]) => {
       "USER_PERSONALIZATION: Adapt to the user's specific preferences and restrictions"
     ];
     
+    // Get current exploration strategy
+    const currentStrategy = getExplorationStrategy();
+    const varietyGuideline = varietyGuidelines[varietyFactors.sessionBased];
+    
     // Build previous recommendations text if available
     let previousRecommendationsText = '';
     if (previousRecommendations && Array.isArray(previousRecommendations) && previousRecommendations.length > 0) {
@@ -406,10 +398,6 @@ IMPORTANT: Try not to use these past suggestions for better variety. Choose diff
     } else {
       appetizerSoupText = `APPETIZER & SOUP PREFERENCE: Please include both an appetizer and a soup in this combo.`;
     }
-    
-    // Get current exploration strategy
-    const currentStrategy = getExplorationStrategy();
-    const varietyGuideline = varietyGuidelines[varietyFactors.sessionBased];
     
     // Enhanced AI prompt with better variety system
     const prompt = `
@@ -527,9 +515,7 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       
       res.json({
         success: true,
-        items: parsedResponse.items,
-        aiResponse: parsedResponse.aiResponse,
-        totalPrice: parsedResponse.totalPrice,
+        combo: parsedResponse,
         varietyInfo: {
           strategy: currentStrategy,
           guideline: varietyGuideline,
@@ -545,13 +531,15 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       // Fallback response
       res.json({
         success: true,
-        items: [
-          {"id": "Curry Chicken", "category": "Dumplings"},
-          {"id": "Edamame", "category": "Appetizers"},
-          {"id": "Bubble Milk Tea", "category": "Milk Tea"}
-        ],
-        aiResponse: `Hi ${userName}! I've created a classic combination for you with our popular Curry Chicken dumplings, refreshing Edamame to start, and a smooth Bubble Milk Tea to wash it all down. This combo gives you the perfect balance of savory dumplings, light appetizer, and a sweet drink.`,
-        totalPrice: 22.68,
+        combo: {
+          items: [
+            {"id": "Curry Chicken", "category": "Dumplings"},
+            {"id": "Edamame", "category": "Appetizers"},
+            {"id": "Bubble Milk Tea", "category": "Milk Tea"}
+          ],
+          aiResponse: `Hi ${userName}! I've created a classic combination for you with our popular Curry Chicken dumplings, refreshing Edamame to start, and a smooth Bubble Milk Tea to wash it all down. This combo gives you the perfect balance of savory dumplings, light appetizer, and a sweet drink.`,
+          totalPrice: 22.68
+        },
         varietyInfo: {
           strategy: currentStrategy,
           guideline: varietyGuideline,
@@ -1039,6 +1027,144 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       console.error('❌ Error generating Dumpling Hero post:', error);
       res.status(500).json({ 
         error: 'Failed to generate Dumpling Hero post',
+        details: error.message 
+      });
+    }
+  });
+
+  // Dumpling Hero Comment Generation endpoint
+  app.post('/generate-dumpling-hero-comment', async (req, res) => {
+    try {
+      console.log('🤖 Received Dumpling Hero comment generation request');
+      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      
+      const { prompt, replyingTo } = req.body;
+      
+      if (!process.env.OPENAI_API_KEY) {
+        return res.status(500).json({ 
+          error: 'OpenAI API key not configured',
+          message: 'Please configure the OPENAI_API_KEY environment variable'
+        });
+      }
+      
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      
+      // Build the system prompt for Dumpling Hero comments
+      const systemPrompt = `You are Dumpling Hero, the official mascot and social media personality for Dumpling House restaurant in Nashville, TN. You're now responding to comments and posts with your signature enthusiasm and dumpling love.
+
+PERSONALITY:
+- You are enthusiastic, funny, and slightly dramatic about dumplings
+- You use lots of emojis and exclamation marks
+- You speak in a friendly, casual tone that appeals to food lovers
+- You occasionally make puns and food-related jokes
+- You're passionate about dumplings and want to share that passion
+- You're genuinely excited about the food and want to share that excitement
+- You're supportive and encouraging to other users
+
+COMMENT STYLE:
+- Keep comments between 50-200 characters (including emojis)
+- Use 2-5 relevant emojis per comment
+- Make comments naturally engaging and supportive
+- Respond appropriately to the context of what you're replying to
+- Vary between different types of responses:
+  * Agreement and enthusiasm ("Yes! That's exactly right! 🥟✨")
+  * Food appreciation ("Those dumplings look amazing! 🤤")
+  * Encouragement ("You're going to love it! 💪")
+  * Humor ("Dumpling power! 🥟⚡")
+  * Support ("We've got your back! 🙌")
+  * Food facts ("Did you know? Dumplings are happiness in a wrapper! 🎁")
+
+RESTAURANT INFO:
+- Name: Dumpling House
+- Address: 2117 Belcourt Ave, Nashville, TN 37212
+- Phone: +1 (615) 891-4728
+- Hours: Sunday - Thursday 11:30 AM - 9:00 PM, Friday and Saturday 11:30 AM - 10:00 PM
+- Cuisine: Authentic Chinese dumplings and Asian cuisine
+
+COMMENT EXAMPLES:
+1. Agreement: "Absolutely! Those steamed dumplings are pure magic! ✨🥟"
+2. Encouragement: "You're going to love it! The flavors are incredible! 🤤"
+3. Humor: "Dumpling power activated! 🥟⚡ Ready to conquer hunger!"
+4. Support: "We're here for you! 🙌🥟 Dumpling House family!"
+5. Food Appreciation: "That looks delicious! 🤤 The perfect dumpling moment!"
+6. Enthusiasm: "Yes! That's the spirit! 🥟✨ Dumpling love all around!"
+
+RESPONSE FORMAT:
+Return a JSON object with:
+{
+  "commentText": "The generated comment text with emojis"
+}
+
+IMPORTANT: 
+- Make the comment feel like you're genuinely responding to the context
+- Keep it supportive and encouraging
+- Don't be overly promotional - focus on being helpful and enthusiastic
+- If replying to a specific comment, acknowledge what they said
+- Make it naturally engaging so people want to continue the conversation
+
+If a specific prompt is provided, use it as inspiration but maintain the Dumpling Hero personality.`;
+
+      // Build the user message
+      let userMessage;
+      if (prompt) {
+        userMessage = `Generate a Dumpling Hero comment based on this prompt: "${prompt}"`;
+        if (replyingTo) {
+          userMessage += ` You're replying to: "${replyingTo}"`;
+        }
+      } else {
+        let instruction = "Generate a random Dumpling Hero comment. Make it supportive and enthusiastic!";
+        if (replyingTo) {
+          instruction += ` You're replying to: "${replyingTo}"`;
+        }
+        userMessage = instruction;
+      }
+
+      console.log('🤖 Sending request to OpenAI for Dumpling Hero comment...');
+      
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ],
+        max_tokens: 300,
+        temperature: 0.8
+      });
+
+      console.log('✅ Received Dumpling Hero comment from OpenAI');
+      
+      const generatedContent = response.choices[0].message.content;
+      console.log('📝 Generated content:', generatedContent);
+      
+      // Try to parse the JSON response
+      let parsedResponse;
+      try {
+        // Extract JSON from the response (in case there's extra text)
+        const jsonMatch = generatedContent.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          parsedResponse = JSON.parse(jsonMatch[0]);
+        } else {
+          // If no JSON found, create a simple response
+          parsedResponse = {
+            commentText: generatedContent
+          };
+        }
+      } catch (parseError) {
+        console.log('⚠️ Could not parse JSON response, using raw text');
+        parsedResponse = {
+          commentText: generatedContent
+        };
+      }
+      
+      res.json({
+        success: true,
+        comment: parsedResponse
+      });
+      
+    } catch (error) {
+      console.error('❌ Error generating Dumpling Hero comment:', error);
+      res.status(500).json({ 
+        error: 'Failed to generate Dumpling Hero comment',
         details: error.message 
       });
     }
