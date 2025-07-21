@@ -10,13 +10,11 @@ services:
         value: production
       - key: OPENAI_API_KEY
         sync: false
-      - key: FIREBASE_SERVICE_ACCOUNT_KEY
-        sync: false
       - key: FIREBASE_AUTH_TYPE
         value: adc
       - key: GOOGLE_CLOUD_PROJECT
         value: dumplinghouseapp
-      - key: GOOGLE_APPLICATION_CREDENTIALS
-        value: /opt/render/project/src/service-account.json
+      - key: RENDER
+        value: true
     healthCheckPath: /
-    # Force redeploy - Enhanced Variety System Update - Sat Jul 19 23:59:00 CDT 2025 
+    # Firebase ADC Setup - No service account keys required 
