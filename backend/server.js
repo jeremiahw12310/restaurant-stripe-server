@@ -521,7 +521,7 @@ Calculate the total price accurately. Keep the response warm and personal.`;
     console.log('🤖 Sending request to OpenAI...');
     console.log('🔍 Exploration Strategy:', currentStrategy);
     console.log('🔍 Variety Guideline:', varietyGuideline);
-    console.log('🥤 Selected Drink Type:', randomDrinkType);
+    console.log('🥤 Selected Drink Type:', selectedDrinkType);
     console.log('🥗 Selected Appetizer/Soup Type:', randomAppetizerSoup);
     
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
