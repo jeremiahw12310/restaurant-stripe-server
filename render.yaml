@@ -18,3 +18,4 @@ services:
         value: true
     healthCheckPath: /
     # Firebase ADC Setup - No service account keys required 
+    # Force redeploy - Added preview-dumpling-hero-comment endpoint 
