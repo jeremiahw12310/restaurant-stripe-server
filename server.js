@@ -1102,13 +1102,16 @@ RESTAURANT INFO:
 - Cuisine: Authentic Chinese dumplings and Asian cuisine
 
 POST CONTEXT AWARENESS:
-You will receive detailed information about the post you're commenting on. Use this context to make your comments more relevant and engaging:
+You will receive detailed information about the post you're commenting on. You MUST use this context to make your comments specific and relevant:
 
 - If the post has images/videos: Reference what you see in the media
-- If the post mentions specific menu items: Show enthusiasm for those items
-- If the post has a poll: Engage with the poll question and options
+- If the post mentions specific menu items: Show enthusiasm for those specific items and mention them by name
+- If the post has a poll: Engage with the poll question and options specifically
 - If the post has hashtags: Use them naturally in your response
-- If the post is about a specific dish: Show knowledge and excitement about that dish
+- If the post is about a specific dish: Show knowledge and excitement about that specific dish
+- If the post has text content: Respond directly to what was said
+
+CRITICAL: You MUST reference specific details from the post context. Don't give generic responses - make it personal to the actual content provided.
 
 COMMENT EXAMPLES:
 1. Agreement: "Absolutely! Those steamed dumplings are pure magic! ✨🥟"
@@ -1184,7 +1187,34 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
           userMessage += ` You're replying to: "${replyingTo}"`;
         }
       } else {
-        let instruction = "Generate a Dumpling Hero comment that's relevant to the post context above. Make it supportive and enthusiastic!";
+        let instruction = "Generate a Dumpling Hero comment that DIRECTLY REFERENCES specific details from the post context above. ";
+        
+        // Add specific instructions based on what's available
+        if (postContext && Object.keys(postContext).length > 0) {
+          instruction += "You MUST reference: ";
+          
+          if (postContext.content) {
+            instruction += `- The post content: "${postContext.content}" `;
+          }
+          
+          if (postContext.attachedMenuItem) {
+            const item = postContext.attachedMenuItem;
+            instruction += `- The menu item: ${item.description} ($${item.price}) `;
+            if (item.isDumpling) instruction += "(this is a dumpling!) ";
+            if (item.isDrink) instruction += "(this is a drink!) ";
+          }
+          
+          if (postContext.poll) {
+            instruction += `- The poll question: "${postContext.poll.question}" `;
+          }
+          
+          if (postContext.imageURLs && postContext.imageURLs.length > 0) {
+            instruction += `- The ${postContext.imageURLs.length} image(s) in the post `;
+          }
+          
+          instruction += "Make your comment feel like you're genuinely responding to these specific details, not just giving a generic response!";
+        }
+        
         if (replyingTo) {
           instruction += ` You're replying to: "${replyingTo}"`;
         }
