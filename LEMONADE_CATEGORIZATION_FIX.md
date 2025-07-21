@@ -92,12 +92,27 @@ The system now uses multiple criteria to identify lemonade items:
 2. **Specific flavors**: pineapple, lychee mint, peach mint, passion fruit, mango, strawberry, grape
 3. **Mint combinations**: lychee mint, peach mint
 
-### **Drink Type Randomization**
-The drink type randomizer includes all 4 categories:
+### **Smart Drink Type Randomization**
+The drink type randomizer now intelligently considers user preferences:
+
+**Available Categories:**
 - Milk Tea
 - Fruit Tea  
 - Coffee
 - **Lemonade/Soda** ✅ (now properly supported)
+
+**Preference Detection:**
+- **Lemonade**: Detects "lemonade", "lemon", "citrus" keywords
+- **Milk Tea**: Detects "milk tea", "bubble tea", "tea" keywords  
+- **Fruit Tea**: Detects "fruit", "juice" keywords
+- **Coffee**: Detects "coffee", "latte", "caffeine" keywords
+- **Random**: Falls back to random selection when no preferences detected
+
+**Override Behavior:**
+- ✅ **User preferences override random selection**
+- ✅ **Specific drink requests are honored**
+- ✅ **Random selection maintains variety when no preferences**
+- ✅ **Logs reason for selection choice**
 
 ## 📊 **Testing Results**
 

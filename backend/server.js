@@ -401,11 +401,37 @@ ${recentCombos.map((combo, index) => {
 IMPORTANT: Try not to use these past suggestions for better variety. Choose different items and combinations.`;
     }
     
-    // Drink type randomizer
+    // Smart drink type randomizer that considers user preferences
     const drinkTypes = ['Milk Tea', 'Fruit Tea', 'Coffee', 'Lemonade/Soda'];
-    const randomDrinkType = drinkTypes[Math.floor(Math.random() * drinkTypes.length)];
-    const drinkTypeText = `DRINK PREFERENCE: Please include a ${randomDrinkType} in this combo.`;
-    console.log(`🥤 Selected Drink Type: ${randomDrinkType}`);
+    
+    // Check user taste preferences for drink hints
+    const tastePreferences = dietaryPreferences.tastePreferences || '';
+    const lowerTastePrefs = tastePreferences.toLowerCase();
+    
+    let selectedDrinkType = '';
+    let preferenceReason = '';
+    
+    // Check for specific drink preferences in taste preferences
+    if (lowerTastePrefs.includes('lemonade') || lowerTastePrefs.includes('lemon') || lowerTastePrefs.includes('citrus')) {
+      selectedDrinkType = 'Lemonade/Soda';
+      preferenceReason = 'User specifically requested lemonade';
+    } else if (lowerTastePrefs.includes('milk tea') || lowerTastePrefs.includes('bubble tea') || lowerTastePrefs.includes('tea')) {
+      selectedDrinkType = 'Milk Tea';
+      preferenceReason = 'User specifically requested milk tea';
+    } else if (lowerTastePrefs.includes('fruit') || lowerTastePrefs.includes('juice')) {
+      selectedDrinkType = 'Fruit Tea';
+      preferenceReason = 'User specifically requested fruit drinks';
+    } else if (lowerTastePrefs.includes('coffee') || lowerTastePrefs.includes('latte') || lowerTastePrefs.includes('caffeine')) {
+      selectedDrinkType = 'Coffee';
+      preferenceReason = 'User specifically requested coffee';
+    } else {
+      // No specific preference, use random selection
+      selectedDrinkType = drinkTypes[Math.floor(Math.random() * drinkTypes.length)];
+      preferenceReason = 'Random selection for variety';
+    }
+    
+    const drinkTypeText = `DRINK PREFERENCE: Please include a ${selectedDrinkType} in this combo.`;
+    console.log(`🥤 Selected Drink Type: ${selectedDrinkType} - ${preferenceReason}`);
     
     // Appetizer/Soup randomizer
     const appetizerSoupOptions = ['Appetizer', 'Soup', 'Both'];
