@@ -287,24 +287,7 @@ app.post('/generate-combo', async (req, res) => {
     console.log(`🔍 Menu items:`, allMenuItems.map(item => `${item.id} (${item.category})`));
     console.log(`🔍 Dietary preferences:`, dietaryPreferences);
     
-    // Debug: Check if lemonade items are present
-    const lemonadeItems = allMenuItems.filter(item => 
-      item.category === 'Lemonade/Soda' || 
-      item.id.toLowerCase().includes('lemonade') ||
-      item.id.toLowerCase().includes('pineapple') ||
-      item.id.toLowerCase().includes('lychee mint') ||
-      item.id.toLowerCase().includes('peach mint') ||
-      item.id.toLowerCase().includes('passion fruit') ||
-      item.id.toLowerCase().includes('mango') ||
-      item.id.toLowerCase().includes('strawberry') ||
-      item.id.toLowerCase().includes('grape')
-    );
-    console.log(`🍋 Lemonade items found: ${lemonadeItems.length}`);
-    if (lemonadeItems.length > 0) {
-      console.log(`🍋 Lemonade items:`, lemonadeItems.map(item => `${item.id} (${item.category})`));
-    } else {
-      console.log(`❌ No lemonade items found in menu data`);
-    }
+
     
     // Create dietary restrictions string
     const restrictions = [];
@@ -334,11 +317,7 @@ app.post('/generate-combo', async (req, res) => {
       menuByCategory[item.category].push(item);
     });
     
-    // Debug: Log all categories present
-    console.log(`📊 Categories found:`, Object.keys(menuByCategory));
-    Object.entries(menuByCategory).forEach(([category, items]) => {
-      console.log(`📊 ${category}: ${items.length} items`);
-    });
+
     
     // Create organized menu text by category with brackets
     const menuText = `
@@ -351,9 +330,7 @@ ${Object.entries(menuByCategory).map(([category, items]) => {
 }).join('\n\n')}
     `.trim();
     
-    // Debug: Log the menu text being sent to ChatGPT
-    console.log(`📋 Menu text being sent to ChatGPT:`);
-    console.log(menuText);
+
     
     // Enhanced variety system with user-specific tracking
     const currentTime = new Date().toISOString();
