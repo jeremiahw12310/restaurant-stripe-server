@@ -290,6 +290,9 @@ app.post('/generate-combo', async (req, res) => {
     const spicePreference = dietaryPreferences.likesSpicyFood ? 
       'The customer enjoys spicy food. ' : '';
     
+    const tastePreference = dietaryPreferences.tastePreferences && dietaryPreferences.tastePreferences.trim() !== '' ? 
+      `Taste preferences: ${dietaryPreferences.tastePreferences}. ` : '';
+    
     // Create menu items text for AI - organize by Firebase categories
     const menuByCategory = {};
     
@@ -404,7 +407,7 @@ IMPORTANT: Try not to use these past suggestions for better variety. Choose diff
 You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant.
 
 Customer: ${userName}
-${restrictionsText}${spicePreference}
+${restrictionsText}${spicePreference}${tastePreference}
 
 ${menuText}
 
@@ -665,6 +668,11 @@ if (!process.env.OPENAI_API_KEY) {
         
         if (preferences.length > 0) {
           userPreferencesContext = `\n\nUSER PREFERENCES: This customer ${preferences.join(', ')}. When making recommendations, prioritize dishes that align with these preferences and avoid suggesting items that conflict with their dietary restrictions.`;
+        }
+        
+        // Add taste preferences if provided
+        if (userPreferences.tastePreferences && userPreferences.tastePreferences.trim() !== '') {
+          userPreferencesContext += `\n\nTASTE PREFERENCES: ${userPreferences.tastePreferences}. Consider these preferences when making personalized recommendations.`;
         }
       }
       
