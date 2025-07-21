@@ -387,7 +387,7 @@ IMPORTANT: Try not to use these past suggestions for better variety. Choose diff
     }
     
     // Drink type randomizer
-    const drinkTypes = ['Milk Tea', 'Fruit Tea', 'Coffee'];
+    const drinkTypes = ['Milk Tea', 'Fruit Tea', 'Coffee', 'Lemonade/Soda'];
     const randomDrinkType = drinkTypes[Math.floor(Math.random() * drinkTypes.length)];
     const drinkTypeText = `DRINK PREFERENCE: Please include a ${randomDrinkType} in this combo.`;
     

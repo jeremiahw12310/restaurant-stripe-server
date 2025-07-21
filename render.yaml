@@ -1,10 +1,10 @@
 services:
   - type: web
-    name: restaurant-stripe-server-1
+    name: restaurant-stripe-server-v2
     env: node
     buildCommand: npm install
     startCommand: npm start  
-    rootDir: .
+    rootDir: backend-deploy
     envVars:
       - key: NODE_ENV
         value: production
