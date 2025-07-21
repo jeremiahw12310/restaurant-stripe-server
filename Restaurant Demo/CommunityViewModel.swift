@@ -3720,9 +3720,9 @@ class CommunityViewModel: ObservableObject {
         generateDumplingHeroCommentPreview(prompt: prompt, postContext: postContext, completion: completion)
     }
     
-    /// Generates a preview of a Dumpling Hero comment using the preview endpoint
+    /// Generates a preview of a Dumpling Hero comment using the simple endpoint
     private func generateDumplingHeroCommentPreview(prompt: String?, postContext: CommunityPost?, completion: @escaping (Result<String, Error>) -> Void) {
-        guard let url = URL(string: "\(Config.backendURL)/preview-dumpling-hero-comment") else {
+        guard let url = URL(string: "\(Config.backendURL)/generate-dumpling-hero-comment-simple") else {
             completion(.failure(NSError(domain: "Invalid URL", code: -1, userInfo: nil)))
             return
         }
@@ -3812,15 +3812,21 @@ class CommunityViewModel: ObservableObject {
                     let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
                     print("📥 Parsed preview JSON response: \(json ?? [:])")
                     
-                    // Handle preview endpoint format (success + comment object)
+                    // Handle simple endpoint format (direct commentText)
                     if let json = json,
-                       let success = json["success"] as? Bool, success,
-                       let commentData = json["comment"] as? [String: Any],
-                       let commentText = commentData["commentText"] as? String {
-                        print("✅ Successfully parsed preview comment: \(commentText)")
+                       let commentText = json["commentText"] as? String {
+                        print("✅ Successfully parsed comment: \(commentText)")
+                        completion(.success(commentText))
+                    }
+                    // Handle legacy format (success + comment object) as fallback
+                    else if let json = json,
+                            let success = json["success"] as? Bool, success,
+                            let commentData = json["comment"] as? [String: Any],
+                            let commentText = commentData["commentText"] as? String {
+                        print("✅ Successfully parsed legacy comment: \(commentText)")
                         completion(.success(commentText))
                     } else {
-                        print("❌ Invalid preview response format: \(json ?? [:])")
+                        print("❌ Invalid response format: \(json ?? [:])")
                         completion(.failure(NSError(domain: "Invalid response format", code: -1, userInfo: nil)))
                     }
                 } catch {
