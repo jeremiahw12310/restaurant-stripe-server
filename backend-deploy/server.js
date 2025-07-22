@@ -33,6 +33,12 @@ try {
   console.log('🔥 Firebase configured: No');
 }
 
+// Add startup logging
+console.log('🚀 Starting backend server...');
+console.log('📁 Working directory:', process.cwd());
+console.log('🔧 Node environment:', process.env.NODE_ENV || 'development');
+console.log('🌐 Port:', process.env.PORT || 3001);
+
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 app.use(cors());
@@ -2192,6 +2198,9 @@ app.listen(port, '0.0.0.0', () => {
   console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔑 OpenAI API Key configured: ${process.env.OPENAI_API_KEY ? 'Yes' : 'No'}`);
   console.log(`🔥 Firebase configured: ${admin.apps.length ? 'Yes' : 'No'}`);
+}).on('error', (error) => {
+  console.error('❌ Server startup error:', error);
+  process.exit(1);
 });
 // Force redeploy - Sat Jul 19 14:12:02 CDT 2025
 // Force complete redeploy - Sat Jul 19 14:15:27 CDT 2025
