@@ -8,20 +8,13 @@ const { OpenAI } = require('openai');
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
 
-// Firebase initialization using Application Default Credentials (ADC)
+// Firebase initialization DISABLED for production deployment
+// Using in-memory storage only to avoid credential issues
 try {
-  if (!admin.apps.length) {
-    // Use Application Default Credentials for Firebase
-    admin.initializeApp({
-      projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp',
-      credential: admin.credential.applicationDefault()
-    });
-    console.log('✅ Firebase Admin initialized with Application Default Credentials');
-  }
+  console.log('🚫 Firebase initialization disabled for production - using in-memory storage only');
+  console.log('💾 All data will be stored in server memory');
 } catch (error) {
-  console.error('❌ Error initializing Firebase Admin:', error);
-  console.warn('⚠️ Firebase features will not work');
-  console.warn('💡 Make sure you have run: gcloud auth application-default login');
+  console.error('❌ Error in startup:', error);
 }
 
 // Add startup logging
@@ -65,8 +58,9 @@ app.get('/', (req, res) => {
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
     server: 'BACKEND server.js with gpt-4o-mini',
-    firebaseConfigured: !!admin.apps.length,
-    openaiConfigured: !!process.env.OPENAI_API_KEY
+    firebaseConfigured: false, // Disabled for production
+    openaiConfigured: !!process.env.OPENAI_API_KEY,
+    storageMode: 'in-memory'
   });
 });
 
