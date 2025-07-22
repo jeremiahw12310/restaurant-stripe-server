@@ -5,45 +5,38 @@ const cors = require('cors');
 const fs = require('fs');
 const { OpenAI } = require('openai');
 
-// Initialize Firebase Admin
+// Initialize Firebase Admin (conditional)
 const admin = require('firebase-admin');
+let firebaseInitialized = false;
 
-// Check authentication method
-if (process.env.FIREBASE_AUTH_TYPE === 'adc') {
-  // Use Application Default Credentials
-  try {
+try {
+  // Only initialize Firebase if we have proper credentials OR we're not on Render
+  if (process.env.FIREBASE_AUTH_TYPE === 'adc' && !process.env.RENDER) {
+    // Local ADC setup
     admin.initializeApp({
       projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp'
     });
-    console.log('✅ Firebase Admin initialized with Application Default Credentials');
-  } catch (error) {
-    console.error('❌ Error initializing Firebase Admin with ADC:', error);
-  }
-} else if (process.env.FIREBASE_AUTH_TYPE === 'service-account' && process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-  // Use service account key
-  try {
+    console.log(`✅ Firebase Admin initialized with Application Default Credentials`);
+    firebaseInitialized = true;
+  } else if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY && !process.env.RENDER) {
+    // Service account key setup (not on Render)
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
     admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
+      credential: admin.credential.cert(serviceAccount),
+      projectId: serviceAccount.project_id
     });
-    console.log('✅ Firebase Admin initialized with service account key');
-  } catch (error) {
-    console.error('❌ Error initializing Firebase Admin with service account:', error);
+    console.log(`✅ Firebase Admin initialized with service account`);
+    firebaseInitialized = true;
+  } else {
+    console.log(`🔄 Skipping Firebase initialization (using in-memory storage)`);
+    firebaseInitialized = false;
   }
-} else if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-  // Fallback: Use service account key if available
-  try {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-    });
-    console.log('✅ Firebase Admin initialized with service account key (fallback)');
-  } catch (error) {
-    console.error('❌ Error initializing Firebase Admin with service account:', error);
-  }
-} else {
-  console.warn('⚠️ No Firebase authentication method found - Firebase features will not work');
+} catch (error) {
+  console.log(`⚠️ Firebase initialization failed, using in-memory storage:`, error.message);
+  firebaseInitialized = false;
 }
+
+// Old Firebase initialization removed - using conditional initialization above
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
@@ -1794,16 +1787,16 @@ IMPORTANT:
 const DISABLE_FIREBASE_FOR_TOPPINGS = true;
 
 function useFirebase() {
-  return firebaseWorking;
+  return firebaseInitialized;
 }
 
 function useFirebaseForToppings() {
-  // Always use in-memory storage on Render until Firebase ADC is properly configured
+  // Never use Firebase on Render until proper ADC setup
   if (process.env.RENDER) {
     console.log('🔄 Using in-memory storage on Render environment');
     return false;
   }
-  return !DISABLE_FIREBASE_FOR_TOPPINGS && firebaseWorking;
+  return firebaseInitialized;
 }
 
 // Get all toppings for a category
