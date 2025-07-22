@@ -12,6 +12,10 @@ services:
         sync: false
       - key: RENDER
         value: true
+      - key: FIREBASE_AUTH_TYPE
+        value: adc
+      - key: GOOGLE_CLOUD_PROJECT
+        value: dumplinghouseapp
     healthCheckPath: /
     # Firebase ADC Setup - No service account keys required 
     # Force redeploy - Added preview-dumpling-hero-comment endpoint 

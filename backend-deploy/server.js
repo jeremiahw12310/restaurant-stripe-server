@@ -8,16 +8,16 @@ const { OpenAI } = require('openai');
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
 
-// Firebase initialization that works on Render without any credentials
+// Firebase initialization with Application Default Credentials (ADC)
 try {
   if (!admin.apps.length) {
-    // Use a completely minimal initialization that works on Render
-    // This bypasses credential requirements entirely
+    // Use Application Default Credentials (ADC) for Render deployment
+    // This works with Render's built-in service account
     admin.initializeApp({
       projectId: 'dumplinghouseapp'
-      // No credential specified - will use default service account
+      // ADC will automatically use Render's service account
     });
-    console.log('✅ Firebase Admin initialized with minimal config');
+    console.log('✅ Firebase Admin initialized with Application Default Credentials');
   }
 } catch (error) {
   console.error('❌ Error initializing Firebase Admin:', error);
