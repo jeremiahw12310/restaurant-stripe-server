@@ -2019,6 +2019,7 @@ IMPORTANT:
         });
       }
       
+      console.log(`🔍 Looking for category document: ${categoryId}`);
       const categoryRef = db.collection('menu').doc(categoryId);
       const categoryDoc = await categoryRef.get();
       
@@ -2034,6 +2035,7 @@ IMPORTANT:
         console.log(`✅ Created category document and ${hasToppings ? 'enabled' : 'disabled'} toppings for category ${categoryId}`);
       } else {
         // Update existing category
+        console.log(`📝 Updating existing category document: ${categoryId}`);
         await categoryRef.update({
           hasToppings: hasToppings
         });
