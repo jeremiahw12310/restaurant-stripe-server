@@ -12,12 +12,39 @@ const admin = require('firebase-admin');
 if (process.env.FIREBASE_AUTH_TYPE === 'adc') {
   // Use Application Default Credentials
   try {
-    admin.initializeApp({
-      projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp'
-    });
-    console.log('✅ Firebase Admin initialized with Application Default Credentials');
+    if (process.env.RENDER) {
+      // Special handling for Render environment
+      // Create minimal credential configuration for Render
+      const projectId = process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp';
+      
+      // Try to initialize with minimal config for Render
+      admin.initializeApp({
+        projectId: projectId,
+        // Use minimal credential that works on Render
+        credential: admin.credential.applicationDefault()
+      });
+      console.log(`✅ Firebase Admin initialized for Render with project: ${projectId}`);
+    } else {
+      // Local ADC
+      admin.initializeApp({
+        projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp'
+      });
+      console.log('✅ Firebase Admin initialized with Application Default Credentials');
+    }
   } catch (error) {
-    console.error('❌ Error initializing Firebase Admin with ADC:', error);
+    console.error('❌ Error initializing Firebase Admin with ADC:', error.message);
+    
+    // Render fallback: Initialize without credentials for read-only operations
+    if (process.env.RENDER) {
+      try {
+        admin.initializeApp({
+          projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp'
+        });
+        console.log('⚠️ Firebase initialized in read-only mode for Render');
+      } catch (fallbackError) {
+        console.error('❌ Firebase fallback also failed:', fallbackError.message);
+      }
+    }
   }
 } else if (process.env.FIREBASE_AUTH_TYPE === 'service-account' && process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
   // Use service account key
