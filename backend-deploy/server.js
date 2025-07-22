@@ -2022,14 +2022,20 @@ IMPORTANT:
       const categoryDoc = await categoryRef.get();
       
       if (!categoryDoc.exists) {
-        return res.status(404).json({ 
-          error: 'Category not found' 
+        // Create the category document if it doesn't exist
+        console.log(`📝 Creating new category document for: ${categoryId}`);
+        await categoryRef.set({
+          id: categoryId,
+          hasToppings: hasToppings,
+          toppings: [],
+          createdAt: new Date()
+        });
+      } else {
+        // Update existing category
+        await categoryRef.update({
+          hasToppings: hasToppings
         });
       }
-      
-      await categoryRef.update({
-        hasToppings: hasToppings
-      });
       
       console.log(`✅ ${hasToppings ? 'Enabled' : 'Disabled'} toppings for category ${categoryId}`);
       
