@@ -8,41 +8,18 @@ const { OpenAI } = require('openai');
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
 
-// Check authentication method
-if (process.env.FIREBASE_AUTH_TYPE === 'adc') {
-  // Use Application Default Credentials
-  try {
+// Simplified Firebase initialization for production
+try {
+  // Try to initialize with default credentials first
+  if (!admin.apps.length) {
     admin.initializeApp({
-      projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp'
+      projectId: 'dumplinghouseapp'
     });
-    console.log('✅ Firebase Admin initialized with Application Default Credentials');
-  } catch (error) {
-    console.error('❌ Error initializing Firebase Admin with ADC:', error);
+    console.log('✅ Firebase Admin initialized with default credentials');
   }
-} else if (process.env.FIREBASE_AUTH_TYPE === 'service-account' && process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-  // Use service account key
-  try {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-    });
-    console.log('✅ Firebase Admin initialized with service account key');
-  } catch (error) {
-    console.error('❌ Error initializing Firebase Admin with service account:', error);
-  }
-} else if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-  // Fallback: Use service account key if available
-  try {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-    });
-    console.log('✅ Firebase Admin initialized with service account key (fallback)');
-  } catch (error) {
-    console.error('❌ Error initializing Firebase Admin with service account:', error);
-  }
-} else {
-  console.warn('⚠️ No Firebase authentication method found - Firebase features will not work');
+} catch (error) {
+  console.error('❌ Error initializing Firebase Admin:', error);
+  console.warn('⚠️ Firebase features will not work');
 }
 
 const app = express();
