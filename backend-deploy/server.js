@@ -57,10 +57,20 @@ app.get('/', (req, res) => {
     status: 'Server is running!', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    server: 'BACKEND server.js with gpt-4o-mini',
+    server: 'BACKEND server.js with gpt-4o-mini - UPDATED VERSION',
     firebaseConfigured: false, // Disabled for production
     openaiConfigured: !!process.env.OPENAI_API_KEY,
     storageMode: 'in-memory'
+  });
+});
+
+// Simple test endpoint that completely bypasses Firebase
+app.put('/api/test-toppings-toggle', (req, res) => {
+  console.log('🧪 Testing toppings toggle without Firebase');
+  res.json({
+    success: true,
+    message: 'Test endpoint working - Firebase bypassed',
+    timestamp: new Date().toISOString()
   });
 });
 
