@@ -2173,26 +2173,32 @@ IMPORTANT:
         });
       }
       
-      if (firebaseAvailable) {
-        // Use Firebase
-        const db = admin.firestore();
-        const categoryRef = db.collection('menu').doc(categoryId);
-        const categoryDoc = await categoryRef.get();
-        
-        if (!categoryDoc.exists) {
-          console.log(`📝 Creating new category document for: ${categoryId}`);
-          await categoryRef.set({
-            id: categoryId,
-            hasToppings: hasToppings,
-            createdAt: new Date()
-          });
+      // Try Firebase first, fallback to memory if it fails
+      try {
+        if (admin.apps.length) {
+          const db = admin.firestore();
+          const categoryRef = db.collection('menu').doc(categoryId);
+          const categoryDoc = await categoryRef.get();
+          
+          if (!categoryDoc.exists) {
+            console.log(`📝 Creating new category document for: ${categoryId}`);
+            await categoryRef.set({
+              id: categoryId,
+              hasToppings: hasToppings,
+              createdAt: new Date()
+            });
+          } else {
+            await categoryRef.update({
+              hasToppings: hasToppings
+            });
+          }
+          console.log(`✅ Used Firebase for category ${categoryId}`);
         } else {
-          await categoryRef.update({
-            hasToppings: hasToppings
-          });
+          throw new Error('Firebase not initialized');
         }
-      } else {
-        // Use in-memory fallback
+      } catch (firebaseError) {
+        // Fallback to in-memory storage
+        console.log(`💾 Firebase failed, using in-memory fallback: ${firebaseError.message}`);
         if (!memoryStorage.categories[categoryId]) {
           memoryStorage.categories[categoryId] = { hasToppings: false, toppings: [] };
         }
