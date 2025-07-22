@@ -8,21 +8,20 @@ const { OpenAI } = require('openai');
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
 
-// Firebase initialization - simplified for Render deployment
+// Firebase initialization using Application Default Credentials (ADC)
 try {
   if (!admin.apps.length) {
-    // Try to initialize Firebase with minimal configuration
-    // This should work on Render without requiring specific credentials
-    admin.initializeApp();
-    console.log('✅ Firebase Admin initialized with default configuration');
-    console.log('🔧 Environment:', process.env.NODE_ENV || 'development');
-    console.log('🔥 Firebase configured: Yes');
+    // Use Application Default Credentials for Firebase
+    admin.initializeApp({
+      projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp',
+      credential: admin.credential.applicationDefault()
+    });
+    console.log('✅ Firebase Admin initialized with Application Default Credentials');
   }
 } catch (error) {
   console.error('❌ Error initializing Firebase Admin:', error);
   console.warn('⚠️ Firebase features will not work');
-  console.log('🔧 Environment:', process.env.NODE_ENV || 'development');
-  console.log('🔥 Firebase configured: No');
+  console.warn('💡 Make sure you have run: gcloud auth application-default login');
 }
 
 // Add startup logging
@@ -41,7 +40,30 @@ const comboInsights = []; // Track combo patterns for insights, not restrictions
 const MAX_INSIGHTS = 100;
 const userComboPreferences = new Map(); // Track user preferences for personalization
 
-// Simple in-memory storage for toppings (works without Firebase authentication)
+// Fallback in-memory storage for when Firebase is not available
+let firebaseAvailable = false;
+const memoryStorage = {
+  categories: {
+    'Dumplings': { hasToppings: false, toppings: [] },
+    'Milk tea': { hasToppings: false, toppings: [] },
+    'Appetizers': { hasToppings: false, toppings: [] },
+    'Soups': { hasToppings: false, toppings: [] },
+    'Desserts': { hasToppings: false, toppings: [] }
+  }
+};
+
+// Test Firebase availability
+setTimeout(async () => {
+  try {
+    const db = admin.firestore();
+    await db.collection('test').limit(1).get();
+    firebaseAvailable = true;
+    console.log('✅ Firebase connection test successful');
+  } catch (error) {
+    firebaseAvailable = false;
+    console.log('⚠️ Firebase not available, using in-memory fallback');
+  }
+}, 2000);
 
 
 // Health check endpoint
@@ -1781,28 +1803,12 @@ IMPORTANT:
       console.log('➕ Adding topping to category:', req.params.categoryId);
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
       
-      if (!admin.apps.length) {
-        return res.status(500).json({ 
-          error: 'Firebase not initialized' 
-        });
-      }
-      
-      const db = admin.firestore();
       const categoryId = req.params.categoryId;
       const { name, price, imageURL } = req.body;
       
       if (!name || price === undefined) {
         return res.status(400).json({ 
           error: 'Missing required fields: name, price' 
-        });
-      }
-      
-      const categoryRef = db.collection('menu').doc(categoryId);
-      const categoryDoc = await categoryRef.get();
-      
-      if (!categoryDoc.exists) {
-        return res.status(404).json({ 
-          error: 'Category not found' 
         });
       }
       
@@ -1818,13 +1824,34 @@ IMPORTANT:
         createdAt: new Date()
       };
       
-      // Add the new topping to the toppings subcollection
-      await categoryRef.collection('toppings').doc(toppingId).set(newTopping);
-      
-      // Update category to indicate it has toppings
-      await categoryRef.update({
-        hasToppings: true
-      });
+      if (firebaseAvailable) {
+        // Use Firebase
+        const db = admin.firestore();
+        const categoryRef = db.collection('menu').doc(categoryId);
+        const categoryDoc = await categoryRef.get();
+        
+        if (!categoryDoc.exists) {
+          return res.status(404).json({ 
+            error: 'Category not found' 
+          });
+        }
+        
+        // Add the new topping to the toppings subcollection
+        await categoryRef.collection('toppings').doc(toppingId).set(newTopping);
+        
+        // Update category to indicate it has toppings
+        await categoryRef.update({
+          hasToppings: true
+        });
+      } else {
+        // Use in-memory fallback
+        if (!memoryStorage.categories[categoryId]) {
+          memoryStorage.categories[categoryId] = { hasToppings: false, toppings: [] };
+        }
+        memoryStorage.categories[categoryId].toppings.push(newTopping);
+        memoryStorage.categories[categoryId].hasToppings = true;
+        console.log(`💾 Added topping to in-memory storage for category ${categoryId}`);
+      }
       
       console.log(`✅ Added topping "${name}" to category ${categoryId}`);
       
@@ -1969,31 +1996,33 @@ IMPORTANT:
     try {
       console.log('🔍 Fetching toppings for category:', req.params.categoryId);
       
-      if (!admin.apps.length) {
-        return res.status(500).json({ 
-          error: 'Firebase not initialized' 
-        });
-      }
-      
-      const db = admin.firestore();
       const categoryId = req.params.categoryId;
+      let toppings = [];
       
-      const categoryRef = db.collection('menu').doc(categoryId);
-      const categoryDoc = await categoryRef.get();
-      
-      if (!categoryDoc.exists) {
-        return res.status(404).json({ 
-          error: 'Category not found' 
+      if (firebaseAvailable) {
+        // Use Firebase
+        const db = admin.firestore();
+        const categoryRef = db.collection('menu').doc(categoryId);
+        const categoryDoc = await categoryRef.get();
+        
+        if (!categoryDoc.exists) {
+          return res.status(404).json({ 
+            error: 'Category not found' 
+          });
+        }
+        
+        // Get toppings from the toppings subcollection
+        const toppingsSnapshot = await categoryRef.collection('toppings').get();
+        toppingsSnapshot.forEach(doc => {
+          toppings.push(doc.data());
         });
+      } else {
+        // Use in-memory fallback
+        if (memoryStorage.categories[categoryId]) {
+          toppings = memoryStorage.categories[categoryId].toppings || [];
+        }
+        console.log(`💾 Using in-memory storage for category ${categoryId}`);
       }
-      
-      // Get toppings from the toppings subcollection
-      const toppingsSnapshot = await categoryRef.collection('toppings').get();
-      const toppings = [];
-      
-      toppingsSnapshot.forEach(doc => {
-        toppings.push(doc.data());
-      });
       
       console.log(`✅ Fetched ${toppings.length} toppings for category ${categoryId}`);
       
@@ -2128,13 +2157,6 @@ IMPORTANT:
       console.log('🔄 Toggling toppings for category:', req.params.categoryId);
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
       
-      if (!admin.apps.length) {
-        return res.status(500).json({ 
-          error: 'Firebase not initialized' 
-        });
-      }
-      
-      const db = admin.firestore();
       const categoryId = req.params.categoryId;
       const { hasToppings } = req.body;
       
@@ -2144,22 +2166,31 @@ IMPORTANT:
         });
       }
       
-      const categoryRef = db.collection('menu').doc(categoryId);
-      const categoryDoc = await categoryRef.get();
-      
-      if (!categoryDoc.exists) {
-        // Create the category document if it doesn't exist
-        console.log(`📝 Creating new category document for: ${categoryId}`);
-        await categoryRef.set({
-          id: categoryId,
-          hasToppings: hasToppings,
-          createdAt: new Date()
-        });
+      if (firebaseAvailable) {
+        // Use Firebase
+        const db = admin.firestore();
+        const categoryRef = db.collection('menu').doc(categoryId);
+        const categoryDoc = await categoryRef.get();
+        
+        if (!categoryDoc.exists) {
+          console.log(`📝 Creating new category document for: ${categoryId}`);
+          await categoryRef.set({
+            id: categoryId,
+            hasToppings: hasToppings,
+            createdAt: new Date()
+          });
+        } else {
+          await categoryRef.update({
+            hasToppings: hasToppings
+          });
+        }
       } else {
-        // Update existing category
-        await categoryRef.update({
-          hasToppings: hasToppings
-        });
+        // Use in-memory fallback
+        if (!memoryStorage.categories[categoryId]) {
+          memoryStorage.categories[categoryId] = { hasToppings: false, toppings: [] };
+        }
+        memoryStorage.categories[categoryId].hasToppings = hasToppings;
+        console.log(`💾 Updated in-memory storage for category ${categoryId}`);
       }
       
       console.log(`✅ ${hasToppings ? 'Enabled' : 'Disabled'} toppings for category ${categoryId}`);
