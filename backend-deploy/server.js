@@ -1823,30 +1823,32 @@ app.get('/toppings/:categoryId', async (req, res) => {
     const { categoryId } = req.params;
     console.log(`🔍 Fetching toppings for category: ${categoryId}`);
     
-    if (!admin.apps.length) {
-      return res.status(500).json({ 
-        error: 'Firebase not initialized',
-        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
+    let toppings = [];
+    
+    if (useFirebase()) {
+      // Use Firebase
+      const db = admin.firestore();
+      const toppingsSnapshot = await db.collection('menu').doc(categoryId).collection('toppings').get();
+      
+      toppingsSnapshot.forEach(doc => {
+        toppings.push({
+          id: doc.id,
+          ...doc.data()
+        });
       });
+      console.log(`✅ Found ${toppings.length} toppings in Firebase for category ${categoryId}`);
+    } else {
+      // Use in-memory storage
+      toppings = inMemoryStorage.toppings[categoryId] || [];
+      console.log(`✅ Found ${toppings.length} toppings in memory for category ${categoryId}`);
     }
     
-    const db = admin.firestore();
-    const toppingsSnapshot = await db.collection('menu').doc(categoryId).collection('toppings').get();
-    
-    const toppings = [];
-    toppingsSnapshot.forEach(doc => {
-      toppings.push({
-        id: doc.id,
-        ...doc.data()
-      });
-    });
-    
-    console.log(`✅ Found ${toppings.length} toppings for category ${categoryId}`);
     res.json({
       success: true,
       categoryId,
       toppings,
-      count: toppings.length
+      count: toppings.length,
+      storage: useFirebase() ? 'firebase' : 'memory'
     });
     
   } catch (error) {
@@ -1911,34 +1913,49 @@ app.patch('/category/:categoryId/toggle-toppings', async (req, res) => {
     
     console.log(`🔄 Toggling toppings for category ${categoryId}: enabled=${enabled}, type=${toppingsType}`);
     
-    if (!admin.apps.length) {
-      return res.status(500).json({ 
-        error: 'Firebase not initialized',
-        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
-      });
+    if (useFirebase()) {
+      // Use Firebase
+      const db = admin.firestore();
+      const categoryRef = db.collection('menu').doc(categoryId);
+      
+      const updateData = {
+        toppingsEnabled: enabled,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      };
+      
+      if (toppingsType) {
+        updateData.toppingsType = toppingsType;
+      }
+      
+      await categoryRef.update(updateData);
+      console.log(`✅ Updated toppings settings in Firebase for category ${categoryId}`);
+    } else {
+      // Use in-memory storage as fallback
+      if (!inMemoryStorage.categories[categoryId]) {
+        inMemoryStorage.categories[categoryId] = {
+          id: categoryId,
+          displayName: categoryId.replace(/-/g, ' '),
+          toppingsEnabled: false,
+          toppingsType: 'toppings',
+          items: []
+        };
+      }
+      
+      inMemoryStorage.categories[categoryId].toppingsEnabled = enabled;
+      if (toppingsType) {
+        inMemoryStorage.categories[categoryId].toppingsType = toppingsType;
+      }
+      
+      console.log(`✅ Updated toppings settings in memory for category ${categoryId}`);
     }
     
-    const db = admin.firestore();
-    const categoryRef = db.collection('menu').doc(categoryId);
-    
-    const updateData = {
-      toppingsEnabled: enabled,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    };
-    
-    if (toppingsType) {
-      updateData.toppingsType = toppingsType;
-    }
-    
-    await categoryRef.update(updateData);
-    
-    console.log(`✅ Updated toppings settings for category ${categoryId}`);
     res.json({
       success: true,
       categoryId,
       toppingsEnabled: enabled,
       toppingsType: toppingsType || 'toppings',
-      message: `Toppings ${enabled ? 'enabled' : 'disabled'} for category ${categoryId}`
+      message: `Toppings ${enabled ? 'enabled' : 'disabled'} for category ${categoryId}`,
+      storage: useFirebase() ? 'firebase' : 'memory'
     });
     
   } catch (error) {
@@ -2115,41 +2132,54 @@ app.get('/admin/categories-with-toppings', async (req, res) => {
   try {
     console.log('🔍 Fetching all categories with toppings settings for admin');
     
-    if (!admin.apps.length) {
-      return res.status(500).json({ 
-        error: 'Firebase not initialized',
-        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
-      });
-    }
-    
-    const db = admin.firestore();
-    const categoriesSnapshot = await db.collection('menu').get();
-    
     const categories = [];
     
-    for (const categoryDoc of categoriesSnapshot.docs) {
-      const categoryData = categoryDoc.data();
-      const categoryId = categoryDoc.id;
+    if (useFirebase()) {
+      // Use Firebase
+      const db = admin.firestore();
+      const categoriesSnapshot = await db.collection('menu').get();
       
-      // Get toppings count for this category
-      const toppingsSnapshot = await db.collection('menu').doc(categoryId).collection('toppings').get();
-      
-      categories.push({
-        id: categoryId,
-        displayName: categoryData.displayName || categoryId,
-        toppingsEnabled: categoryData.toppingsEnabled || false,
-        toppingsType: categoryData.toppingsType || 'toppings',
-        toppingsCount: toppingsSnapshot.size,
-        itemsCount: categoryData.items ? categoryData.items.length : 0,
-        ...categoryData
-      });
+      for (const categoryDoc of categoriesSnapshot.docs) {
+        const categoryData = categoryDoc.data();
+        const categoryId = categoryDoc.id;
+        
+        // Get toppings count for this category
+        const toppingsSnapshot = await db.collection('menu').doc(categoryId).collection('toppings').get();
+        
+        categories.push({
+          id: categoryId,
+          displayName: categoryData.displayName || categoryId,
+          toppingsEnabled: categoryData.toppingsEnabled || false,
+          toppingsType: categoryData.toppingsType || 'toppings',
+          toppingsCount: toppingsSnapshot.size,
+          itemsCount: categoryData.items ? categoryData.items.length : 0,
+          ...categoryData
+        });
+      }
+      console.log(`✅ Found ${categories.length} categories in Firebase`);
+    } else {
+      // Use in-memory storage
+      for (const [categoryId, categoryData] of Object.entries(inMemoryStorage.categories)) {
+        const toppingsCount = inMemoryStorage.toppings[categoryId] ? inMemoryStorage.toppings[categoryId].length : 0;
+        
+        categories.push({
+          id: categoryId,
+          displayName: categoryData.displayName || categoryId,
+          toppingsEnabled: categoryData.toppingsEnabled || false,
+          toppingsType: categoryData.toppingsType || 'toppings',
+          toppingsCount: toppingsCount,
+          itemsCount: categoryData.items ? categoryData.items.length : 0,
+          ...categoryData
+        });
+      }
+      console.log(`✅ Found ${categories.length} categories in memory`);
     }
     
-    console.log(`✅ Found ${categories.length} categories`);
     res.json({
       success: true,
       categories,
-      count: categories.length
+      count: categories.length,
+      storage: useFirebase() ? 'firebase' : 'memory'
     });
     
   } catch (error) {
@@ -2226,3 +2256,81 @@ app.listen(port, '0.0.0.0', () => {
 // Force redeploy - Sat Jul 19 14:12:02 CDT 2025
 // Force complete redeploy - Sat Jul 19 14:15:27 CDT 2025
 // Updated Tue Jul 22 16:44:23 CDT 2025
+
+// ========================================================================================
+// IN-MEMORY STORAGE FOR TOPPINGS (Fallback when Firebase is not available)
+// ========================================================================================
+
+// In-memory storage for categories and toppings
+const inMemoryStorage = {
+  categories: {
+    'Milk-Tea': {
+      id: 'Milk-Tea',
+      displayName: 'Milk Tea',
+      toppingsEnabled: false,
+      toppingsType: 'milk-tea-toppings',
+      items: []
+    },
+    'Dumplings': {
+      id: 'Dumplings',
+      displayName: 'Dumplings',
+      toppingsEnabled: false,
+      toppingsType: 'toppings',
+      items: []
+    },
+    'Lemonades-or-Sodas': {
+      id: 'Lemonades-or-Sodas',
+      displayName: 'Lemonades or Sodas',
+      toppingsEnabled: false,
+      toppingsType: 'toppings',
+      items: []
+    }
+  },
+  toppings: {} // categoryId -> array of toppings
+};
+
+// Initialize sample toppings
+inMemoryStorage.toppings['Milk-Tea'] = [
+  {
+    id: 'boba-pearls',
+    name: 'Boba Pearls',
+    price: 0.75,
+    imageURL: 'https://example.com/boba.png',
+    description: 'Chewy tapioca pearls',
+    isAvailable: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    id: 'brown-sugar',
+    name: 'Brown Sugar',
+    price: 0.50,
+    imageURL: 'https://example.com/brown-sugar.png',
+    description: 'Rich brown sugar syrup',
+    isAvailable: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+];
+
+inMemoryStorage.toppings['Dumplings'] = [
+  {
+    id: 'extra-sauce',
+    name: 'Extra Sauce',
+    price: 1.00,
+    imageURL: 'https://example.com/sauce.png',
+    description: 'Additional dumpling sauce',
+    isAvailable: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+];
+
+// Helper function to check if we should use Firebase or in-memory storage
+function useFirebase() {
+  return admin.apps.length > 0;
+}
+
+// ========================================================================================
+// TOPPINGS MANAGEMENT ENDPOINTS
+// ========================================================================================
