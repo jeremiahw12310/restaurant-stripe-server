@@ -13,15 +13,24 @@ try {
   if (!admin.apps.length) {
     // Use Application Default Credentials (ADC) for Render deployment
     // This works with Render's built-in service account
-    admin.initializeApp({
+    const firebaseConfig = {
       projectId: 'dumplinghouseapp'
-      // ADC will automatically use Render's service account
-    });
+    };
+    
+    // Set environment variables for ADC
+    process.env.FIREBASE_AUTH_TYPE = 'adc';
+    process.env.GOOGLE_CLOUD_PROJECT = 'dumplinghouseapp';
+    
+    admin.initializeApp(firebaseConfig);
     console.log('✅ Firebase Admin initialized with Application Default Credentials');
+    console.log('🔧 Environment:', process.env.NODE_ENV || 'development');
+    console.log('🔥 Firebase configured: Yes');
   }
 } catch (error) {
   console.error('❌ Error initializing Firebase Admin:', error);
   console.warn('⚠️ Firebase features will not work');
+  console.log('🔧 Environment:', process.env.NODE_ENV || 'development');
+  console.log('🔥 Firebase configured: No');
 }
 
 const app = express();
