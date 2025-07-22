@@ -1836,9 +1836,6 @@ IMPORTANT:
         });
       }
       
-      const categoryData = categoryDoc.data();
-      const existingToppings = categoryData.toppings || [];
-      
       // Generate unique ID for the topping
       const toppingId = `topping_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
@@ -1848,12 +1845,15 @@ IMPORTANT:
         price: parseFloat(price),
         imageURL: imageURL || '',
         isAvailable: true,
-        order: existingToppings.length
+        categoryId: categoryId
       };
       
-      // Add the new topping to the category
+      // Add the new topping to the toppings subcollection (like menu items)
+      const toppingRef = categoryRef.collection('toppings').doc(toppingId);
+      await toppingRef.set(newTopping);
+      
+      // Update category to indicate it has toppings
       await categoryRef.update({
-        toppings: admin.firestore.FieldValue.arrayUnion(newTopping),
         hasToppings: true
       });
       
@@ -1937,6 +1937,54 @@ IMPORTANT:
     }
   });
 
+  // Fetch toppings for a category
+  app.get('/api/categories/:categoryId/toppings', async (req, res) => {
+    try {
+      console.log('🔍 Fetching toppings for category:', req.params.categoryId);
+      
+      if (!admin.apps.length) {
+        return res.status(500).json({ 
+          error: 'Firebase not initialized' 
+        });
+      }
+      
+      const db = admin.firestore();
+      const categoryId = req.params.categoryId;
+      
+      const categoryRef = db.collection('menu').doc(categoryId);
+      const categoryDoc = await categoryRef.get();
+      
+      if (!categoryDoc.exists) {
+        return res.status(404).json({ 
+          error: 'Category not found' 
+        });
+      }
+      
+      // Get toppings from the toppings subcollection
+      const toppingsSnapshot = await categoryRef.collection('toppings').get();
+      const toppings = [];
+      
+      toppingsSnapshot.forEach(doc => {
+        toppings.push(doc.data());
+      });
+      
+      console.log(`✅ Fetched ${toppings.length} toppings for category ${categoryId}`);
+      
+      res.json({
+        success: true,
+        toppings: toppings,
+        totalToppings: toppings.length
+      });
+      
+    } catch (error) {
+      console.error('❌ Error fetching toppings:', error);
+      res.status(500).json({ 
+        error: 'Failed to fetch toppings',
+        details: error.message 
+      });
+    }
+  });
+
   app.delete('/api/categories/:categoryId/toppings/:toppingId', async (req, res) => {
     try {
       console.log('🗑️ Deleting topping:', req.params.toppingId);
@@ -1960,28 +2008,28 @@ IMPORTANT:
         });
       }
       
-      const categoryData = categoryDoc.data();
-      const existingToppings = categoryData.toppings || [];
+      // Delete the topping from the toppings subcollection
+      const toppingRef = categoryRef.collection('toppings').doc(toppingId);
+      const toppingDoc = await toppingRef.get();
       
-      // Find the topping to remove
-      const toppingToRemove = existingToppings.find(topping => topping.id === toppingId);
-      
-      if (!toppingToRemove) {
+      if (!toppingDoc.exists) {
         return res.status(404).json({ 
           error: 'Topping not found' 
         });
       }
       
-      // Remove the topping from the array
-      const updatedToppings = existingToppings.filter(topping => topping.id !== toppingId);
+      const toppingData = toppingDoc.data();
+      await toppingRef.delete();
       
-      // Update the category
+      // Check if there are any remaining toppings
+      const remainingToppings = await categoryRef.collection('toppings').get();
+      
+      // Update category hasToppings flag
       await categoryRef.update({
-        toppings: updatedToppings,
-        hasToppings: updatedToppings.length > 0
+        hasToppings: !remainingToppings.empty
       });
       
-      console.log(`✅ Deleted topping "${toppingToRemove.name}" from category ${categoryId}`);
+      console.log(`✅ Deleted topping "${toppingData.name}" from category ${categoryId}`);
       
       res.json({
         success: true,
@@ -2028,7 +2076,6 @@ IMPORTANT:
         await categoryRef.set({
           id: categoryId,
           hasToppings: hasToppings,
-          toppings: [],
           createdAt: new Date()
         });
         console.log(`✅ Created category document and ${hasToppings ? 'enabled' : 'disabled'} toppings for category ${categoryId}`);
