@@ -12,39 +12,12 @@ const admin = require('firebase-admin');
 if (process.env.FIREBASE_AUTH_TYPE === 'adc') {
   // Use Application Default Credentials
   try {
-    if (process.env.RENDER) {
-      // Special handling for Render environment
-      // Create minimal credential configuration for Render
-      const projectId = process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp';
-      
-      // Try to initialize with minimal config for Render
-      admin.initializeApp({
-        projectId: projectId,
-        // Use minimal credential that works on Render
-        credential: admin.credential.applicationDefault()
-      });
-      console.log(`✅ Firebase Admin initialized for Render with project: ${projectId}`);
-    } else {
-      // Local ADC
-      admin.initializeApp({
-        projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp'
-      });
-      console.log('✅ Firebase Admin initialized with Application Default Credentials');
-    }
+    admin.initializeApp({
+      projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp'
+    });
+    console.log('✅ Firebase Admin initialized with Application Default Credentials');
   } catch (error) {
-    console.error('❌ Error initializing Firebase Admin with ADC:', error.message);
-    
-    // Render fallback: Initialize without credentials for read-only operations
-    if (process.env.RENDER) {
-      try {
-        admin.initializeApp({
-          projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp'
-        });
-        console.log('⚠️ Firebase initialized in read-only mode for Render');
-      } catch (fallbackError) {
-        console.error('❌ Firebase fallback also failed:', fallbackError.message);
-      }
-    }
+    console.error('❌ Error initializing Firebase Admin with ADC:', error);
   }
 } else if (process.env.FIREBASE_AUTH_TYPE === 'service-account' && process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
   // Use service account key
@@ -1823,41 +1796,30 @@ app.get('/toppings/:categoryId', async (req, res) => {
     const { categoryId } = req.params;
     console.log(`🔍 Fetching toppings for category: ${categoryId}`);
     
-    let toppings = [];
-    let usedStorage = 'memory';
-    
-    // Try Firebase first, fall back to memory on any error
-    if (useFirebaseForToppings() && admin.apps.length > 0) {
-      try {
-        const db = admin.firestore();
-        const toppingsSnapshot = await db.collection('menu').doc(categoryId).collection('toppings').get();
-        
-        toppingsSnapshot.forEach(doc => {
-          toppings.push({
-            id: doc.id,
-            ...doc.data()
-          });
-        });
-        console.log(`✅ Found ${toppings.length} toppings in Firebase for category ${categoryId}`);
-        usedStorage = 'firebase';
-      } catch (firebaseError) {
-        console.log(`⚠️ Firebase failed (${firebaseError.message}), using memory storage`);
-        // Fall through to memory storage
-      }
+    if (!admin.apps.length) {
+      return res.status(500).json({ 
+        error: 'Firebase not initialized',
+        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
+      });
     }
     
-    if (usedStorage === 'memory') {
-      // Use in-memory storage
-      toppings = inMemoryStorage.toppings[categoryId] || [];
-      console.log(`✅ Found ${toppings.length} toppings in memory for category ${categoryId}`);
-    }
+    const db = admin.firestore();
+    const toppingsSnapshot = await db.collection('menu').doc(categoryId).collection('toppings').get();
     
+    const toppings = [];
+    toppingsSnapshot.forEach(doc => {
+      toppings.push({
+        id: doc.id,
+        ...doc.data()
+      });
+    });
+    
+    console.log(`✅ Found ${toppings.length} toppings for category ${categoryId}`);
     res.json({
       success: true,
       categoryId,
       toppings,
-      count: toppings.length,
-      storage: usedStorage
+      count: toppings.length
     });
     
   } catch (error) {
@@ -1922,59 +1884,34 @@ app.patch('/category/:categoryId/toggle-toppings', async (req, res) => {
     
     console.log(`🔄 Toggling toppings for category ${categoryId}: enabled=${enabled}, type=${toppingsType}`);
     
-    let usedStorage = 'memory';
-    
-    // Try Firebase first, fall back to memory on any error
-    if (useFirebaseForToppings() && admin.apps.length > 0) {
-      try {
-        const db = admin.firestore();
-        const categoryRef = db.collection('menu').doc(categoryId);
-        
-        const updateData = {
-          toppingsEnabled: enabled,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        };
-        
-        if (toppingsType) {
-          updateData.toppingsType = toppingsType;
-        }
-        
-        await categoryRef.update(updateData);
-        console.log(`✅ Updated toppings settings in Firebase for category ${categoryId}`);
-        usedStorage = 'firebase';
-      } catch (firebaseError) {
-        console.log(`⚠️ Firebase failed (${firebaseError.message}), using memory storage`);
-        // Fall through to memory storage
-      }
+    if (!admin.apps.length) {
+      return res.status(500).json({ 
+        error: 'Firebase not initialized',
+        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
+      });
     }
     
-    if (usedStorage === 'memory') {
-      // Use in-memory storage as fallback
-      if (!inMemoryStorage.categories[categoryId]) {
-        inMemoryStorage.categories[categoryId] = {
-          id: categoryId,
-          displayName: categoryId.replace(/-/g, ' '),
-          toppingsEnabled: false,
-          toppingsType: 'toppings',
-          items: []
-        };
-      }
-      
-      inMemoryStorage.categories[categoryId].toppingsEnabled = enabled;
-      if (toppingsType) {
-        inMemoryStorage.categories[categoryId].toppingsType = toppingsType;
-      }
-      
-      console.log(`✅ Updated toppings settings in memory for category ${categoryId}`);
+    const db = admin.firestore();
+    const categoryRef = db.collection('menu').doc(categoryId);
+    
+    const updateData = {
+      toppingsEnabled: enabled,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+    
+    if (toppingsType) {
+      updateData.toppingsType = toppingsType;
     }
     
+    await categoryRef.update(updateData);
+    
+    console.log(`✅ Updated toppings settings for category ${categoryId}`);
     res.json({
       success: true,
       categoryId,
       toppingsEnabled: enabled,
       toppingsType: toppingsType || 'toppings',
-      message: `Toppings ${enabled ? 'enabled' : 'disabled'} for category ${categoryId}`,
-      storage: usedStorage
+      message: `Toppings ${enabled ? 'enabled' : 'disabled'} for category ${categoryId}`
     });
     
   } catch (error) {
@@ -2151,63 +2088,41 @@ app.get('/admin/categories-with-toppings', async (req, res) => {
   try {
     console.log('🔍 Fetching all categories with toppings settings for admin');
     
+    if (!admin.apps.length) {
+      return res.status(500).json({ 
+        error: 'Firebase not initialized',
+        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
+      });
+    }
+    
+    const db = admin.firestore();
+    const categoriesSnapshot = await db.collection('menu').get();
+    
     const categories = [];
-    let usedStorage = 'memory';
     
-    // Try Firebase first, fall back to memory on any error
-    if (useFirebaseForToppings() && admin.apps.length > 0) {
-      try {
-        const db = admin.firestore();
-        const categoriesSnapshot = await db.collection('menu').get();
-        
-        for (const categoryDoc of categoriesSnapshot.docs) {
-          const categoryData = categoryDoc.data();
-          const categoryId = categoryDoc.id;
-          
-          // Get toppings count for this category
-          const toppingsSnapshot = await db.collection('menu').doc(categoryId).collection('toppings').get();
-          
-          categories.push({
-            id: categoryId,
-            displayName: categoryData.displayName || categoryId,
-            toppingsEnabled: categoryData.toppingsEnabled || false,
-            toppingsType: categoryData.toppingsType || 'toppings',
-            toppingsCount: toppingsSnapshot.size,
-            itemsCount: categoryData.items ? categoryData.items.length : 0,
-            ...categoryData
-          });
-        }
-        console.log(`✅ Found ${categories.length} categories in Firebase`);
-        usedStorage = 'firebase';
-      } catch (firebaseError) {
-        console.log(`⚠️ Firebase failed (${firebaseError.message}), using memory storage`);
-        // Fall through to memory storage
-      }
+    for (const categoryDoc of categoriesSnapshot.docs) {
+      const categoryData = categoryDoc.data();
+      const categoryId = categoryDoc.id;
+      
+      // Get toppings count for this category
+      const toppingsSnapshot = await db.collection('menu').doc(categoryId).collection('toppings').get();
+      
+      categories.push({
+        id: categoryId,
+        displayName: categoryData.displayName || categoryId,
+        toppingsEnabled: categoryData.toppingsEnabled || false,
+        toppingsType: categoryData.toppingsType || 'toppings',
+        toppingsCount: toppingsSnapshot.size,
+        itemsCount: categoryData.items ? categoryData.items.length : 0,
+        ...categoryData
+      });
     }
     
-    if (usedStorage === 'memory') {
-      // Use in-memory storage
-      for (const [categoryId, categoryData] of Object.entries(inMemoryStorage.categories)) {
-        const toppingsCount = inMemoryStorage.toppings[categoryId] ? inMemoryStorage.toppings[categoryId].length : 0;
-        
-        categories.push({
-          id: categoryId,
-          displayName: categoryData.displayName || categoryId,
-          toppingsEnabled: categoryData.toppingsEnabled || false,
-          toppingsType: categoryData.toppingsType || 'toppings',
-          toppingsCount: toppingsCount,
-          itemsCount: categoryData.items ? categoryData.items.length : 0,
-          ...categoryData
-        });
-      }
-      console.log(`✅ Found ${categories.length} categories in memory`);
-    }
-    
+    console.log(`✅ Found ${categories.length} categories`);
     res.json({
       success: true,
       categories,
-      count: categories.length,
-      storage: usedStorage
+      count: categories.length
     });
     
   } catch (error) {
@@ -2283,134 +2198,3 @@ app.listen(port, '0.0.0.0', () => {
 });
 // Force redeploy - Sat Jul 19 14:12:02 CDT 2025
 // Force complete redeploy - Sat Jul 19 14:15:27 CDT 2025
-// Updated Tue Jul 22 16:44:23 CDT 2025
-
-// ========================================================================================
-// IN-MEMORY STORAGE FOR TOPPINGS (Fallback when Firebase is not available)
-// ========================================================================================
-
-// In-memory storage for categories and toppings
-const inMemoryStorage = {
-  categories: {
-    'Milk-Tea': {
-      id: 'Milk-Tea',
-      displayName: 'Milk Tea',
-      toppingsEnabled: false,
-      toppingsType: 'milk-tea-toppings',
-      items: []
-    },
-    'Dumplings': {
-      id: 'Dumplings',
-      displayName: 'Dumplings',
-      toppingsEnabled: false,
-      toppingsType: 'toppings',
-      items: []
-    },
-    'Lemonades-or-Sodas': {
-      id: 'Lemonades-or-Sodas',
-      displayName: 'Lemonades or Sodas',
-      toppingsEnabled: false,
-      toppingsType: 'toppings',
-      items: []
-    }
-  },
-  toppings: {} // categoryId -> array of toppings
-};
-
-// Initialize sample toppings
-inMemoryStorage.toppings['Milk-Tea'] = [
-  {
-    id: 'boba-pearls',
-    name: 'Boba Pearls',
-    price: 0.75,
-    imageURL: 'https://example.com/boba.png',
-    description: 'Chewy tapioca pearls',
-    isAvailable: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: 'brown-sugar',
-    name: 'Brown Sugar',
-    price: 0.50,
-    imageURL: 'https://example.com/brown-sugar.png',
-    description: 'Rich brown sugar syrup',
-    isAvailable: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  }
-];
-
-inMemoryStorage.toppings['Dumplings'] = [
-  {
-    id: 'extra-sauce',
-    name: 'Extra Sauce',
-    price: 1.00,
-    imageURL: 'https://example.com/sauce.png',
-    description: 'Additional dumpling sauce',
-    isAvailable: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  }
-];
-
-// Helper function to check if we should use Firebase or in-memory storage
-let firebaseWorking = false;
-
-// Temporary flag to disable Firebase for toppings operations (for testing)
-const DISABLE_FIREBASE_FOR_TOPPINGS = true;
-
-function useFirebase() {
-  return firebaseWorking;
-}
-
-function useFirebaseForToppings() {
-  return !DISABLE_FIREBASE_FOR_TOPPINGS && firebaseWorking;
-}
-
-// Test Firebase connection
-async function testFirebaseConnection() {
-  if (admin.apps.length === 0) {
-    console.log('🔍 No Firebase apps initialized');
-    return false;
-  }
-  
-  try {
-    const db = admin.firestore();
-    // Try a simple read operation to test if Firebase is working
-    await db.collection('test').limit(1).get();
-    console.log('✅ Firebase connection test successful');
-    firebaseWorking = true;
-    return true;
-  } catch (error) {
-    console.log('❌ Firebase connection test failed:', error.message);
-    console.log('🔄 Falling back to in-memory storage');
-    firebaseWorking = false;
-    return false;
-  }
-}
-
-// Test Firebase connection on startup
-testFirebaseConnection();
-
-// ========================================================================================
-// TOPPINGS MANAGEMENT ENDPOINTS
-// ========================================================================================
-
-// Test endpoint for toppings functionality (no Firebase)
-app.get('/test-toppings', (req, res) => {
-  res.json({
-    success: true,
-    message: 'Toppings test endpoint working',
-    timestamp: new Date().toISOString(),
-    storage: 'memory',
-    sampleToppings: [
-      {
-        id: 'test-topping-1',
-        name: 'Test Topping',
-        price: 1.50,
-        description: 'A test topping to verify functionality'
-      }
-    ]
-  });
-});
