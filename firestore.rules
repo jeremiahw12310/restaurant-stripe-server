@@ -88,6 +88,12 @@ service cloud.firestore {
         allow read: if true; // Public read for menu items
         allow write: if isAdmin(); // Only admins can modify menu items
       }
+      
+      // Toppings subcollection
+      match /toppings/{toppingId} {
+        allow read: if true; // Public read for toppings
+        allow write: if isAdmin(); // Only admins can modify toppings
+      }
     }
     
     // Analytics collection - admin only

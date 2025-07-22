@@ -10,10 +10,6 @@ services:
         value: production
       - key: OPENAI_API_KEY
         sync: false
-      - key: FIREBASE_AUTH_TYPE
-        value: adc
-      - key: GOOGLE_CLOUD_PROJECT
-        value: dumplinghouseapp
       - key: RENDER
         value: true
     healthCheckPath: /
