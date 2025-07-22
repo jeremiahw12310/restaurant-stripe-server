@@ -2031,14 +2031,14 @@ IMPORTANT:
           toppings: [],
           createdAt: new Date()
         });
+        console.log(`✅ Created category document and ${hasToppings ? 'enabled' : 'disabled'} toppings for category ${categoryId}`);
       } else {
         // Update existing category
         await categoryRef.update({
           hasToppings: hasToppings
         });
+        console.log(`✅ ${hasToppings ? 'Enabled' : 'Disabled'} toppings for existing category ${categoryId}`);
       }
-      
-      console.log(`✅ ${hasToppings ? 'Enabled' : 'Disabled'} toppings for category ${categoryId}`);
       
       res.json({
         success: true,
