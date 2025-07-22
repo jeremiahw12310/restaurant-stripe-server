@@ -34,6 +34,9 @@ const comboInsights = []; // Track combo patterns for insights, not restrictions
 const MAX_INSIGHTS = 100;
 const userComboPreferences = new Map(); // Track user preferences for personalization
 
+// Simple in-memory storage for toppings (works without Firebase authentication)
+
+
 // Health check endpoint
 app.get('/', (req, res) => {
   res.json({ 
@@ -1764,47 +1767,7 @@ IMPORTANT:
     }
   });
 
-  // Toppings Management Endpoints
-  app.get('/api/categories/:categoryId/toppings', async (req, res) => {
-    try {
-      console.log('🔍 Fetching toppings for category:', req.params.categoryId);
-      
-      if (!admin.apps.length) {
-        return res.status(500).json({ 
-          error: 'Firebase not initialized' 
-        });
-      }
-      
-      const db = admin.firestore();
-      const categoryId = req.params.categoryId;
-      
-      const categoryDoc = await db.collection('menu').doc(categoryId).get();
-      
-      if (!categoryDoc.exists) {
-        return res.status(404).json({ 
-          error: 'Category not found' 
-        });
-      }
-      
-      const categoryData = categoryDoc.data();
-      const toppings = categoryData.toppings || [];
-      
-      console.log(`✅ Fetched ${toppings.length} toppings for category ${categoryId}`);
-      
-      res.json({
-        success: true,
-        toppings: toppings,
-        hasToppings: categoryData.hasToppings || false
-      });
-      
-    } catch (error) {
-      console.error('❌ Error fetching toppings:', error);
-      res.status(500).json({ 
-        error: 'Failed to fetch toppings',
-        details: error.message 
-      });
-    }
-  });
+
 
   app.post('/api/categories/:categoryId/toppings', async (req, res) => {
     try {
@@ -1845,12 +1808,11 @@ IMPORTANT:
         price: parseFloat(price),
         imageURL: imageURL || '',
         isAvailable: true,
-        categoryId: categoryId
+        createdAt: new Date()
       };
       
-      // Add the new topping to the toppings subcollection (like menu items)
-      const toppingRef = categoryRef.collection('toppings').doc(toppingId);
-      await toppingRef.set(newTopping);
+      // Add the new topping to the toppings subcollection
+      await categoryRef.collection('toppings').doc(toppingId).set(newTopping);
       
       // Update category to indicate it has toppings
       await categoryRef.update({
@@ -1888,7 +1850,7 @@ IMPORTANT:
       const db = admin.firestore();
       const categoryId = req.params.categoryId;
       const toppingId = req.params.toppingId;
-      const { name, price, imageURL, isAvailable, order } = req.body;
+      const { name, price, imageURL, isAvailable } = req.body;
       
       const categoryRef = db.collection('menu').doc(categoryId);
       const categoryDoc = await categoryRef.get();
@@ -1899,27 +1861,24 @@ IMPORTANT:
         });
       }
       
-      const categoryData = categoryDoc.data();
-      const existingToppings = categoryData.toppings || [];
+      const toppingRef = categoryRef.collection('toppings').doc(toppingId);
+      const toppingDoc = await toppingRef.get();
       
-      // Find and update the topping
-      const updatedToppings = existingToppings.map(topping => {
-        if (topping.id === toppingId) {
-          return {
-            ...topping,
-            name: name !== undefined ? name : topping.name,
-            price: price !== undefined ? parseFloat(price) : topping.price,
-            imageURL: imageURL !== undefined ? imageURL : topping.imageURL,
-            isAvailable: isAvailable !== undefined ? isAvailable : topping.isAvailable,
-            order: order !== undefined ? order : topping.order
-          };
-        }
-        return topping;
-      });
+      if (!toppingDoc.exists) {
+        return res.status(404).json({ 
+          error: 'Topping not found' 
+        });
+      }
       
-      await categoryRef.update({
-        toppings: updatedToppings
-      });
+      // Update the topping document
+      const updateData = {};
+      if (name !== undefined) updateData.name = name;
+      if (price !== undefined) updateData.price = parseFloat(price);
+      if (imageURL !== undefined) updateData.imageURL = imageURL;
+      if (isAvailable !== undefined) updateData.isAvailable = isAvailable;
+      updateData.updatedAt = new Date();
+      
+      await toppingRef.update(updateData);
       
       console.log(`✅ Updated topping "${toppingId}" in category ${categoryId}`);
       
@@ -2106,6 +2065,57 @@ IMPORTANT:
     }
   });
 
+  // Get toppings for a category
+  app.get('/api/categories/:categoryId/toppings', async (req, res) => {
+    try {
+      console.log('🔍 Fetching toppings for category:', req.params.categoryId);
+      
+      if (!admin.apps.length) {
+        return res.status(500).json({ 
+          error: 'Firebase not initialized' 
+        });
+      }
+      
+      const db = admin.firestore();
+      const categoryId = req.params.categoryId;
+      
+      const categoryRef = db.collection('menu').doc(categoryId);
+      const categoryDoc = await categoryRef.get();
+      
+      if (!categoryDoc.exists) {
+        return res.status(404).json({ 
+          error: 'Category not found' 
+        });
+      }
+      
+      // Get all toppings from the toppings subcollection
+      const toppingsSnapshot = await categoryRef.collection('toppings').get();
+      const toppings = [];
+      
+      toppingsSnapshot.forEach(doc => {
+        toppings.push({
+          id: doc.id,
+          ...doc.data()
+        });
+      });
+      
+      console.log(`✅ Fetched ${toppings.length} toppings for category ${categoryId}`);
+      
+      res.json({
+        success: true,
+        toppings: toppings,
+        count: toppings.length
+      });
+      
+    } catch (error) {
+      console.error('❌ Error fetching toppings:', error);
+      res.status(500).json({ 
+        error: 'Failed to fetch toppings',
+        details: error.message 
+      });
+    }
+  });
+
   app.put('/api/categories/:categoryId/toppings-toggle', async (req, res) => {
     try {
       console.log('🔄 Toggling toppings for category:', req.params.categoryId);
@@ -2127,7 +2137,6 @@ IMPORTANT:
         });
       }
       
-      console.log(`🔍 Looking for category document: ${categoryId}`);
       const categoryRef = db.collection('menu').doc(categoryId);
       const categoryDoc = await categoryRef.get();
       
@@ -2139,15 +2148,14 @@ IMPORTANT:
           hasToppings: hasToppings,
           createdAt: new Date()
         });
-        console.log(`✅ Created category document and ${hasToppings ? 'enabled' : 'disabled'} toppings for category ${categoryId}`);
       } else {
         // Update existing category
-        console.log(`📝 Updating existing category document: ${categoryId}`);
         await categoryRef.update({
           hasToppings: hasToppings
         });
-        console.log(`✅ ${hasToppings ? 'Enabled' : 'Disabled'} toppings for existing category ${categoryId}`);
       }
+      
+      console.log(`✅ ${hasToppings ? 'Enabled' : 'Disabled'} toppings for category ${categoryId}`);
       
       res.json({
         success: true,
