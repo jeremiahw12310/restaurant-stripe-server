@@ -8,21 +8,13 @@ const { OpenAI } = require('openai');
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
 
-// Firebase initialization with Application Default Credentials (ADC)
+// Firebase initialization - simplified for Render deployment
 try {
   if (!admin.apps.length) {
-    // Use Application Default Credentials (ADC) for Render deployment
-    // This works with Render's built-in service account
-    const firebaseConfig = {
-      projectId: 'dumplinghouseapp'
-    };
-    
-    // Set environment variables for ADC
-    process.env.FIREBASE_AUTH_TYPE = 'adc';
-    process.env.GOOGLE_CLOUD_PROJECT = 'dumplinghouseapp';
-    
-    admin.initializeApp(firebaseConfig);
-    console.log('✅ Firebase Admin initialized with Application Default Credentials');
+    // Try to initialize Firebase with minimal configuration
+    // This should work on Render without requiring specific credentials
+    admin.initializeApp();
+    console.log('✅ Firebase Admin initialized with default configuration');
     console.log('🔧 Environment:', process.env.NODE_ENV || 'development');
     console.log('🔥 Firebase configured: Yes');
   }
