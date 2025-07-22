@@ -2327,9 +2327,36 @@ inMemoryStorage.toppings['Dumplings'] = [
 ];
 
 // Helper function to check if we should use Firebase or in-memory storage
+let firebaseWorking = false;
+
 function useFirebase() {
-  return admin.apps.length > 0;
+  return firebaseWorking;
 }
+
+// Test Firebase connection
+async function testFirebaseConnection() {
+  if (admin.apps.length === 0) {
+    console.log('🔍 No Firebase apps initialized');
+    return false;
+  }
+  
+  try {
+    const db = admin.firestore();
+    // Try a simple read operation to test if Firebase is working
+    await db.collection('test').limit(1).get();
+    console.log('✅ Firebase connection test successful');
+    firebaseWorking = true;
+    return true;
+  } catch (error) {
+    console.log('❌ Firebase connection test failed:', error.message);
+    console.log('🔄 Falling back to in-memory storage');
+    firebaseWorking = false;
+    return false;
+  }
+}
+
+// Test Firebase connection on startup
+testFirebaseConnection();
 
 // ========================================================================================
 // TOPPINGS MANAGEMENT ENDPOINTS
