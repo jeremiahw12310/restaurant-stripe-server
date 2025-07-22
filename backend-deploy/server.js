@@ -11,13 +11,12 @@ const admin = require('firebase-admin');
 // Firebase initialization that works on Render without service account keys
 try {
   if (!admin.apps.length) {
-    // Use a simple initialization that works on cloud platforms
+    // Try to initialize with just project ID - this will work on Render
+    // Render provides default credentials automatically
     admin.initializeApp({
-      projectId: 'dumplinghouseapp',
-      // This will use the default service account that Render provides
-      // No need for explicit credentials
+      projectId: 'dumplinghouseapp'
     });
-    console.log('✅ Firebase Admin initialized for production');
+    console.log('✅ Firebase Admin initialized with project ID for Render');
   }
 } catch (error) {
   console.error('❌ Error initializing Firebase Admin:', error);
