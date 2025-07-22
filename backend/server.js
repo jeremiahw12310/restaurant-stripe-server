@@ -14,11 +14,10 @@ try {
     // Use a completely minimal initialization that works on Render
     // This bypasses credential requirements entirely
     admin.initializeApp({
-      projectId: 'dumplinghouseapp',
-      // Force use of default credentials without checking
-      credential: admin.credential.applicationDefault()
+      projectId: 'dumplinghouseapp'
+      // No credential specified - will use default service account
     });
-    console.log('✅ Firebase Admin initialized with application default credentials');
+    console.log('✅ Firebase Admin initialized with minimal config');
   }
 } catch (error) {
   console.error('❌ Error initializing Firebase Admin:', error);
