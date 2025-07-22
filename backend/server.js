@@ -1655,56 +1655,62 @@ app.delete('/api/categories/:categoryId/toppings/:toppingId', async (req, res) =
   }
 });
 
-app.put('/api/categories/:categoryId/toppings-toggle', async (req, res) => {
-  try {
-    console.log('🔄 Toggling toppings for category:', req.params.categoryId);
-    console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
-    
-    if (!admin.apps.length) {
-      return res.status(500).json({ 
-        error: 'Firebase not initialized' 
+  app.put('/api/categories/:categoryId/toppings-toggle', async (req, res) => {
+    try {
+      console.log('🔄 Toggling toppings for category:', req.params.categoryId);
+      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      
+      if (!admin.apps.length) {
+        return res.status(500).json({ 
+          error: 'Firebase not initialized' 
+        });
+      }
+      
+      const db = admin.firestore();
+      const categoryId = req.params.categoryId;
+      const { hasToppings } = req.body;
+      
+      if (hasToppings === undefined) {
+        return res.status(400).json({ 
+          error: 'Missing required field: hasToppings' 
+        });
+      }
+      
+      const categoryRef = db.collection('menu').doc(categoryId);
+      const categoryDoc = await categoryRef.get();
+      
+      if (!categoryDoc.exists) {
+        // Create the category document if it doesn't exist
+        console.log(`📝 Creating new category document for: ${categoryId}`);
+        await categoryRef.set({
+          id: categoryId,
+          hasToppings: hasToppings,
+          toppings: [],
+          createdAt: new Date()
+        });
+      } else {
+        // Update existing category
+        await categoryRef.update({
+          hasToppings: hasToppings
+        });
+      }
+      
+      console.log(`✅ ${hasToppings ? 'Enabled' : 'Disabled'} toppings for category ${categoryId}`);
+      
+      res.json({
+        success: true,
+        hasToppings: hasToppings,
+        message: `Toppings ${hasToppings ? 'enabled' : 'disabled'} successfully`
+      });
+      
+    } catch (error) {
+      console.error('❌ Error toggling toppings:', error);
+      res.status(500).json({ 
+        error: 'Failed to toggle toppings',
+        details: error.message 
       });
     }
-    
-    const db = admin.firestore();
-    const categoryId = req.params.categoryId;
-    const { hasToppings } = req.body;
-    
-    if (hasToppings === undefined) {
-      return res.status(400).json({ 
-        error: 'Missing required field: hasToppings' 
-      });
-    }
-    
-    const categoryRef = db.collection('menu').doc(categoryId);
-    const categoryDoc = await categoryRef.get();
-    
-    if (!categoryDoc.exists) {
-      return res.status(404).json({ 
-        error: 'Category not found' 
-      });
-    }
-    
-    await categoryRef.update({
-      hasToppings: hasToppings
-    });
-    
-    console.log(`✅ ${hasToppings ? 'Enabled' : 'Disabled'} toppings for category ${categoryId}`);
-    
-    res.json({
-      success: true,
-      hasToppings: hasToppings,
-      message: `Toppings ${hasToppings ? 'enabled' : 'disabled'} successfully`
-    });
-    
-  } catch (error) {
-    console.error('❌ Error toggling toppings:', error);
-    res.status(500).json({ 
-      error: 'Failed to toggle toppings',
-      details: error.message 
-    });
-  }
-});
+  });
 
 // Force production environment
 process.env.NODE_ENV = 'production';
