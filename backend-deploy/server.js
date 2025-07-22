@@ -1830,34 +1830,13 @@ IMPORTANT:
         createdAt: new Date()
       };
       
-      if (firebaseAvailable) {
-        // Use Firebase
-        const db = admin.firestore();
-        const categoryRef = db.collection('menu').doc(categoryId);
-        const categoryDoc = await categoryRef.get();
-        
-        if (!categoryDoc.exists) {
-          return res.status(404).json({ 
-            error: 'Category not found' 
-          });
-        }
-        
-        // Add the new topping to the toppings subcollection
-        await categoryRef.collection('toppings').doc(toppingId).set(newTopping);
-        
-        // Update category to indicate it has toppings
-        await categoryRef.update({
-          hasToppings: true
-        });
-      } else {
-        // Use in-memory fallback
-        if (!memoryStorage.categories[categoryId]) {
-          memoryStorage.categories[categoryId] = { hasToppings: false, toppings: [] };
-        }
-        memoryStorage.categories[categoryId].toppings.push(newTopping);
-        memoryStorage.categories[categoryId].hasToppings = true;
-        console.log(`💾 Added topping to in-memory storage for category ${categoryId}`);
+      // Always use in-memory storage for production deployment
+      if (!memoryStorage.categories[categoryId]) {
+        memoryStorage.categories[categoryId] = { hasToppings: false, toppings: [] };
       }
+      memoryStorage.categories[categoryId].toppings.push(newTopping);
+      memoryStorage.categories[categoryId].hasToppings = true;
+      console.log(`💾 Added topping to in-memory storage for category ${categoryId}`);
       
       console.log(`✅ Added topping "${name}" to category ${categoryId}`);
       
@@ -2005,30 +1984,11 @@ IMPORTANT:
       const categoryId = req.params.categoryId;
       let toppings = [];
       
-      if (firebaseAvailable) {
-        // Use Firebase
-        const db = admin.firestore();
-        const categoryRef = db.collection('menu').doc(categoryId);
-        const categoryDoc = await categoryRef.get();
-        
-        if (!categoryDoc.exists) {
-          return res.status(404).json({ 
-            error: 'Category not found' 
-          });
-        }
-        
-        // Get toppings from the toppings subcollection
-        const toppingsSnapshot = await categoryRef.collection('toppings').get();
-        toppingsSnapshot.forEach(doc => {
-          toppings.push(doc.data());
-        });
-      } else {
-        // Use in-memory fallback
-        if (memoryStorage.categories[categoryId]) {
-          toppings = memoryStorage.categories[categoryId].toppings || [];
-        }
-        console.log(`💾 Using in-memory storage for category ${categoryId}`);
+      // Always use in-memory storage for production deployment
+      if (memoryStorage.categories[categoryId]) {
+        toppings = memoryStorage.categories[categoryId].toppings || [];
       }
+      console.log(`💾 Using in-memory storage for category ${categoryId}`);
       
       console.log(`✅ Fetched ${toppings.length} toppings for category ${categoryId}`);
       
@@ -2173,6 +2133,17 @@ IMPORTANT:
         });
       }
       
+      // Always use in-memory fallback for production deployment
+      // Since Render doesn't have proper Firebase credentials configured
+      console.log(`💾 Using in-memory storage for category ${categoryId} (production fallback)`);
+      if (!memoryStorage.categories[categoryId]) {
+        memoryStorage.categories[categoryId] = { hasToppings: false, toppings: [] };
+      }
+      memoryStorage.categories[categoryId].hasToppings = hasToppings;
+      console.log(`💾 Updated in-memory storage for category ${categoryId}`);
+      
+      // TODO: Re-enable Firebase once credentials are properly configured on Render
+      /*
       // Try Firebase first, fallback to memory if it fails
       try {
         if (admin.apps.length) {
@@ -2205,6 +2176,7 @@ IMPORTANT:
         memoryStorage.categories[categoryId].hasToppings = hasToppings;
         console.log(`💾 Updated in-memory storage for category ${categoryId}`);
       }
+      */
       
       console.log(`✅ ${hasToppings ? 'Enabled' : 'Disabled'} toppings for category ${categoryId}`);
       
