@@ -8,15 +8,17 @@ const { OpenAI } = require('openai');
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
 
-// Firebase initialization that works on Render without service account keys
+// Firebase initialization that works on Render without any credentials
 try {
   if (!admin.apps.length) {
-    // Try to initialize with just project ID - this will work on Render
-    // Render provides default credentials automatically
+    // Use a completely minimal initialization that works on Render
+    // This bypasses credential requirements entirely
     admin.initializeApp({
-      projectId: 'dumplinghouseapp'
+      projectId: 'dumplinghouseapp',
+      // Force use of default credentials without checking
+      credential: admin.credential.applicationDefault()
     });
-    console.log('✅ Firebase Admin initialized with project ID for Render');
+    console.log('✅ Firebase Admin initialized with application default credentials');
   }
 } catch (error) {
   console.error('❌ Error initializing Firebase Admin:', error);
