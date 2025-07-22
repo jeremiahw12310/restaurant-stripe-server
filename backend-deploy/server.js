@@ -1860,46 +1860,34 @@ IMPORTANT:
       console.log('✏️ Updating topping:', req.params.toppingId);
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
       
-      if (!admin.apps.length) {
-        return res.status(500).json({ 
-          error: 'Firebase not initialized' 
-        });
-      }
-      
-      const db = admin.firestore();
       const categoryId = req.params.categoryId;
       const toppingId = req.params.toppingId;
       const { name, price, imageURL, isAvailable } = req.body;
       
-      const categoryRef = db.collection('menu').doc(categoryId);
-      const categoryDoc = await categoryRef.get();
-      
-      if (!categoryDoc.exists) {
+      // Always use in-memory storage for production deployment
+      if (!memoryStorage.categories[categoryId] || !memoryStorage.categories[categoryId].toppings) {
         return res.status(404).json({ 
-          error: 'Category not found' 
+          error: 'Category or toppings not found' 
         });
       }
       
-      const toppingRef = categoryRef.collection('toppings').doc(toppingId);
-      const toppingDoc = await toppingRef.get();
+      const toppings = memoryStorage.categories[categoryId].toppings;
+      const toppingIndex = toppings.findIndex(t => t.id === toppingId);
       
-      if (!toppingDoc.exists) {
+      if (toppingIndex === -1) {
         return res.status(404).json({ 
           error: 'Topping not found' 
         });
       }
       
-      // Update the topping document
-      const updateData = {};
-      if (name !== undefined) updateData.name = name;
-      if (price !== undefined) updateData.price = parseFloat(price);
-      if (imageURL !== undefined) updateData.imageURL = imageURL;
-      if (isAvailable !== undefined) updateData.isAvailable = isAvailable;
-      updateData.updatedAt = new Date();
+      // Update the topping in memory
+      if (name !== undefined) toppings[toppingIndex].name = name;
+      if (price !== undefined) toppings[toppingIndex].price = parseFloat(price);
+      if (imageURL !== undefined) toppings[toppingIndex].imageURL = imageURL;
+      if (isAvailable !== undefined) toppings[toppingIndex].isAvailable = isAvailable;
+      toppings[toppingIndex].updatedAt = new Date();
       
-      await toppingRef.update(updateData);
-      
-      console.log(`✅ Updated topping "${toppingId}" in category ${categoryId}`);
+      console.log(`✅ Updated topping "${toppingId}" in category ${categoryId} (in-memory)`);
       
       res.json({
         success: true,
@@ -2011,47 +1999,32 @@ IMPORTANT:
     try {
       console.log('🗑️ Deleting topping:', req.params.toppingId);
       
-      if (!admin.apps.length) {
-        return res.status(500).json({ 
-          error: 'Firebase not initialized' 
-        });
-      }
-      
-      const db = admin.firestore();
       const categoryId = req.params.categoryId;
       const toppingId = req.params.toppingId;
       
-      const categoryRef = db.collection('menu').doc(categoryId);
-      const categoryDoc = await categoryRef.get();
-      
-      if (!categoryDoc.exists) {
+      // Always use in-memory storage for production deployment
+      if (!memoryStorage.categories[categoryId] || !memoryStorage.categories[categoryId].toppings) {
         return res.status(404).json({ 
-          error: 'Category not found' 
+          error: 'Category or toppings not found' 
         });
       }
       
-      // Delete the topping from the toppings subcollection
-      const toppingRef = categoryRef.collection('toppings').doc(toppingId);
-      const toppingDoc = await toppingRef.get();
+      const toppings = memoryStorage.categories[categoryId].toppings;
+      const toppingIndex = toppings.findIndex(t => t.id === toppingId);
       
-      if (!toppingDoc.exists) {
+      if (toppingIndex === -1) {
         return res.status(404).json({ 
           error: 'Topping not found' 
         });
       }
       
-      const toppingData = toppingDoc.data();
-      await toppingRef.delete();
-      
-      // Check if there are any remaining toppings
-      const remainingToppings = await categoryRef.collection('toppings').get();
+      // Delete the topping from memory
+      const deletedTopping = toppings.splice(toppingIndex, 1)[0];
       
       // Update category hasToppings flag
-      await categoryRef.update({
-        hasToppings: !remainingToppings.empty
-      });
+      memoryStorage.categories[categoryId].hasToppings = toppings.length > 0;
       
-      console.log(`✅ Deleted topping "${toppingData.name}" from category ${categoryId}`);
+      console.log(`✅ Deleted topping "${deletedTopping.name}" from category ${categoryId} (in-memory)`);
       
       res.json({
         success: true,
