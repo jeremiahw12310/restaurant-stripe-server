@@ -1827,7 +1827,7 @@ app.get('/toppings/:categoryId', async (req, res) => {
     let usedStorage = 'memory';
     
     // Try Firebase first, fall back to memory on any error
-    if (admin.apps.length > 0) {
+    if (useFirebaseForToppings() && admin.apps.length > 0) {
       try {
         const db = admin.firestore();
         const toppingsSnapshot = await db.collection('menu').doc(categoryId).collection('toppings').get();
@@ -1925,7 +1925,7 @@ app.patch('/category/:categoryId/toggle-toppings', async (req, res) => {
     let usedStorage = 'memory';
     
     // Try Firebase first, fall back to memory on any error
-    if (admin.apps.length > 0) {
+    if (useFirebaseForToppings() && admin.apps.length > 0) {
       try {
         const db = admin.firestore();
         const categoryRef = db.collection('menu').doc(categoryId);
@@ -2155,7 +2155,7 @@ app.get('/admin/categories-with-toppings', async (req, res) => {
     let usedStorage = 'memory';
     
     // Try Firebase first, fall back to memory on any error
-    if (admin.apps.length > 0) {
+    if (useFirebaseForToppings() && admin.apps.length > 0) {
       try {
         const db = admin.firestore();
         const categoriesSnapshot = await db.collection('menu').get();
@@ -2357,8 +2357,15 @@ inMemoryStorage.toppings['Dumplings'] = [
 // Helper function to check if we should use Firebase or in-memory storage
 let firebaseWorking = false;
 
+// Temporary flag to disable Firebase for toppings operations (for testing)
+const DISABLE_FIREBASE_FOR_TOPPINGS = true;
+
 function useFirebase() {
   return firebaseWorking;
+}
+
+function useFirebaseForToppings() {
+  return !DISABLE_FIREBASE_FOR_TOPPINGS && firebaseWorking;
 }
 
 // Test Firebase connection
