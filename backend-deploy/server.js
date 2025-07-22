@@ -1790,6 +1790,22 @@ IMPORTANT:
 // TOPPINGS MANAGEMENT ENDPOINTS
 // ========================================================================================
 
+// Temporary flag to disable Firebase for toppings operations (for testing)
+const DISABLE_FIREBASE_FOR_TOPPINGS = true;
+
+function useFirebase() {
+  return firebaseWorking;
+}
+
+function useFirebaseForToppings() {
+  // Always use in-memory storage on Render until Firebase ADC is properly configured
+  if (process.env.RENDER) {
+    console.log('🔄 Using in-memory storage on Render environment');
+    return false;
+  }
+  return !DISABLE_FIREBASE_FOR_TOPPINGS && firebaseWorking;
+}
+
 // Get all toppings for a category
 app.get('/toppings/:categoryId', async (req, res) => {
   try {
