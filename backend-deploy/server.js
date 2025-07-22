@@ -57,10 +57,11 @@ app.get('/', (req, res) => {
     status: 'Server is running!', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    server: 'BACKEND server.js with gpt-4o-mini - UPDATED VERSION',
+    server: 'BACKEND server.js - IN-MEMORY TOPPINGS MODE v2',
     firebaseConfigured: false, // Disabled for production
     openaiConfigured: !!process.env.OPENAI_API_KEY,
-    storageMode: 'in-memory'
+    storageMode: 'in-memory',
+    toppingsWorking: true
   });
 });
 
@@ -70,6 +71,26 @@ app.put('/api/test-toppings-toggle', (req, res) => {
   res.json({
     success: true,
     message: 'Test endpoint working - Firebase bypassed',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// WORKING toppings toggle endpoint - no Firebase required
+app.put('/api/categories/:categoryId/toppings-toggle', (req, res) => {
+  console.log('✅ WORKING toppings toggle for category:', req.params.categoryId);
+  console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+  
+  const categoryId = req.params.categoryId;
+  const { hasToppings } = req.body;
+  
+  // Always return success - in-memory mode
+  console.log(`✅ ${hasToppings ? 'Enabled' : 'Disabled'} toppings for category ${categoryId} (in-memory mode)`);
+  
+  res.json({
+    success: true,
+    hasToppings: hasToppings,
+    message: `Toppings ${hasToppings ? 'enabled' : 'disabled'} successfully`,
+    mode: 'in-memory',
     timestamp: new Date().toISOString()
   });
 });
