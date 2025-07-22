@@ -1937,7 +1937,68 @@ IMPORTANT:
     }
   });
 
-  // Fetch toppings for a category
+  // Fetch complete toppings from Firestore endpoint (like firestore-menu)
+  app.get('/firestore-toppings', async (req, res) => {
+    try {
+      console.log('🔍 Fetching complete toppings from Firestore...');
+      
+      if (!admin.apps.length) {
+        return res.status(500).json({ 
+          error: 'Firebase not initialized - FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
+        });
+      }
+      
+      const db = admin.firestore();
+      
+      // Get all menu categories (same as menu items fetch)
+      const categoriesSnapshot = await db.collection('menu').get();
+      const allToppings = [];
+      
+      for (const categoryDoc of categoriesSnapshot.docs) {
+        const categoryId = categoryDoc.id;
+        console.log(`🔍 Processing toppings for category: ${categoryId}`);
+        
+        // Get all toppings in this category (same pattern as menu items)
+        const toppingsSnapshot = await db.collection('menu').doc(categoryId).collection('toppings').get();
+        
+        for (const toppingDoc of toppingsSnapshot.docs) {
+          try {
+            const toppingData = toppingDoc.data();
+            const topping = {
+              id: toppingData.id || toppingDoc.id,
+              name: toppingData.name || '',
+              price: toppingData.price || 0.0,
+              imageURL: toppingData.imageURL || '',
+              isAvailable: toppingData.isAvailable !== false,
+              categoryId: categoryId
+            };
+            allToppings.push(topping);
+            console.log(`✅ Added topping: ${topping.name} (${categoryId})`);
+          } catch (error) {
+            console.error(`❌ Error processing topping ${toppingDoc.id} in category ${categoryId}:`, error);
+          }
+        }
+      }
+      
+      console.log(`✅ Fetched ${allToppings.length} toppings from Firestore`);
+      
+      res.json({
+        success: true,
+        toppings: allToppings,
+        totalToppings: allToppings.length,
+        categories: categoriesSnapshot.docs.map(doc => doc.id)
+      });
+      
+    } catch (error) {
+      console.error('❌ Error fetching toppings from Firestore:', error);
+      res.status(500).json({ 
+        error: 'Failed to fetch toppings from Firestore',
+        details: error.message 
+      });
+    }
+  });
+
+  // Fetch toppings for a specific category
   app.get('/api/categories/:categoryId/toppings', async (req, res) => {
     try {
       console.log('🔍 Fetching toppings for category:', req.params.categoryId);
