@@ -52,24 +52,10 @@ const memoryStorage = {
   }
 };
 
-// Test Firebase availability more thoroughly
-async function testFirebaseConnection() {
-  try {
-    const db = admin.firestore();
-    // Try to actually read from Firestore to test real connectivity
-    await db.collection('menu').limit(1).get();
-    firebaseAvailable = true;
-    console.log('✅ Firebase connection test successful');
-  } catch (error) {
-    firebaseAvailable = false;
-    console.log('⚠️ Firebase not available, using in-memory fallback');
-    console.log('💡 Error:', error.message);
-  }
-}
-
-// Test Firebase immediately on startup and periodically
-testFirebaseConnection();
-setInterval(testFirebaseConnection, 30000); // Test every 30 seconds
+// Disable Firebase connection test for production deployment
+// Since we're using in-memory storage, we don't need to test Firebase
+firebaseAvailable = false;
+console.log('💾 Production mode: Using in-memory storage only');
 
 
 // Health check endpoint
