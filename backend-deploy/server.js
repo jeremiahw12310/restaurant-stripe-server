@@ -2189,3 +2189,48 @@ app.listen(port, '0.0.0.0', () => {
 });
 // Force redeploy - Sat Jul 19 14:12:02 CDT 2025
 // Force complete redeploy - Sat Jul 19 14:15:27 CDT 2025
+
+// Simple test endpoint to verify deployment
+app.get('/deployment-test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Deployment successful',
+    timestamp: new Date().toISOString(),
+    version: 'v2.0-with-memory-storage'
+  });
+});
+
+// Standalone toppings test endpoint (no Firebase)
+app.patch('/test-toggle-toppings/:categoryId', (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const { enabled, toppingsType } = req.body;
+    
+    console.log(`🧪 TEST: Toggling toppings for ${categoryId}: enabled=${enabled}`);
+    
+    // Simple in-memory test storage
+    if (!global.testToppings) {
+      global.testToppings = {};
+    }
+    
+    global.testToppings[categoryId] = {
+      enabled: enabled,
+      toppingsType: toppingsType || 'toppings',
+      timestamp: new Date().toISOString()
+    };
+    
+    res.json({
+      success: true,
+      message: 'Test toggle successful',
+      categoryId,
+      enabled,
+      toppingsType,
+      storage: 'test-memory'
+    });
+    
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========================================================================================
