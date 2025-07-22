@@ -8,20 +8,43 @@ const { OpenAI } = require('openai');
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
 
-// Firebase initialization using Application Default Credentials (ADC)
-try {
-  if (!admin.apps.length) {
-    // Use Application Default Credentials for Firebase
+// Check authentication method
+if (process.env.FIREBASE_AUTH_TYPE === 'adc') {
+  // Use Application Default Credentials
+  try {
+    // Initialize Firebase Admin with just the project ID
+    // This will work on Render and use the default service account
     admin.initializeApp({
-      projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp',
-      credential: admin.credential.applicationDefault()
+      projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp'
     });
-    console.log('✅ Firebase Admin initialized with Application Default Credentials');
+    console.log('✅ Firebase Admin initialized with project ID for ADC');
+  } catch (error) {
+    console.error('❌ Error initializing Firebase Admin with ADC:', error);
   }
-} catch (error) {
-  console.error('❌ Error initializing Firebase Admin:', error);
-  console.warn('⚠️ Firebase features will not work');
-  console.warn('💡 Make sure you have run: gcloud auth application-default login');
+} else if (process.env.FIREBASE_AUTH_TYPE === 'service-account' && process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+  // Use service account key
+  try {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+    console.log('✅ Firebase Admin initialized with service account key');
+  } catch (error) {
+    console.error('❌ Error initializing Firebase Admin with service account:', error);
+  }
+} else if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+  // Fallback: Use service account key if available
+  try {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+    console.log('✅ Firebase Admin initialized with service account key (fallback)');
+  } catch (error) {
+    console.error('❌ Error initializing Firebase Admin with service account:', error);
+  }
+} else {
+  console.warn('⚠️ No Firebase authentication method found - Firebase features will not work');
 }
 
 const app = express();
@@ -1422,222 +1445,27 @@ IMPORTANT:
   });
 }
 
+// ========================================================================================
+// TOPPINGS MANAGEMENT ENDPOINTS
+// ========================================================================================
 
-
-app.post('/api/categories/:categoryId/toppings', async (req, res) => {
+// Get all toppings for a category
+app.get('/toppings/:categoryId', async (req, res) => {
   try {
-    console.log('➕ Adding topping to category:', req.params.categoryId);
-    console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+    const { categoryId } = req.params;
+    console.log(`🔍 Fetching toppings for category: ${categoryId}`);
     
     if (!admin.apps.length) {
       return res.status(500).json({ 
-        error: 'Firebase not initialized' 
+        error: 'Firebase not initialized',
+        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
       });
     }
     
     const db = admin.firestore();
-    const categoryId = req.params.categoryId;
-    const { name, price, imageURL } = req.body;
+    const toppingsSnapshot = await db.collection('menu').doc(categoryId).collection('toppings').get();
     
-    if (!name || price === undefined) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: name, price' 
-      });
-    }
-    
-    const categoryRef = db.collection('menu').doc(categoryId);
-    const categoryDoc = await categoryRef.get();
-    
-    if (!categoryDoc.exists) {
-      return res.status(404).json({ 
-        error: 'Category not found' 
-      });
-    }
-    
-    // Generate unique ID for the topping
-    const toppingId = `topping_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
-    const newTopping = {
-      id: toppingId,
-      name: name,
-      price: parseFloat(price),
-      imageURL: imageURL || '',
-      isAvailable: true,
-      createdAt: new Date()
-    };
-    
-    // Add the new topping to the toppings subcollection
-    await categoryRef.collection('toppings').doc(toppingId).set(newTopping);
-    
-    // Update category to indicate it has toppings
-    await categoryRef.update({
-      hasToppings: true
-    });
-    
-    console.log(`✅ Added topping "${name}" to category ${categoryId}`);
-    
-    res.json({
-      success: true,
-      topping: newTopping,
-      message: 'Topping added successfully'
-    });
-    
-  } catch (error) {
-    console.error('❌ Error adding topping:', error);
-    res.status(500).json({ 
-      error: 'Failed to add topping',
-      details: error.message 
-    });
-  }
-});
-
-app.put('/api/categories/:categoryId/toppings/:toppingId', async (req, res) => {
-  try {
-    console.log('✏️ Updating topping:', req.params.toppingId);
-    console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
-    
-    if (!admin.apps.length) {
-      return res.status(500).json({ 
-        error: 'Firebase not initialized' 
-      });
-    }
-    
-    const db = admin.firestore();
-    const categoryId = req.params.categoryId;
-    const toppingId = req.params.toppingId;
-    const { name, price, imageURL, isAvailable } = req.body;
-    
-    const categoryRef = db.collection('menu').doc(categoryId);
-    const categoryDoc = await categoryRef.get();
-    
-    if (!categoryDoc.exists) {
-      return res.status(404).json({ 
-        error: 'Category not found' 
-      });
-    }
-    
-    const toppingRef = categoryRef.collection('toppings').doc(toppingId);
-    const toppingDoc = await toppingRef.get();
-    
-    if (!toppingDoc.exists) {
-      return res.status(404).json({ 
-        error: 'Topping not found' 
-      });
-    }
-    
-    // Update the topping document
-    const updateData = {};
-    if (name !== undefined) updateData.name = name;
-    if (price !== undefined) updateData.price = parseFloat(price);
-    if (imageURL !== undefined) updateData.imageURL = imageURL;
-    if (isAvailable !== undefined) updateData.isAvailable = isAvailable;
-    updateData.updatedAt = new Date();
-    
-    await toppingRef.update(updateData);
-    
-    console.log(`✅ Updated topping "${toppingId}" in category ${categoryId}`);
-    
-    res.json({
-      success: true,
-      message: 'Topping updated successfully'
-    });
-    
-  } catch (error) {
-    console.error('❌ Error updating topping:', error);
-    res.status(500).json({ 
-      error: 'Failed to update topping',
-      details: error.message 
-    });
-  }
-});
-
-app.delete('/api/categories/:categoryId/toppings/:toppingId', async (req, res) => {
-  try {
-    console.log('🗑️ Deleting topping:', req.params.toppingId);
-    
-    if (!admin.apps.length) {
-      return res.status(500).json({ 
-        error: 'Firebase not initialized' 
-      });
-    }
-    
-    const db = admin.firestore();
-    const categoryId = req.params.categoryId;
-    const toppingId = req.params.toppingId;
-    
-    const categoryRef = db.collection('menu').doc(categoryId);
-    const categoryDoc = await categoryRef.get();
-    
-    if (!categoryDoc.exists) {
-      return res.status(404).json({ 
-        error: 'Category not found' 
-      });
-    }
-    
-    // Delete the topping from the toppings subcollection
-    const toppingRef = categoryRef.collection('toppings').doc(toppingId);
-    const toppingDoc = await toppingRef.get();
-    
-    if (!toppingDoc.exists) {
-      return res.status(404).json({ 
-        error: 'Topping not found' 
-      });
-    }
-    
-    const toppingData = toppingDoc.data();
-    await toppingRef.delete();
-    
-    // Check if there are any remaining toppings
-    const remainingToppings = await categoryRef.collection('toppings').get();
-    
-    // Update category hasToppings flag
-    await categoryRef.update({
-      hasToppings: !remainingToppings.empty
-    });
-    
-    console.log(`✅ Deleted topping "${toppingData.name}" from category ${categoryId}`);
-    
-    res.json({
-      success: true,
-      message: 'Topping deleted successfully'
-    });
-    
-  } catch (error) {
-    console.error('❌ Error deleting topping:', error);
-    res.status(500).json({ 
-      error: 'Failed to delete topping',
-      details: error.message 
-    });
-  }
-});
-
-// Get toppings for a category
-app.get('/api/categories/:categoryId/toppings', async (req, res) => {
-  try {
-    console.log('🔍 Fetching toppings for category:', req.params.categoryId);
-    
-    if (!admin.apps.length) {
-      return res.status(500).json({ 
-        error: 'Firebase not initialized' 
-      });
-    }
-    
-    const db = admin.firestore();
-    const categoryId = req.params.categoryId;
-    
-    const categoryRef = db.collection('menu').doc(categoryId);
-    const categoryDoc = await categoryRef.get();
-    
-    if (!categoryDoc.exists) {
-      return res.status(404).json({ 
-        error: 'Category not found' 
-      });
-    }
-    
-    // Get all toppings from the toppings subcollection
-    const toppingsSnapshot = await categoryRef.collection('toppings').get();
     const toppings = [];
-    
     toppingsSnapshot.forEach(doc => {
       toppings.push({
         id: doc.id,
@@ -1645,11 +1473,11 @@ app.get('/api/categories/:categoryId/toppings', async (req, res) => {
       });
     });
     
-    console.log(`✅ Fetched ${toppings.length} toppings for category ${categoryId}`);
-    
+    console.log(`✅ Found ${toppings.length} toppings for category ${categoryId}`);
     res.json({
       success: true,
-      toppings: toppings,
+      categoryId,
+      toppings,
       count: toppings.length
     });
     
@@ -1662,57 +1490,355 @@ app.get('/api/categories/:categoryId/toppings', async (req, res) => {
   }
 });
 
-app.put('/api/categories/:categoryId/toppings-toggle', async (req, res) => {
+// Get category settings (including toppings enabled status)
+app.get('/category/:categoryId/settings', async (req, res) => {
   try {
-    console.log('🔄 Toggling toppings for category:', req.params.categoryId);
-    console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+    const { categoryId } = req.params;
+    console.log(`🔍 Fetching settings for category: ${categoryId}`);
     
     if (!admin.apps.length) {
       return res.status(500).json({ 
-        error: 'Firebase not initialized' 
+        error: 'Firebase not initialized',
+        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
       });
     }
     
     const db = admin.firestore();
-    const categoryId = req.params.categoryId;
-    const { hasToppings } = req.body;
-    
-    if (hasToppings === undefined) {
-      return res.status(400).json({ 
-        error: 'Missing required field: hasToppings' 
-      });
-    }
-    
-    const categoryRef = db.collection('menu').doc(categoryId);
-    const categoryDoc = await categoryRef.get();
+    const categoryDoc = await db.collection('menu').doc(categoryId).get();
     
     if (!categoryDoc.exists) {
-      // Create the category document if it doesn't exist
-      console.log(`📝 Creating new category document for: ${categoryId}`);
-      await categoryRef.set({
-        id: categoryId,
-        hasToppings: hasToppings,
-        createdAt: new Date()
-      });
-    } else {
-      // Update existing category
-      await categoryRef.update({
-        hasToppings: hasToppings
+      return res.status(404).json({ 
+        error: 'Category not found',
+        categoryId 
       });
     }
     
-    console.log(`✅ ${hasToppings ? 'Enabled' : 'Disabled'} toppings for category ${categoryId}`);
+    const categoryData = categoryDoc.data();
     
     res.json({
       success: true,
-      hasToppings: hasToppings,
-      message: `Toppings ${hasToppings ? 'enabled' : 'disabled'} successfully`
+      categoryId,
+      settings: {
+        toppingsEnabled: categoryData.toppingsEnabled || false,
+        toppingsType: categoryData.toppingsType || 'toppings', // 'toppings' or 'milk-tea-toppings'
+        displayName: categoryData.displayName || categoryId,
+        ...categoryData
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error fetching category settings:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch category settings',
+      details: error.message 
+    });
+  }
+});
+
+// Toggle toppings enabled for a category
+app.patch('/category/:categoryId/toggle-toppings', async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const { enabled, toppingsType } = req.body;
+    
+    console.log(`🔄 Toggling toppings for category ${categoryId}: enabled=${enabled}, type=${toppingsType}`);
+    
+    if (!admin.apps.length) {
+      return res.status(500).json({ 
+        error: 'Firebase not initialized',
+        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
+      });
+    }
+    
+    const db = admin.firestore();
+    const categoryRef = db.collection('menu').doc(categoryId);
+    
+    const updateData = {
+      toppingsEnabled: enabled,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+    
+    if (toppingsType) {
+      updateData.toppingsType = toppingsType;
+    }
+    
+    await categoryRef.update(updateData);
+    
+    console.log(`✅ Updated toppings settings for category ${categoryId}`);
+    res.json({
+      success: true,
+      categoryId,
+      toppingsEnabled: enabled,
+      toppingsType: toppingsType || 'toppings',
+      message: `Toppings ${enabled ? 'enabled' : 'disabled'} for category ${categoryId}`
     });
     
   } catch (error) {
     console.error('❌ Error toggling toppings:', error);
     res.status(500).json({ 
       error: 'Failed to toggle toppings',
+      details: error.message 
+    });
+  }
+});
+
+// Create a new topping
+app.post('/toppings/:categoryId', async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const { name, price, imageURL, description, isAvailable } = req.body;
+    
+    console.log(`➕ Creating topping for category ${categoryId}:`, { name, price });
+    
+    if (!name || price === undefined) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: name and price' 
+      });
+    }
+    
+    if (!admin.apps.length) {
+      return res.status(500).json({ 
+        error: 'Firebase not initialized',
+        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
+      });
+    }
+    
+    const db = admin.firestore();
+    const toppingsRef = db.collection('menu').doc(categoryId).collection('toppings');
+    
+    const toppingData = {
+      name: name.trim(),
+      price: parseFloat(price),
+      imageURL: imageURL || '',
+      description: description || '',
+      isAvailable: isAvailable !== false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+    
+    const docRef = await toppingsRef.add(toppingData);
+    
+    console.log(`✅ Created topping with ID: ${docRef.id}`);
+    res.json({
+      success: true,
+      toppingId: docRef.id,
+      categoryId,
+      topping: {
+        id: docRef.id,
+        ...toppingData
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error creating topping:', error);
+    res.status(500).json({ 
+      error: 'Failed to create topping',
+      details: error.message 
+    });
+  }
+});
+
+// Update a topping
+app.put('/toppings/:categoryId/:toppingId', async (req, res) => {
+  try {
+    const { categoryId, toppingId } = req.params;
+    const { name, price, imageURL, description, isAvailable } = req.body;
+    
+    console.log(`✏️ Updating topping ${toppingId} in category ${categoryId}`);
+    
+    if (!admin.apps.length) {
+      return res.status(500).json({ 
+        error: 'Firebase not initialized',
+        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
+      });
+    }
+    
+    const db = admin.firestore();
+    const toppingRef = db.collection('menu').doc(categoryId).collection('toppings').doc(toppingId);
+    
+    // Check if topping exists
+    const toppingDoc = await toppingRef.get();
+    if (!toppingDoc.exists) {
+      return res.status(404).json({ 
+        error: 'Topping not found',
+        toppingId,
+        categoryId 
+      });
+    }
+    
+    const updateData = {
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+    
+    if (name !== undefined) updateData.name = name.trim();
+    if (price !== undefined) updateData.price = parseFloat(price);
+    if (imageURL !== undefined) updateData.imageURL = imageURL;
+    if (description !== undefined) updateData.description = description;
+    if (isAvailable !== undefined) updateData.isAvailable = isAvailable;
+    
+    await toppingRef.update(updateData);
+    
+    console.log(`✅ Updated topping ${toppingId}`);
+    res.json({
+      success: true,
+      toppingId,
+      categoryId,
+      updated: updateData,
+      message: 'Topping updated successfully'
+    });
+    
+  } catch (error) {
+    console.error('❌ Error updating topping:', error);
+    res.status(500).json({ 
+      error: 'Failed to update topping',
+      details: error.message 
+    });
+  }
+});
+
+// Delete a topping
+app.delete('/toppings/:categoryId/:toppingId', async (req, res) => {
+  try {
+    const { categoryId, toppingId } = req.params;
+    
+    console.log(`🗑️ Deleting topping ${toppingId} from category ${categoryId}`);
+    
+    if (!admin.apps.length) {
+      return res.status(500).json({ 
+        error: 'Firebase not initialized',
+        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
+      });
+    }
+    
+    const db = admin.firestore();
+    const toppingRef = db.collection('menu').doc(categoryId).collection('toppings').doc(toppingId);
+    
+    // Check if topping exists
+    const toppingDoc = await toppingRef.get();
+    if (!toppingDoc.exists) {
+      return res.status(404).json({ 
+        error: 'Topping not found',
+        toppingId,
+        categoryId 
+      });
+    }
+    
+    await toppingRef.delete();
+    
+    console.log(`✅ Deleted topping ${toppingId}`);
+    res.json({
+      success: true,
+      toppingId,
+      categoryId,
+      message: 'Topping deleted successfully'
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting topping:', error);
+    res.status(500).json({ 
+      error: 'Failed to delete topping',
+      details: error.message 
+    });
+  }
+});
+
+// Get all categories with their toppings settings (for admin panel)
+app.get('/admin/categories-with-toppings', async (req, res) => {
+  try {
+    console.log('🔍 Fetching all categories with toppings settings for admin');
+    
+    if (!admin.apps.length) {
+      return res.status(500).json({ 
+        error: 'Firebase not initialized',
+        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
+      });
+    }
+    
+    const db = admin.firestore();
+    const categoriesSnapshot = await db.collection('menu').get();
+    
+    const categories = [];
+    
+    for (const categoryDoc of categoriesSnapshot.docs) {
+      const categoryData = categoryDoc.data();
+      const categoryId = categoryDoc.id;
+      
+      // Get toppings count for this category
+      const toppingsSnapshot = await db.collection('menu').doc(categoryId).collection('toppings').get();
+      
+      categories.push({
+        id: categoryId,
+        displayName: categoryData.displayName || categoryId,
+        toppingsEnabled: categoryData.toppingsEnabled || false,
+        toppingsType: categoryData.toppingsType || 'toppings',
+        toppingsCount: toppingsSnapshot.size,
+        itemsCount: categoryData.items ? categoryData.items.length : 0,
+        ...categoryData
+      });
+    }
+    
+    console.log(`✅ Found ${categories.length} categories`);
+    res.json({
+      success: true,
+      categories,
+      count: categories.length
+    });
+    
+  } catch (error) {
+    console.error('❌ Error fetching categories with toppings:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch categories with toppings',
+      details: error.message 
+    });
+  }
+});
+
+// Batch update multiple toppings (for admin convenience)
+app.patch('/toppings/:categoryId/batch', async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const { updates } = req.body; // Array of {toppingId, updates}
+    
+    console.log(`🔄 Batch updating ${updates.length} toppings in category ${categoryId}`);
+    
+    if (!admin.apps.length) {
+      return res.status(500).json({ 
+        error: 'Firebase not initialized',
+        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
+      });
+    }
+    
+    const db = admin.firestore();
+    const batch = db.batch();
+    
+    const results = [];
+    
+    for (const update of updates) {
+      const { toppingId, ...updateData } = update;
+      const toppingRef = db.collection('menu').doc(categoryId).collection('toppings').doc(toppingId);
+      
+      batch.update(toppingRef, {
+        ...updateData,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      
+      results.push({ toppingId, status: 'queued' });
+    }
+    
+    await batch.commit();
+    
+    console.log(`✅ Batch updated ${updates.length} toppings`);
+    res.json({
+      success: true,
+      categoryId,
+      updated: results.length,
+      results
+    });
+    
+  } catch (error) {
+    console.error('❌ Error batch updating toppings:', error);
+    res.status(500).json({ 
+      error: 'Failed to batch update toppings',
       details: error.message 
     });
   }
