@@ -2396,3 +2396,21 @@ testFirebaseConnection();
 // ========================================================================================
 // TOPPINGS MANAGEMENT ENDPOINTS
 // ========================================================================================
+
+// Test endpoint for toppings functionality (no Firebase)
+app.get('/test-toppings', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Toppings test endpoint working',
+    timestamp: new Date().toISOString(),
+    storage: 'memory',
+    sampleToppings: [
+      {
+        id: 'test-topping-1',
+        name: 'Test Topping',
+        price: 1.50,
+        description: 'A test topping to verify functionality'
+      }
+    ]
+  });
+});
