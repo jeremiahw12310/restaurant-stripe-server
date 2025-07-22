@@ -52,18 +52,24 @@ const memoryStorage = {
   }
 };
 
-// Test Firebase availability
-setTimeout(async () => {
+// Test Firebase availability more thoroughly
+async function testFirebaseConnection() {
   try {
     const db = admin.firestore();
-    await db.collection('test').limit(1).get();
+    // Try to actually read from Firestore to test real connectivity
+    await db.collection('menu').limit(1).get();
     firebaseAvailable = true;
     console.log('✅ Firebase connection test successful');
   } catch (error) {
     firebaseAvailable = false;
     console.log('⚠️ Firebase not available, using in-memory fallback');
+    console.log('💡 Error:', error.message);
   }
-}, 2000);
+}
+
+// Test Firebase immediately on startup and periodically
+testFirebaseConnection();
+setInterval(testFirebaseConnection, 30000); // Test every 30 seconds
 
 
 // Health check endpoint
@@ -2156,6 +2162,7 @@ IMPORTANT:
     try {
       console.log('🔄 Toggling toppings for category:', req.params.categoryId);
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      console.log('🔍 Firebase available:', firebaseAvailable);
       
       const categoryId = req.params.categoryId;
       const { hasToppings } = req.body;
