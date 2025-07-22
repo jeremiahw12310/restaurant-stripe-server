@@ -1812,30 +1812,19 @@ app.get('/toppings/:categoryId', async (req, res) => {
     const { categoryId } = req.params;
     console.log(`🔍 Fetching toppings for category: ${categoryId}`);
     
-    if (!admin.apps.length) {
-      return res.status(500).json({ 
-        error: 'Firebase not initialized',
-        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
-      });
-    }
+    // Always use in-memory storage for now until Firebase ADC is properly configured on Render
+    console.log('🔄 Using in-memory storage for toppings fetch');
     
-    const db = admin.firestore();
-    const toppingsSnapshot = await db.collection('menu').doc(categoryId).collection('toppings').get();
+    // Use in-memory storage
+    const toppings = inMemoryStorage.toppings[categoryId] || [];
+    console.log(`✅ Found ${toppings.length} toppings in memory for category ${categoryId}`);
     
-    const toppings = [];
-    toppingsSnapshot.forEach(doc => {
-      toppings.push({
-        id: doc.id,
-        ...doc.data()
-      });
-    });
-    
-    console.log(`✅ Found ${toppings.length} toppings for category ${categoryId}`);
     res.json({
       success: true,
       categoryId,
       toppings,
-      count: toppings.length
+      count: toppings.length,
+      storage: 'memory'
     });
     
   } catch (error) {
@@ -1900,34 +1889,34 @@ app.patch('/category/:categoryId/toggle-toppings', async (req, res) => {
     
     console.log(`🔄 Toggling toppings for category ${categoryId}: enabled=${enabled}, type=${toppingsType}`);
     
-    if (!admin.apps.length) {
-      return res.status(500).json({ 
-        error: 'Firebase not initialized',
-        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
-      });
+    // Always use in-memory storage for now until Firebase ADC is properly configured on Render
+    console.log('🔄 Using in-memory storage for toppings toggle');
+    
+    // Use in-memory storage
+    if (!inMemoryStorage.categories[categoryId]) {
+      inMemoryStorage.categories[categoryId] = {
+        id: categoryId,
+        displayName: categoryId.replace(/-/g, ' '),
+        toppingsEnabled: false,
+        toppingsType: 'toppings',
+        items: []
+      };
     }
     
-    const db = admin.firestore();
-    const categoryRef = db.collection('menu').doc(categoryId);
-    
-    const updateData = {
-      toppingsEnabled: enabled,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    };
-    
+    inMemoryStorage.categories[categoryId].toppingsEnabled = enabled;
     if (toppingsType) {
-      updateData.toppingsType = toppingsType;
+      inMemoryStorage.categories[categoryId].toppingsType = toppingsType;
     }
     
-    await categoryRef.update(updateData);
+    console.log(`✅ Updated toppings settings in memory for category ${categoryId}`);
     
-    console.log(`✅ Updated toppings settings for category ${categoryId}`);
     res.json({
       success: true,
       categoryId,
       toppingsEnabled: enabled,
       toppingsType: toppingsType || 'toppings',
-      message: `Toppings ${enabled ? 'enabled' : 'disabled'} for category ${categoryId}`
+      message: `Toppings ${enabled ? 'enabled' : 'disabled'} for category ${categoryId}`,
+      storage: 'memory'
     });
     
   } catch (error) {
@@ -2104,41 +2093,27 @@ app.get('/admin/categories-with-toppings', async (req, res) => {
   try {
     console.log('🔍 Fetching all categories with toppings settings for admin');
     
-    if (!admin.apps.length) {
-      return res.status(500).json({ 
-        error: 'Firebase not initialized',
-        details: 'FIREBASE_SERVICE_ACCOUNT_KEY environment variable missing' 
-      });
-    }
+    // Always use in-memory storage for now until Firebase ADC is properly configured on Render
+    console.log('🔄 Using in-memory storage for admin categories fetch');
     
-    const db = admin.firestore();
-    const categoriesSnapshot = await db.collection('menu').get();
+    const categories = Object.values(inMemoryStorage.categories).map(category => {
+      const toppings = inMemoryStorage.toppings[category.id] || [];
+      return {
+        ...category,
+        toppingsCount: toppings.length,
+        itemsCount: category.items?.length || 0,
+        hasToppings: toppings.length > 0,
+        toppings: toppings.length > 0 ? toppings : undefined
+      };
+    });
     
-    const categories = [];
+    console.log(`✅ Found ${categories.length} categories in memory`);
     
-    for (const categoryDoc of categoriesSnapshot.docs) {
-      const categoryData = categoryDoc.data();
-      const categoryId = categoryDoc.id;
-      
-      // Get toppings count for this category
-      const toppingsSnapshot = await db.collection('menu').doc(categoryId).collection('toppings').get();
-      
-      categories.push({
-        id: categoryId,
-        displayName: categoryData.displayName || categoryId,
-        toppingsEnabled: categoryData.toppingsEnabled || false,
-        toppingsType: categoryData.toppingsType || 'toppings',
-        toppingsCount: toppingsSnapshot.size,
-        itemsCount: categoryData.items ? categoryData.items.length : 0,
-        ...categoryData
-      });
-    }
-    
-    console.log(`✅ Found ${categories.length} categories`);
     res.json({
       success: true,
       categories,
-      count: categories.length
+      count: categories.length,
+      storage: 'memory'
     });
     
   } catch (error) {
