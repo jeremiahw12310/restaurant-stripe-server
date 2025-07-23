@@ -30,7 +30,7 @@ struct PerformanceConfig {
 
 // MARK: - Backend Configuration
 struct Config {
-    // Backend URL - Production only
+    // Production backend URL - fully functional with toppings system
     static let backendURL = "https://restaurant-stripe-server-1.onrender.com"
     
     // Firebase configuration

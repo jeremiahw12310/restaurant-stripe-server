@@ -1,0 +1,325 @@
+import SwiftUI
+import UIKit
+
+// MARK: - Design System
+// Centralized design system for the Restaurant Demo app
+
+// MARK: - Spacing System (local definition to avoid conflicts)
+struct AppSpacing {
+    // Core spacing values
+    static let tiny: CGFloat = 4
+    static let small: CGFloat = 8
+    static let smallMedium: CGFloat = 12
+    static let medium: CGFloat = 16
+    static let mediumLarge: CGFloat = 20
+    static let large: CGFloat = 24
+    static let extraLarge: CGFloat = 32
+    
+    // Specific use cases
+    static let screenPadding: CGFloat = 16
+    static let cardPadding: CGFloat = 16
+    static let formFieldSpacing: CGFloat = 12
+    static let sectionSpacing: CGFloat = 24
+    static let headerSpacing: CGFloat = 8
+    
+    // Corner radius values
+    static let cornerRadiusSmall: CGFloat = 8
+    static let cornerRadiusMedium: CGFloat = 12
+    static let cornerRadiusLarge: CGFloat = 16
+    
+    // Shadow values
+    static let shadowRadius: CGFloat = 8
+    static let shadowOffset: CGFloat = 4
+}
+
+struct DesignSystem {
+    static let spacing = AppSpacing.self
+    static let typography = AppTypography.self
+    static let colors = AppColors.self
+    
+    // Configure global app appearance
+    static func configureAppearance() {
+        // Configure navigation bar appearance
+        let navigationAppearance = UINavigationBarAppearance()
+        navigationAppearance.configureWithOpaqueBackground()
+        navigationAppearance.backgroundColor = UIColor(.white)
+        navigationAppearance.titleTextAttributes = [
+            .foregroundColor: UIColor(.primary),
+            .font: UIFont.systemFont(ofSize: 18, weight: .semibold)
+        ]
+        navigationAppearance.largeTitleTextAttributes = [
+            .foregroundColor: UIColor(.primary),
+            .font: UIFont.systemFont(ofSize: 32, weight: .bold)
+        ]
+        
+        // Set tint color using the local AppColors definition
+        UIView.appearance().tintColor = UIColor(Color(red: 0.9, green: 0.7, blue: 0.3)) // Use specific color to avoid ambiguity
+        
+        UINavigationBar.appearance().standardAppearance = navigationAppearance
+        UINavigationBar.appearance().scrollEdgeAppearance = navigationAppearance
+        
+        // Configure tab bar appearance
+        let tabBarAppearance = UITabBarAppearance()
+        tabBarAppearance.configureWithOpaqueBackground()
+        tabBarAppearance.backgroundColor = UIColor(.white.opacity(0.95))
+        
+        // Normal state
+        tabBarAppearance.stackedLayoutAppearance.normal.iconColor = UIColor(.secondary)
+        tabBarAppearance.stackedLayoutAppearance.normal.titleTextAttributes = [
+            .foregroundColor: UIColor(.secondary),
+            .font: UIFont.systemFont(ofSize: 10, weight: .medium)
+        ]
+        
+        // Selected state
+        tabBarAppearance.stackedLayoutAppearance.selected.iconColor = UIColor(Color(red: 0.9, green: 0.7, blue: 0.3))
+        tabBarAppearance.stackedLayoutAppearance.selected.titleTextAttributes = [
+            .foregroundColor: UIColor(Color(red: 0.9, green: 0.7, blue: 0.3)),
+            .font: UIFont.systemFont(ofSize: 10, weight: .semibold)
+        ]
+        
+        UITabBar.appearance().standardAppearance = tabBarAppearance
+        if #available(iOS 15.0, *) {
+            UITabBar.appearance().scrollEdgeAppearance = tabBarAppearance
+        }
+    }
+}
+
+// MARK: - Typography System
+// AppTypography is defined in Typography.swift
+
+// MARK: - View Modifiers
+
+// Screen padding modifier
+extension View {
+    func screenPadding() -> some View {
+        self
+            .padding(.horizontal, AppSpacing.screenPadding)
+    }
+}
+
+// Card styling modifier
+extension View {
+    func cardStyle() -> some View {
+        self
+            .padding(.horizontal, AppSpacing.mediumLarge)
+            .padding(.vertical, AppSpacing.smallMedium)
+            .background(Color(.systemBackground))
+            .cornerRadius(AppSpacing.cornerRadiusMedium)
+            .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
+    }
+}
+
+// Button styling modifier
+extension View {
+    func primaryButtonStyle() -> some View {
+        self
+            .padding(.horizontal, AppSpacing.mediumLarge)
+            .padding(.vertical, AppSpacing.smallMedium)
+            .background(Color(red: 0.9, green: 0.7, blue: 0.3))
+            .foregroundColor(.white)
+            .cornerRadius(AppSpacing.cornerRadiusMedium)
+            .font(AppTypography.buttonText)
+    }
+    
+    func secondaryButtonStyle() -> some View {
+        self
+            .padding(.horizontal, AppSpacing.mediumLarge)
+            .padding(.vertical, AppSpacing.smallMedium)
+            .background(Color(.systemGray6))
+            .foregroundColor(.primary)
+            .cornerRadius(AppSpacing.cornerRadiusMedium)
+            .font(AppTypography.buttonText)
+    }
+}
+
+// Form field styling
+extension View {
+    func formFieldStyle() -> some View {
+        self
+            .padding()
+            .background(Color(.systemGray6))
+            .cornerRadius(AppSpacing.cornerRadiusSmall)
+    }
+}
+
+// Section styling
+extension View {
+    func sectionStyle() -> some View {
+        self.padding(.vertical, AppSpacing.sectionSpacing)
+    }
+}
+
+// Header spacing
+extension View {
+    func headerSpacing() -> some View {
+        self.padding(.bottom, AppSpacing.headerSpacing)
+    }
+}
+
+// Horizontal spacing helper
+extension View {
+    func horizontalSpacing(_ spacing: CGFloat = AppSpacing.screenPadding) -> some View {
+        self.padding(.horizontal, spacing)
+    }
+    
+    func verticalSpacing(_ spacing: CGFloat = AppSpacing.medium) -> some View {
+        self.padding(.vertical, spacing)
+    }
+}
+
+// MARK: - Common Layout Patterns
+
+struct AppCard<Content: View>: View {
+    let content: Content
+    
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+    
+    var body: some View {
+        VStack(spacing: AppSpacing.large) {
+            content
+        }
+        .cardStyle()
+    }
+}
+
+struct AppSection<Header: View, Content: View>: View {
+    let header: Header
+    let content: Content
+    
+    init(@ViewBuilder header: () -> Header, @ViewBuilder content: () -> Content) {
+        self.header = header()
+        self.content = content()
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppSpacing.medium) {
+            header
+                .font(AppTypography.headline)
+                .headerSpacing()
+            
+            content
+        }
+        .sectionStyle()
+    }
+}
+
+struct AppForm<Content: View>: View {
+    let content: Content
+    
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+    
+    var body: some View {
+        VStack(spacing: AppSpacing.large) {
+            content
+        }
+        .screenPadding()
+    }
+}
+
+// MARK: - Preview Helpers
+
+#if DEBUG
+struct DesignSystemPreview: View {
+    var body: some View {
+        ScrollView {
+            VStack(spacing: AppSpacing.large) {
+                AppSection(header: {
+                    Text("Typography")
+                }) {
+                    VStack(alignment: .leading, spacing: AppSpacing.medium) {
+                        Text("Hero Title")
+                            .font(AppTypography.heroTitle)
+                        
+                        Text("Large Title")
+                            .font(AppTypography.largeTitle)
+                        
+                        HStack(spacing: AppSpacing.small) {
+                            Text("Title 1")
+                                .font(AppTypography.title1)
+                            
+                            Text("Title 2")
+                                .font(AppTypography.title2)
+                            
+                            Text("Title 3")
+                                .font(AppTypography.title3)
+                        }
+                    }
+                }
+                
+                AppSection(header: {
+                    Text("Buttons")
+                }) {
+                    VStack(alignment: .leading, spacing: AppSpacing.medium) {
+                        Button("Primary Button") {}
+                            .primaryButtonStyle()
+                        
+                        Button("Secondary Button") {}
+                            .secondaryButtonStyle()
+                        
+                        VStack(spacing: AppSpacing.small) {
+                            Button("Small Button") {}
+                                .font(AppTypography.smallButton)
+                                .padding(.horizontal, AppSpacing.medium)
+                                .padding(.vertical, AppSpacing.small)
+                                .background(Color(.systemBlue))
+                                .foregroundColor(.white)
+                                .cornerRadius(AppSpacing.cornerRadiusSmall)
+                        }
+                    }
+                }
+                
+                AppSection(header: {
+                    Text("Cards")
+                }) {
+                    VStack(alignment: .leading, spacing: AppSpacing.medium) {
+                        AppCard {
+                            VStack(spacing: AppSpacing.small) {
+                                Text("Card Title")
+                                    .font(AppTypography.cardTitle)
+                                
+                                Text("This is a sample card with some content to demonstrate the card styling.")
+                                    .font(AppTypography.body)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        
+                        AppCard {
+                            VStack(spacing: AppSpacing.small) {
+                                Text("Another Card")
+                                    .font(AppTypography.cardTitle)
+                                
+                                Text("Cards provide consistent spacing and styling across the app.")
+                                    .font(AppTypography.body)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, AppSpacing.large)
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+}
+
+struct DesignSystem_Previews: PreviewProvider {
+    static var previews: some View {
+        DesignSystemPreview()
+    }
+}
+#endif
+
+// MARK: - Spacing Helper Extension
+
+extension View {
+    func spacing(_ spacing: CGFloat) -> some View {
+        VStack(spacing: AppSpacing.tiny) {
+            self
+            Spacer().frame(height: spacing)
+        }
+    }
+} 
