@@ -12,10 +12,12 @@ const admin = require('firebase-admin');
 if (process.env.FIREBASE_AUTH_TYPE === 'adc') {
   // Use Application Default Credentials
   try {
+    // Initialize Firebase Admin with just the project ID
+    // This will work on Render and use the default service account
     admin.initializeApp({
       projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp'
     });
-    console.log('✅ Firebase Admin initialized with Application Default Credentials');
+    console.log('✅ Firebase Admin initialized with project ID for ADC');
   } catch (error) {
     console.error('❌ Error initializing Firebase Admin with ADC:', error);
   }
@@ -646,23 +648,15 @@ if (!process.env.OPENAI_API_KEY) {
 VALIDATION RULES:
 1. If there are NO words stating "Dumpling House" at the top of the receipt, return {"error": "Invalid receipt - must be from Dumpling House"}
 2. If there is anything covering up numbers or text on the receipt, return {"error": "Invalid receipt - numbers are covered or obstructed"}
-3. For DINE-IN orders: The order number is the BIGGER number inside the black box with white text. IGNORE any smaller numbers below the black box - those are NOT the order number.
-4. For PICKUP orders: The order number is typically found near "Pickup" text and may not be in a black box.
-5. The order number is ALWAYS next to the words "Walk In", "Dine In", or "Pickup" and found nowhere else
-6. If the order number is more than 3 digits, it cannot be the order number - look for a smaller number
-7. Order numbers CANNOT be greater than 200 - if you see a number over 200, it's not the order number
-8. If the image quality is poor and numbers are blurry, unclear, or hard to read, return {"error": "Poor image quality - please take a clearer photo"}
-9. ALWAYS return the date as MM/DD format only (no year, no other format)
+3. The order number is ALWAYS the biggest sized number on the receipt and is often found inside a black box (except on pickup receipts)
+4. The order number is ALWAYS next to the words "Walk In", "Dine In", or "Pickup" and found nowhere else
+5. If the order number is more than 3 digits, it cannot be the order number - look for a smaller number
+6. ALWAYS return the date as MM/DD format only (no year, no other format)
 
 EXTRACTION RULES:
-- orderNumber: For dine-in orders, find the BIGGER number in the black box with white text (ignore smaller numbers below). For pickup orders, find the number near "Pickup". Must be 3 digits or less and cannot exceed 200.
+- orderNumber: Find the largest number that appears next to "Walk In", "Dine In", or "Pickup". Must be 3 digits or less.
 - orderTotal: The total amount paid (as a number, e.g. 23.45)
 - orderDate: The date in MM/DD format only (e.g. "12/25")
-
-IMPORTANT: 
-- On dine-in receipts, there may be a smaller number below the black box - this is NOT the order number. The order number is the bigger number inside the black box with white text.
-- If you cannot clearly read the numbers due to poor image quality, DO NOT GUESS. Return an error instead.
-- Order numbers must be between 1-200. Any number over 200 is invalid.
 
 Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderDate": "..."} or {"error": "error message"}
 If a field is missing, use null.`;
@@ -712,17 +706,11 @@ If a field is missing, use null.`;
         return res.status(400).json({ error: "Could not extract all required fields from receipt" });
       }
       
-      // Validate order number format (must be 3 digits or less and not exceed 200)
+      // Validate order number format (must be 3 digits or less)
       const orderNumberStr = data.orderNumber.toString();
       if (orderNumberStr.length > 3) {
         console.log('❌ Order number too long:', orderNumberStr);
         return res.status(400).json({ error: "Invalid order number format" });
-      }
-      
-      const orderNumber = parseInt(data.orderNumber);
-      if (isNaN(orderNumber) || orderNumber < 1 || orderNumber > 200) {
-        console.log('❌ Order number out of valid range (1-200):', orderNumber);
-        return res.status(400).json({ error: "Invalid order number - must be between 1 and 200" });
       }
       
       // Validate date format (must be MM/DD)
@@ -1148,27 +1136,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       console.log('🤖 Received Dumpling Hero comment generation request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
       
-      const { prompt, replyingTo, postContext } = req.body;
-      
-      // Debug logging for post context
-      console.log('🔍 Post Context Analysis:');
-      if (postContext && Object.keys(postContext).length > 0) {
-        console.log('✅ Post context received:');
-        console.log('   - Content:', postContext.content);
-        console.log('   - Author:', postContext.authorName);
-        console.log('   - Type:', postContext.postType);
-        console.log('   - Images:', postContext.imageURLs?.length || 0);
-        console.log('   - Has Menu Item:', !!postContext.attachedMenuItem);
-        console.log('   - Has Poll:', !!postContext.poll);
-        if (postContext.attachedMenuItem) {
-          console.log('   - Menu Item:', postContext.attachedMenuItem.description);
-        }
-        if (postContext.poll) {
-          console.log('   - Poll Question:', postContext.poll.question);
-        }
-      } else {
-        console.log('❌ No post context received or empty context');
-      }
+      const { prompt, replyingTo } = req.body;
       
       if (!process.env.OPENAI_API_KEY) {
         return res.status(500).json({ 
@@ -1211,18 +1179,6 @@ RESTAURANT INFO:
 - Hours: Sunday - Thursday 11:30 AM - 9:00 PM, Friday and Saturday 11:30 AM - 10:00 PM
 - Cuisine: Authentic Chinese dumplings and Asian cuisine
 
-POST CONTEXT AWARENESS:
-You will receive detailed information about the post you're commenting on. You MUST use this context to make your comments specific and relevant:
-
-- If the post has images/videos: Reference what you see in the media
-- If the post mentions specific menu items: Show enthusiasm for those specific items and mention them by name
-- If the post has a poll: Engage with the poll question and options specifically
-- If the post has hashtags: Use them naturally in your response
-- If the post is about a specific dish: Show knowledge and excitement about that specific dish
-- If the post has text content: Respond directly to what was said
-
-CRITICAL: You MUST reference specific details from the post context. Don't give generic responses - make it personal to the actual content provided.
-
 COMMENT EXAMPLES:
 1. Agreement: "Absolutely! Those steamed dumplings are pure magic! ✨🥟"
 2. Encouragement: "You're going to love it! The flavors are incredible! 🤤"
@@ -1243,99 +1199,25 @@ IMPORTANT:
 - Don't be overly promotional - focus on being helpful and enthusiastic
 - If replying to a specific comment, acknowledge what they said
 - Make it naturally engaging so people want to continue the conversation
-- Reference specific details from the post context when relevant
 
 If a specific prompt is provided, use it as inspiration but maintain the Dumpling Hero personality.`;
 
-      // Build the user message with post context
-      let userMessage = "";
-      
-      // Add post context if available
-      if (postContext && Object.keys(postContext).length > 0) {
-        userMessage += "POST CONTEXT:\n";
-        userMessage += `- Content: "${postContext.content}"\n`;
-        userMessage += `- Author: ${postContext.authorName}\n`;
-        userMessage += `- Post Type: ${postContext.postType}\n`;
-        
-        if (postContext.caption) {
-          userMessage += `- Caption: "${postContext.caption}"\n`;
-        }
-        
-        if (postContext.imageURLs && postContext.imageURLs.length > 0) {
-          userMessage += `- Images: ${postContext.imageURLs.length} image(s) attached\n`;
-        }
-        
-        if (postContext.videoURL) {
-          userMessage += `- Video: Video content attached\n`;
-        }
-        
-        if (postContext.hashtags && postContext.hashtags.length > 0) {
-          userMessage += `- Hashtags: ${postContext.hashtags.join(', ')}\n`;
-        }
-        
-        if (postContext.attachedMenuItem) {
-          const item = postContext.attachedMenuItem;
-          userMessage += `- Menu Item: ${item.description} ($${item.price}) - ${item.category}\n`;
-          if (item.isDumpling) userMessage += `  * This is a dumpling item! 🥟\n`;
-          if (item.isDrink) userMessage += `  * This is a drink item! 🥤\n`;
-        }
-        
-        if (postContext.poll) {
-          const poll = postContext.poll;
-          userMessage += `- Poll: "${poll.question}"\n`;
-          userMessage += `  Options: ${poll.options.map(opt => `"${opt.text}" (${opt.voteCount} votes)`).join(', ')}\n`;
-          userMessage += `  Total Votes: ${poll.totalVotes}\n`;
-        }
-        
-        userMessage += "\n";
-      }
-      
-      // Add prompt or instruction
+      // Build the user message
+      let userMessage;
       if (prompt) {
-        userMessage += `Generate a Dumpling Hero comment based on this prompt: "${prompt}"`;
+        userMessage = `Generate a Dumpling Hero comment based on this prompt: "${prompt}"`;
         if (replyingTo) {
           userMessage += ` You're replying to: "${replyingTo}"`;
         }
       } else {
-        let instruction = "Generate a Dumpling Hero comment that DIRECTLY REFERENCES specific details from the post context above. ";
-        
-        // Add specific instructions based on what's available
-        if (postContext && Object.keys(postContext).length > 0) {
-          instruction += "You MUST reference: ";
-          
-          if (postContext.content) {
-            instruction += `- The post content: "${postContext.content}" `;
-          }
-          
-          if (postContext.attachedMenuItem) {
-            const item = postContext.attachedMenuItem;
-            instruction += `- The menu item: ${item.description} ($${item.price}) `;
-            if (item.isDumpling) instruction += "(this is a dumpling!) ";
-            if (item.isDrink) instruction += "(this is a drink!) ";
-          }
-          
-          if (postContext.poll) {
-            instruction += `- The poll question: "${postContext.poll.question}" `;
-          }
-          
-          if (postContext.imageURLs && postContext.imageURLs.length > 0) {
-            instruction += `- The ${postContext.imageURLs.length} image(s) in the post `;
-          }
-          
-          instruction += "Make your comment feel like you're genuinely responding to these specific details, not just giving a generic response!";
-        }
-        
+        let instruction = "Generate a random Dumpling Hero comment. Make it supportive and enthusiastic!";
         if (replyingTo) {
           instruction += ` You're replying to: "${replyingTo}"`;
         }
-        userMessage += instruction;
+        userMessage = instruction;
       }
 
       console.log('🤖 Sending request to OpenAI for Dumpling Hero comment...');
-      console.log('📤 Final user message being sent to OpenAI:');
-      console.log('---START OF MESSAGE---');
-      console.log(userMessage);
-      console.log('---END OF MESSAGE---');
       
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
@@ -1381,235 +1263,6 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       console.error('❌ Error generating Dumpling Hero comment:', error);
       res.status(500).json({ 
         error: 'Failed to generate Dumpling Hero comment',
-        details: error.message 
-      });
-    }
-  });
-
-  // Dumpling Hero Comment Preview endpoint (for preview before posting)
-  app.post('/preview-dumpling-hero-comment', async (req, res) => {
-    try {
-      console.log('🤖 Received Dumpling Hero comment preview request');
-      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
-      
-      const { prompt, postContext } = req.body;
-      
-      if (!process.env.OPENAI_API_KEY) {
-        return res.status(500).json({ 
-          error: 'OpenAI API key not configured',
-          message: 'Please configure the OPENAI_API_KEY environment variable'
-        });
-      }
-      
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-      
-      // Build the system prompt for simple Dumpling Hero comments
-      const systemPrompt = `You are Dumpling Hero, the official mascot and social media personality for Dumpling House restaurant in Nashville, TN. You're now responding to comments and posts with your signature enthusiasm and dumpling love.
-
-PERSONALITY:
-- You are enthusiastic, funny, and slightly dramatic about dumplings
-- You use lots of emojis and exclamation marks
-- You speak in a friendly, casual tone that appeals to food lovers
-- You occasionally make puns and food-related jokes
-- You're passionate about dumplings and want to share that passion
-- You're genuinely excited about the food and want to share that excitement
-- You're supportive and encouraging to other users
-
-COMMENT STYLE:
-- Keep comments between 50-200 characters (including emojis)
-- Use 2-5 relevant emojis per comment
-- Make comments naturally engaging and supportive
-- Respond appropriately to the context of what you're replying to
-- Vary between different types of responses:
-  * Agreement and enthusiasm ("Yes! That's exactly right! 🥟✨")
-  * Food appreciation ("Those dumplings look amazing! 🤤")
-  * Encouragement ("You're going to love it! 💪")
-  * Humor ("Dumpling power! 🥟⚡")
-  * Support ("We've got your back! 🙌")
-  * Food facts ("Did you know? Dumplings are happiness in a wrapper! 🎁")
-
-RESTAURANT INFO:
-- Name: Dumpling House
-- Address: 2117 Belcourt Ave, Nashville, TN 37212
-- Phone: +1 (615) 891-4728
-- Hours: Sunday - Thursday 11:30 AM - 9:00 PM, Friday and Saturday 11:30 AM - 10:00 PM
-- Cuisine: Authentic Chinese dumplings and Asian cuisine
-
-POST CONTEXT AWARENESS:
-You will receive detailed information about the post you're commenting on. You MUST use this context to make your comments specific and relevant:
-
-- If the post has images/videos: Reference what you see in the media
-- If the post mentions specific menu items: Show enthusiasm for those specific items and mention them by name
-- If the post has a poll: Engage with the poll question and options specifically
-- If the post has hashtags: Use them naturally in your response
-- If the post is about a specific dish: Show knowledge and excitement about that specific dish
-- If the post has text content: Respond directly to what was said
-
-CRITICAL: You MUST reference specific details from the post context. Don't give generic responses - make it personal to the actual content provided.
-
-COMMENT EXAMPLES:
-1. Agreement: "Absolutely! Those steamed dumplings are pure magic! ✨🥟"
-2. Encouragement: "You're going to love it! The flavors are incredible! 🤤"
-3. Humor: "Dumpling power activated! 🥟⚡ Ready to conquer hunger!"
-4. Support: "We've got your back! 🙌🥟 Dumpling House family!"
-5. Food Appreciation: "That looks delicious! 🤤 The perfect dumpling moment!"
-6. Enthusiasm: "Yes! That's the spirit! 🥟✨ Dumpling love all around!"
-
-RESPONSE FORMAT:
-Return a JSON object with:
-{ "commentText": "The generated comment text with emojis" }
-
-IMPORTANT: 
-- Make the comment feel like you're genuinely responding to the context
-- Keep it supportive and encouraging
-- Don't be overly promotional - focus on being helpful and enthusiastic
-- If replying to a specific comment, acknowledge what they said
-- Make it naturally engaging so people want to continue the conversation
-- If a specific prompt is provided, use it as inspiration but maintain the Dumpling Hero personality
-- CRITICAL: You MUST reference specific details from the post context when provided`;
-
-      // Build the user message with post context
-      let userMessage = "";
-      
-      // Add post context if available
-      if (postContext && Object.keys(postContext).length > 0) {
-        console.log('🔍 Post Context Analysis for Preview Endpoint:');
-        console.log('✅ Post context received:');
-        console.log('   - Content:', postContext.content);
-        console.log('   - Author:', postContext.authorName);
-        console.log('   - Type:', postContext.postType);
-        
-        userMessage += "POST CONTEXT:\n";
-        userMessage += `- Content: "${postContext.content}"\n`;
-        userMessage += `- Author: ${postContext.authorName}\n`;
-        userMessage += `- Post Type: ${postContext.postType}\n`;
-        
-        if (postContext.caption) {
-          userMessage += `- Caption: "${postContext.caption}"\n`;
-        }
-        
-        if (postContext.imageURLs && postContext.imageURLs.length > 0) {
-          userMessage += `- Images: ${postContext.imageURLs.length} image(s) attached\n`;
-        }
-        
-        if (postContext.videoURL) {
-          userMessage += `- Video: Video content attached\n`;
-        }
-        
-        if (postContext.hashtags && postContext.hashtags.length > 0) {
-          userMessage += `- Hashtags: ${postContext.hashtags.join(', ')}\n`;
-        }
-        
-        if (postContext.attachedMenuItem) {
-          const item = postContext.attachedMenuItem;
-          userMessage += `- Menu Item: ${item.description} ($${item.price}) - ${item.category}\n`;
-          if (item.isDumpling) userMessage += `  * This is a dumpling item! 🥟\n`;
-          if (item.isDrink) userMessage += `  * This is a drink item! 🥤\n`;
-        }
-        
-        if (postContext.poll) {
-          const poll = postContext.poll;
-          userMessage += `- Poll: "${poll.question}"\n`;
-          userMessage += `  Options: ${poll.options.map(opt => `"${opt.text}" (${opt.voteCount} votes)`).join(', ')}\n`;
-          userMessage += `  Total Votes: ${poll.totalVotes}\n`;
-        }
-        
-        userMessage += "\n";
-      }
-      
-      // Add prompt or instruction
-      if (prompt) {
-        userMessage += `Generate a Dumpling Hero comment based on this prompt: "${prompt}"`;
-        if (postContext && Object.keys(postContext).length > 0) {
-          userMessage += " You MUST reference specific details from the post context above.";
-        }
-      } else {
-        if (postContext && Object.keys(postContext).length > 0) {
-          // When we have post context but no prompt, create a specific instruction
-          userMessage += "Generate a Dumpling Hero comment that DIRECTLY REFERENCES the post context above. ";
-          userMessage += "You MUST reference: ";
-          
-          if (postContext.content) {
-            userMessage += `- The post content: "${postContext.content}" `;
-          }
-          
-          if (postContext.caption) {
-            userMessage += `- The caption: "${postContext.caption}" `;
-          }
-          
-          if (postContext.videoURL) {
-            userMessage += `- The video content `;
-          }
-          
-          if (postContext.attachedMenuItem) {
-            const item = postContext.attachedMenuItem;
-            userMessage += `- The menu item: ${item.description} ($${item.price}) `;
-            if (item.isDumpling) userMessage += "(this is a dumpling!) ";
-            if (item.isDrink) userMessage += "(this is a drink!) ";
-          }
-          
-          if (postContext.poll) {
-            userMessage += `- The poll question: "${postContext.poll.question}" `;
-          }
-          
-          if (postContext.imageURLs && postContext.imageURLs.length > 0) {
-            userMessage += `- The ${postContext.imageURLs.length} image(s) in the post `;
-          }
-          
-          userMessage += "Make your comment feel like you're genuinely responding to these specific details, not just giving a generic response!";
-        } else {
-          userMessage += "Generate a random Dumpling Hero comment. Make it supportive and enthusiastic!";
-        }
-      }
-
-      console.log('🤖 Sending request to OpenAI for Dumpling Hero comment preview...');
-      console.log('📝 User message being sent to ChatGPT:');
-      console.log(userMessage);
-      
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage }
-        ],
-        max_tokens: 200,
-        temperature: 0.8
-      });
-
-      console.log('✅ Received Dumpling Hero comment preview from OpenAI');
-      
-      const generatedContent = response.choices[0].message.content;
-      console.log('📝 Generated content:', generatedContent);
-      
-      // Try to parse the JSON response
-      let parsedResponse;
-      try {
-        // Extract JSON from the response (in case there's extra text)
-        const jsonMatch = generatedContent.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          parsedResponse = JSON.parse(jsonMatch[0]);
-        } else {
-          // If no JSON found, create a simple response
-          parsedResponse = {
-            commentText: generatedContent
-          };
-        }
-      } catch (parseError) {
-        console.log('⚠️ Could not parse JSON response, using raw text');
-        parsedResponse = {
-          commentText: generatedContent
-        };
-      }
-      
-      res.json({
-        success: true,
-        comment: parsedResponse
-      });
-      
-    } catch (error) {
-      console.error('❌ Error generating Dumpling Hero comment preview:', error);
-      res.status(500).json({ 
-        error: 'Failed to generate Dumpling Hero comment preview',
         details: error.message 
       });
     }
@@ -1753,47 +1406,39 @@ IMPORTANT:
           userMessage += " You MUST reference specific details from the post context above.";
         }
       } else {
+        let instruction = "Generate a Dumpling Hero comment";
+        
         if (postContext && Object.keys(postContext).length > 0) {
-          // When we have post context but no prompt, create a specific instruction
-          userMessage += "Generate a Dumpling Hero comment that DIRECTLY REFERENCES the post context above. ";
-          userMessage += "You MUST reference: ";
+          instruction += " that DIRECTLY REFERENCES specific details from the post context above. ";
+          instruction += "You MUST reference: ";
           
           if (postContext.content) {
-            userMessage += `- The post content: "${postContext.content}" `;
-          }
-          
-          if (postContext.caption) {
-            userMessage += `- The caption: "${postContext.caption}" `;
-          }
-          
-          if (postContext.videoURL) {
-            userMessage += `- The video content `;
+            instruction += `- The post content: "${postContext.content}" `;
           }
           
           if (postContext.attachedMenuItem) {
             const item = postContext.attachedMenuItem;
-            userMessage += `- The menu item: ${item.description} ($${item.price}) `;
-            if (item.isDumpling) userMessage += "(this is a dumpling!) ";
-            if (item.isDrink) userMessage += "(this is a drink!) ";
+            instruction += `- The menu item: ${item.description} ($${item.price}) `;
+            if (item.isDumpling) instruction += "(this is a dumpling!) ";
+            if (item.isDrink) instruction += "(this is a drink!) ";
           }
           
           if (postContext.poll) {
-            userMessage += `- The poll question: "${postContext.poll.question}" `;
+            instruction += `- The poll question: "${postContext.poll.question}" `;
           }
           
           if (postContext.imageURLs && postContext.imageURLs.length > 0) {
-            userMessage += `- The ${postContext.imageURLs.length} image(s) in the post `;
+            instruction += `- The ${postContext.imageURLs.length} image(s) in the post `;
           }
           
-          userMessage += "Make your comment feel like you're genuinely responding to these specific details, not just giving a generic response!";
+          instruction += "Make your comment feel like you're genuinely responding to these specific details, not just giving a generic response!";
         } else {
-          userMessage += "Generate a random Dumpling Hero comment. Make it supportive and enthusiastic!";
+          instruction += " that's enthusiastic and engaging about dumplings!";
         }
+        userMessage += instruction;
       }
 
       console.log('🤖 Sending request to OpenAI for simple Dumpling Hero comment...');
-      console.log('📝 User message being sent to ChatGPT:');
-      console.log(userMessage);
       
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
@@ -1840,45 +1485,38 @@ IMPORTANT:
       });
     }
   });
-  
-  // Redeem reward endpoint
-  app.post('/redeem-reward', async (req, res) => {
-    try {
-      console.log('🎁 Received reward redemption request');
-      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
-      
-      const { userId, rewardTitle, rewardDescription, pointsRequired, rewardCategory } = req.body;
-      
-      if (!userId || !rewardTitle || !pointsRequired) {
-        console.log('❌ Missing required fields for reward redemption');
-app.get("/simple-test", (req, res) => { res.json({ message: "Simple test working" }); });
-
+}
 
 // Redeem reward endpoint
-app.post("/redeem-reward", async (req, res) => {
+app.post('/redeem-reward', async (req, res) => {
   try {
-    console.log("🎁 Received reward redemption request");
-    console.log("📥 Request body:", JSON.stringify(req.body, null, 2));
+    console.log('🎁 Received reward redemption request');
+    console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
     
     const { userId, rewardTitle, rewardDescription, pointsRequired, rewardCategory } = req.body;
     
     if (!userId || !rewardTitle || !pointsRequired) {
-      console.log("❌ Missing required fields for reward redemption");
+      console.log('❌ Missing required fields for reward redemption');
       return res.status(400).json({ 
-        error: "Missing required fields: userId, rewardTitle, pointsRequired",
+        error: 'Missing required fields: userId, rewardTitle, pointsRequired',
         received: { userId: !!userId, rewardTitle: !!rewardTitle, pointsRequired: !!pointsRequired }
       });
+    }
+    
+    if (!admin.apps.length) {
+      console.log('❌ Firebase not initialized');
+      return res.status(500).json({ error: 'Firebase not configured' });
     }
     
     const db = admin.firestore();
     
     // Get user's current points
-    const userRef = db.collection("users").doc(userId);
+    const userRef = db.collection('users').doc(userId);
     const userDoc = await userRef.get();
     
     if (!userDoc.exists) {
-      console.log("❌ User not found:", userId);
-      return res.status(404).json({ error: "User not found" });
+      console.log('❌ User not found:', userId);
+      return res.status(404).json({ error: 'User not found' });
     }
     
     const userData = userDoc.data();
@@ -1888,9 +1526,9 @@ app.post("/redeem-reward", async (req, res) => {
     
     // Check if user has enough points
     if (currentPoints < pointsRequired) {
-      console.log("❌ Insufficient points for redemption");
+      console.log('❌ Insufficient points for redemption');
       return res.status(400).json({ 
-        error: "Insufficient points for redemption",
+        error: 'Insufficient points for redemption',
         currentPoints,
         pointsRequired,
         pointsNeeded: pointsRequired - currentPoints
@@ -1909,8 +1547,8 @@ app.post("/redeem-reward", async (req, res) => {
       id: `reward_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       userId: userId,
       rewardTitle: rewardTitle,
-      rewardDescription: rewardDescription || "",
-      rewardCategory: rewardCategory || "General",
+      rewardDescription: rewardDescription || '',
+      rewardCategory: rewardCategory || 'General',
       pointsRequired: pointsRequired,
       redemptionCode: redemptionCode,
       redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1923,7 +1561,7 @@ app.post("/redeem-reward", async (req, res) => {
     const pointsTransaction = {
       id: `deduction_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       userId: userId,
-      type: "reward_redemption",
+      type: 'reward_redemption',
       amount: -pointsRequired, // Negative amount for deduction
       description: `Redeemed: ${rewardTitle}`,
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
@@ -1939,11 +1577,11 @@ app.post("/redeem-reward", async (req, res) => {
     batch.update(userRef, { points: newPointsBalance });
     
     // Add redeemed reward
-    const redeemedRewardRef = db.collection("redeemedRewards").doc(redeemedReward.id);
+    const redeemedRewardRef = db.collection('redeemedRewards').doc(redeemedReward.id);
     batch.set(redeemedRewardRef, redeemedReward);
     
     // Add points transaction
-    const transactionRef = db.collection("pointsTransactions").doc(pointsTransaction.id);
+    const transactionRef = db.collection('pointsTransactions').doc(pointsTransaction.id);
     batch.set(transactionRef, pointsTransaction);
     
     // Commit the batch
@@ -1961,130 +1599,21 @@ app.post("/redeem-reward", async (req, res) => {
       pointsDeducted: pointsRequired,
       rewardTitle: rewardTitle,
       expiresAt: redeemedReward.expiresAt,
-      message: "Reward redeemed successfully! Show the code to your cashier."
+      message: 'Reward redeemed successfully! Show the code to your cashier.'
     });
     
   } catch (error) {
-    console.error("❌ Error redeeming reward:", error);
+    console.error('❌ Error redeeming reward:', error);
     res.status(500).json({ 
-      error: "Failed to redeem reward",
+      error: 'Failed to redeem reward',
       details: error.message 
     });
   }
 });
 
-        return res.status(400).json({ 
-          error: 'Missing required fields: userId, rewardTitle, pointsRequired',
-          received: { userId: !!userId, rewardTitle: !!rewardTitle, pointsRequired: !!pointsRequired }
-        });
-      }
-      
-      const db = admin.firestore();
-      
-      // Get user's current points
-      const userRef = db.collection('users').doc(userId);
-      const userDoc = await userRef.get();
-      
-      if (!userDoc.exists) {
-        console.log('❌ User not found:', userId);
-        return res.status(404).json({ error: 'User not found' });
-      }
-      
-      const userData = userDoc.data();
-      const currentPoints = userData.points || 0;
-      
-      console.log(`👤 User ${userId} has ${currentPoints} points, needs ${pointsRequired} for reward`);
-      
-      // Check if user has enough points
-      if (currentPoints < pointsRequired) {
-        console.log('❌ Insufficient points for redemption');
-        return res.status(400).json({ 
-          error: 'Insufficient points for redemption',
-          currentPoints,
-          pointsRequired,
-          pointsNeeded: pointsRequired - currentPoints
-        });
-      }
-      
-      // Generate 8-digit random code
-      const redemptionCode = Math.floor(10000000 + Math.random() * 90000000).toString();
-      console.log(`🔢 Generated redemption code: ${redemptionCode}`);
-      
-      // Calculate new points balance
-      const newPointsBalance = currentPoints - pointsRequired;
-      
-      // Create redeemed reward document
-      const redeemedReward = {
-        id: `reward_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        userId: userId,
-        rewardTitle: rewardTitle,
-        rewardDescription: rewardDescription || '',
-        rewardCategory: rewardCategory || 'General',
-        pointsRequired: pointsRequired,
-        redemptionCode: redemptionCode,
-        redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes from now
-        isExpired: false,
-        isUsed: false
-      };
-      
-      // Create points transaction for deduction
-      const pointsTransaction = {
-        id: `deduction_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        userId: userId,
-        type: 'reward_redemption',
-        amount: -pointsRequired, // Negative amount for deduction
-        description: `Redeemed: ${rewardTitle}`,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        isEarned: false,
-        redemptionCode: redemptionCode,
-        rewardTitle: rewardTitle
-      };
-      
-      // Perform database operations in a batch
-      const batch = db.batch();
-      
-      // Update user points
-      batch.update(userRef, { points: newPointsBalance });
-      
-      // Add redeemed reward
-      const redeemedRewardRef = db.collection('redeemedRewards').doc(redeemedReward.id);
-      batch.set(redeemedRewardRef, redeemedReward);
-      
-      // Add points transaction
-      const transactionRef = db.collection('pointsTransactions').doc(pointsTransaction.id);
-      batch.set(transactionRef, pointsTransaction);
-      
-      // Commit the batch
-      await batch.commit();
-      
-      console.log(`✅ Reward redeemed successfully!`);
-      console.log(`💰 Points deducted: ${pointsRequired}`);
-      console.log(`💳 New balance: ${newPointsBalance}`);
-      console.log(`🔢 Redemption code: ${redemptionCode}`);
-      
-      res.json({
-        success: true,
-        redemptionCode: redemptionCode,
-        newPointsBalance: newPointsBalance,
-        pointsDeducted: pointsRequired,
-        rewardTitle: rewardTitle,
-        expiresAt: redeemedReward.expiresAt,
-        message: 'Reward redeemed successfully! Show the code to your cashier.'
-      });
-      
-    } catch (error) {
-      console.error('❌ Error redeeming reward:', error);
-      res.status(500).json({ 
-        error: 'Failed to redeem reward',
-        details: error.message 
-      });
-    }
-  });
-}
-
 // Force production environment
 process.env.NODE_ENV = 'production';
+// Force redeploy - Added redeem-reward endpoint - Sat Jul 25 09:36:00 CDT 2025
 
 const port = process.env.PORT || 3001;
 
