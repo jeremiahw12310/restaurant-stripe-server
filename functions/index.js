@@ -159,6 +159,45 @@ If a field is missing, use null.
 });
 
 /**
+ * Updates a user's points and records the change in their points history.
+ * Callable from the app for all points-changing actions.
+ * Params: { userId, type, amount, description }
+ */
+exports.updateUserPoints = onCall(async (data, context) => {
+  const { userId, type, amount, description } = data;
+  if (!userId || !type || typeof amount !== 'number') {
+    throw new functions.https.HttpsError('invalid-argument', 'userId, type, and amount are required.');
+  }
+  const db = admin.firestore();
+  const userRef = db.collection('users').doc(userId);
+  const historyRef = userRef.collection('pointsHistory');
+  let newTotal = 0;
+  try {
+    await db.runTransaction(async (transaction) => {
+      const userDoc = await transaction.get(userRef);
+      if (!userDoc.exists) {
+        throw new functions.https.HttpsError('not-found', 'User not found.');
+      }
+      const prevPoints = userDoc.data().points || 0;
+      newTotal = prevPoints + amount;
+      if (newTotal < 0) newTotal = 0; // Prevent negative points
+      transaction.update(userRef, { points: newTotal });
+      transaction.set(historyRef.doc(), {
+        type,
+        amount,
+        description: description || '',
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        resultingPoints: newTotal
+      });
+    });
+    return { success: true, newTotal };
+  } catch (error) {
+    console.error('updateUserPoints error:', error);
+    throw new functions.https.HttpsError('internal', error.message || 'Failed to update points');
+  }
+});
+
+/**
  * Firestore trigger to sync menu items array on parent document
  */
 exports.syncMenuItemsArray = onDocumentWritten(
