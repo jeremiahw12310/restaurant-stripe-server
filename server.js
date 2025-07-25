@@ -646,23 +646,25 @@ if (!process.env.OPENAI_API_KEY) {
 VALIDATION RULES:
 1. If there are NO words stating "Dumpling House" at the top of the receipt, return {"error": "Invalid receipt - must be from Dumpling House"}
 2. If there is anything covering up numbers or text on the receipt, return {"error": "Invalid receipt - numbers are covered or obstructed"}
-3. For DINE-IN orders: The order number is the BIGGER number inside the black box with white text. IGNORE any smaller numbers below the black box - those are NOT the order number.
-4. For PICKUP orders: The order number is typically found near "Pickup" text and may not be in a black box.
-5. The order number is ALWAYS next to the words "Walk In", "Dine In", or "Pickup" and found nowhere else
-6. If the order number is more than 3 digits, it cannot be the order number - look for a smaller number
-7. Order numbers CANNOT be greater than 400 - if you see a number over 400, it's not the order number and should be ignored completely
-8. CRITICAL: If the receipt is faded, blurry, hard to read, or if ANY numbers are unclear or difficult to see, return {"error": "Receipt is too faded or unclear - please take a clearer photo"} - DO NOT attempt to guess or estimate any numbers
-9. If the image quality is poor and numbers are blurry, unclear, or hard to read, return {"error": "Poor image quality - please take a clearer photo"}
-10. ALWAYS return the date as MM/DD format only (no year, no other format)
-11. CRITICAL: You MUST double-check all extracted information before returning it. Verify that the order number, total, and date are accurate and match what you see on the receipt. This is essential for preventing system abuse and maintaining data integrity.
+3. CRITICAL LOCATION: The order number is ALWAYS directly underneath the word "Nashville" on the receipt. Look for "Nashville" and find the number immediately below it.
+4. For DINE-IN orders: The order number is the BIGGER number inside the black box with white text, located directly under "Nashville". IGNORE any smaller numbers below the black box - those are NOT the order number.
+5. For PICKUP orders: The order number is found directly underneath the word "Nashville" and may not be in a black box.
+6. The order number is NEVER found further down on the receipt - it's always in the top section under "Nashville"
+7. If the order number is more than 3 digits, it cannot be the order number - look for a smaller number
+8. Order numbers CANNOT be greater than 400 - if you see a number over 400, it's not the order number and should be ignored completely
+9. CRITICAL: If the receipt is faded, blurry, hard to read, or if ANY numbers are unclear or difficult to see, return {"error": "Receipt is too faded or unclear - please take a clearer photo"} - DO NOT attempt to guess or estimate any numbers
+10. If the image quality is poor and numbers are blurry, unclear, or hard to read, return {"error": "Poor image quality - please take a clearer photo"}
+11. ALWAYS return the date as MM/DD format only (no year, no other format)
+12. CRITICAL: You MUST double-check all extracted information before returning it. Verify that the order number, total, and date are accurate and match what you see on the receipt. This is essential for preventing system abuse and maintaining data integrity.
 
 EXTRACTION RULES:
-- orderNumber: For dine-in orders, find the BIGGER number in the black box with white text (ignore smaller numbers below). For pickup orders, find the number near "Pickup". Must be 3 digits or less and cannot exceed 400. If no valid order number under 400 is found, return {"error": "No valid order number found - order numbers must be under 400"}
+- orderNumber: CRITICAL - Find the number directly underneath the word "Nashville" on the receipt. For dine-in orders, this is the BIGGER number in the black box with white text (ignore smaller numbers below). For pickup orders, this is the number directly under "Nashville". Must be 3 digits or less and cannot exceed 400. If no valid order number under 400 is found, return {"error": "No valid order number found - order numbers must be under 400"}
 - orderTotal: The total amount paid (as a number, e.g. 23.45)
 - orderDate: The date in MM/DD format only (e.g. "12/25")
 
 IMPORTANT: 
-- On dine-in receipts, there may be a smaller number below the black box - this is NOT the order number. The order number is the bigger number inside the black box with white text.
+- CRITICAL LOCATION: The order number is ALWAYS directly underneath the word "Nashville" on the receipt. Do not look for numbers further down on the receipt.
+- On dine-in receipts, there may be a smaller number below the black box - this is NOT the order number. The order number is the bigger number inside the black box with white text, located directly under "Nashville".
 - If you cannot clearly read the numbers due to poor image quality, DO NOT GUESS. Return an error instead.
 - If the receipt is faded, blurry, or any numbers are unclear, DO NOT ATTEMPT TO READ THEM. Return an error immediately.
 - Order numbers must be between 1-400. Any number over 400 is completely invalid and should not be returned at all.
