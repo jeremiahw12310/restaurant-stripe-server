@@ -123,6 +123,12 @@ service cloud.firestore {
       allow read, write: if isAdmin(); // Only admins can access verification requests
     }
     
+    // Points transactions collection - users can read/write their own transactions
+    match /pointsTransactions/{transactionId} {
+      allow read, write: if isAuthenticated() && 
+        (resource.data.userId == request.auth.uid || isAdmin()); // Users can only access their own transactions, admins can access all
+    }
+    
     // Drink flavors collection - public read, admin write
     match /drinkFlavors/{flavorId} {
       allow read: if true; // Public read for drink flavors
@@ -149,6 +155,11 @@ service cloud.firestore {
     // Config collection - admin only
     match /config/{document} {
       allow read, write: if isAdmin(); // Only admins can modify config
+    }
+    
+    // Used receipts collection - authenticated users can read/write to prevent duplicate scans
+    match /usedReceipts/{receiptId} {
+      allow read, write: if isAuthenticated(); // Any authenticated user can read/write to check for duplicates
     }
     
     // Deny all other access

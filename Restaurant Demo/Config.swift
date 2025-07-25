@@ -30,8 +30,18 @@ struct PerformanceConfig {
 
 // MARK: - Backend Configuration
 struct Config {
-    // Production backend URL - fully functional with toppings system
-    static let backendURL = "https://restaurant-stripe-server-1.onrender.com"
+    // Environment switching
+    static let currentEnvironment: AppEnvironment = .production
+    
+    // Backend URLs for different environments
+    static var backendURL: String {
+        switch currentEnvironment {
+        case .localNetwork:
+            return "http://192.168.1.100:3001" // Update with your computer's IP
+        case .production:
+            return "https://restaurant-stripe-server-1.onrender.com"
+        }
+    }
     
     // Firebase configuration
     static let firebaseProjectID = "restaurant-demo-12345"

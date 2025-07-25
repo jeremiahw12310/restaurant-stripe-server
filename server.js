@@ -641,7 +641,23 @@ if (!process.env.OPENAI_API_KEY) {
       const imagePath = req.file.path;
       const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
 
-      const prompt = `\nYou are a receipt parser. Extract the following fields from the receipt image:\n- orderNumber: Look for the largest number on the receipt that appears as white text inside a black container/box. This is typically located under \"Nashville, TN\" and next to \"Walk In\". This is the order number.\n- orderTotal: The total amount paid (as a number, e.g. 23.45)\n- orderDate: The date of the order (in MM/DD/YYYY or YYYY-MM-DD format)\n\nRespond ONLY as a JSON object: {\"orderNumber\": \"...\", \"orderTotal\": ..., \"orderDate\": \"...\"}\nIf a field is missing, use null.\n`;
+      const prompt = `You are a receipt parser for Dumpling House. Follow these STRICT validation rules:
+
+VALIDATION RULES:
+1. If there are NO words stating "Dumpling House" at the top of the receipt, return {"error": "Invalid receipt - must be from Dumpling House"}
+2. If there is anything covering up numbers or text on the receipt, return {"error": "Invalid receipt - numbers are covered or obstructed"}
+3. The order number is ALWAYS the biggest sized number on the receipt and is often found inside a black box (except on pickup receipts)
+4. The order number is ALWAYS next to the words "Walk In", "Dine In", or "Pickup" and found nowhere else
+5. If the order number is more than 3 digits, it cannot be the order number - look for a smaller number
+6. ALWAYS return the date as MM/DD format only (no year, no other format)
+
+EXTRACTION RULES:
+- orderNumber: Find the largest number that appears next to "Walk In", "Dine In", or "Pickup". Must be 3 digits or less.
+- orderTotal: The total amount paid (as a number, e.g. 23.45)
+- orderDate: The date in MM/DD format only (e.g. "12/25")
+
+Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderDate": "..."} or {"error": "error message"}
+If a field is missing, use null.`;
 
       console.log('🤖 Sending request to OpenAI...');
       
@@ -675,6 +691,32 @@ if (!process.env.OPENAI_API_KEY) {
       
       const data = JSON.parse(jsonMatch[0]);
       console.log('✅ Parsed JSON data:', data);
+      
+      // Check if the response contains an error
+      if (data.error) {
+        console.log('❌ Receipt validation failed:', data.error);
+        return res.status(400).json({ error: data.error });
+      }
+      
+      // Validate that we have the required fields
+      if (!data.orderNumber || !data.orderTotal || !data.orderDate) {
+        console.log('❌ Missing required fields in receipt data');
+        return res.status(400).json({ error: "Could not extract all required fields from receipt" });
+      }
+      
+      // Validate order number format (must be 3 digits or less)
+      const orderNumberStr = data.orderNumber.toString();
+      if (orderNumberStr.length > 3) {
+        console.log('❌ Order number too long:', orderNumberStr);
+        return res.status(400).json({ error: "Invalid order number format" });
+      }
+      
+      // Validate date format (must be MM/DD)
+      const dateRegex = /^\d{2}\/\d{2}$/;
+      if (!dateRegex.test(data.orderDate)) {
+        console.log('❌ Invalid date format:', data.orderDate);
+        return res.status(400).json({ error: "Invalid date format - must be MM/DD" });
+      }
       
       res.json(data);
     } catch (err) {
