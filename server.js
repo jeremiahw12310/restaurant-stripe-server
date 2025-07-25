@@ -674,6 +674,7 @@ Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderD
 If a field is missing, use null.`;
 
       console.log('🤖 Sending request to OpenAI for FIRST validation...');
+      console.log('📊 API Call 1 - Starting at:', new Date().toISOString());
       
       // First OpenAI call
       const response1 = await openai.chat.completions.create({
@@ -691,8 +692,10 @@ If a field is missing, use null.`;
       });
 
       console.log('✅ First OpenAI response received');
+      console.log('📊 API Call 1 - Completed at:', new Date().toISOString());
       
       console.log('🤖 Sending request to OpenAI for SECOND validation...');
+      console.log('📊 API Call 2 - Starting at:', new Date().toISOString());
       
       // Second OpenAI call
       const response2 = await openai.chat.completions.create({
@@ -710,6 +713,7 @@ If a field is missing, use null.`;
       });
 
       console.log('✅ Second OpenAI response received');
+      console.log('📊 API Call 2 - Completed at:', new Date().toISOString());
       
       // Clean up the uploaded file
       fs.unlinkSync(imagePath);
@@ -761,6 +765,12 @@ If a field is missing, use null.`;
         data1.orderNumber === data2.orderNumber &&
         data1.orderTotal === data2.orderTotal &&
         data1.orderDate === data2.orderDate;
+      
+      console.log('🔍 COMPARISON DETAILS:');
+      console.log('   Order Number Match:', data1.orderNumber === data2.orderNumber, `(${data1.orderNumber} vs ${data2.orderNumber})`);
+      console.log('   Order Total Match:', data1.orderTotal === data2.orderTotal, `(${data1.orderTotal} vs ${data2.orderTotal})`);
+      console.log('   Order Date Match:', data1.orderDate === data2.orderDate, `(${data1.orderDate} vs ${data2.orderDate})`);
+      console.log('   Overall Match:', responsesMatch);
       
       if (!responsesMatch) {
         console.log('❌ VALIDATION MISMATCH - Responses do not match');
