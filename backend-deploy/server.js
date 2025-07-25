@@ -1842,26 +1842,6 @@ IMPORTANT:
   });
   
   // Redeem reward endpoint
-
-// Force production environment
-process.env.NODE_ENV = 'production';
-
-const port = process.env.PORT || 3001;
-
-app.listen(port, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${port}`);
-  console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔑 OpenAI API Key configured: ${process.env.OPENAI_API_KEY ? 'Yes' : 'No'}`);
-  console.log(`🔥 Firebase configured: ${admin.apps.length ? 'Yes' : 'No'}`);
-});
-// Force redeploy - Sat Jul 19 14:12:02 CDT 2025
-// Force complete redeploy - Sat Jul 19 14:15:27 CDT 2025
-// Force redeploy for reward redemption - Fri Jul 25 09:15:00 CDT 2025
-}
-
-// Redeem reward endpoint
-
-
   app.post('/redeem-reward', async (req, res) => {
     try {
       console.log('🎁 Received reward redemption request');
@@ -1871,6 +1851,126 @@ app.listen(port, '0.0.0.0', () => {
       
       if (!userId || !rewardTitle || !pointsRequired) {
         console.log('❌ Missing required fields for reward redemption');
+
+// Redeem reward endpoint
+app.post("/redeem-reward", async (req, res) => {
+  try {
+    console.log("🎁 Received reward redemption request");
+    console.log("📥 Request body:", JSON.stringify(req.body, null, 2));
+    
+    const { userId, rewardTitle, rewardDescription, pointsRequired, rewardCategory } = req.body;
+    
+    if (!userId || !rewardTitle || !pointsRequired) {
+      console.log("❌ Missing required fields for reward redemption");
+      return res.status(400).json({ 
+        error: "Missing required fields: userId, rewardTitle, pointsRequired",
+        received: { userId: !!userId, rewardTitle: !!rewardTitle, pointsRequired: !!pointsRequired }
+      });
+    }
+    
+    const db = admin.firestore();
+    
+    // Get user's current points
+    const userRef = db.collection("users").doc(userId);
+    const userDoc = await userRef.get();
+    
+    if (!userDoc.exists) {
+      console.log("❌ User not found:", userId);
+      return res.status(404).json({ error: "User not found" });
+    }
+    
+    const userData = userDoc.data();
+    const currentPoints = userData.points || 0;
+    
+    console.log(`👤 User ${userId} has ${currentPoints} points, needs ${pointsRequired} for reward`);
+    
+    // Check if user has enough points
+    if (currentPoints < pointsRequired) {
+      console.log("❌ Insufficient points for redemption");
+      return res.status(400).json({ 
+        error: "Insufficient points for redemption",
+        currentPoints,
+        pointsRequired,
+        pointsNeeded: pointsRequired - currentPoints
+      });
+    }
+    
+    // Generate 8-digit random code
+    const redemptionCode = Math.floor(10000000 + Math.random() * 90000000).toString();
+    console.log(`🔢 Generated redemption code: ${redemptionCode}`);
+    
+    // Calculate new points balance
+    const newPointsBalance = currentPoints - pointsRequired;
+    
+    // Create redeemed reward document
+    const redeemedReward = {
+      id: `reward_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      userId: userId,
+      rewardTitle: rewardTitle,
+      rewardDescription: rewardDescription || "",
+      rewardCategory: rewardCategory || "General",
+      pointsRequired: pointsRequired,
+      redemptionCode: redemptionCode,
+      redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes from now
+      isExpired: false,
+      isUsed: false
+    };
+    
+    // Create points transaction for deduction
+    const pointsTransaction = {
+      id: `deduction_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      userId: userId,
+      type: "reward_redemption",
+      amount: -pointsRequired, // Negative amount for deduction
+      description: `Redeemed: ${rewardTitle}`,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      isEarned: false,
+      redemptionCode: redemptionCode,
+      rewardTitle: rewardTitle
+    };
+    
+    // Perform database operations in a batch
+    const batch = db.batch();
+    
+    // Update user points
+    batch.update(userRef, { points: newPointsBalance });
+    
+    // Add redeemed reward
+    const redeemedRewardRef = db.collection("redeemedRewards").doc(redeemedReward.id);
+    batch.set(redeemedRewardRef, redeemedReward);
+    
+    // Add points transaction
+    const transactionRef = db.collection("pointsTransactions").doc(pointsTransaction.id);
+    batch.set(transactionRef, pointsTransaction);
+    
+    // Commit the batch
+    await batch.commit();
+    
+    console.log(`✅ Reward redeemed successfully!`);
+    console.log(`💰 Points deducted: ${pointsRequired}`);
+    console.log(`💳 New balance: ${newPointsBalance}`);
+    console.log(`🔢 Redemption code: ${redemptionCode}`);
+    
+    res.json({
+      success: true,
+      redemptionCode: redemptionCode,
+      newPointsBalance: newPointsBalance,
+      pointsDeducted: pointsRequired,
+      rewardTitle: rewardTitle,
+      expiresAt: redeemedReward.expiresAt,
+      message: "Reward redeemed successfully! Show the code to your cashier."
+    });
+    
+  } catch (error) {
+    console.error("❌ Error redeeming reward:", error);
+    res.status(500).json({ 
+      error: "Failed to redeem reward",
+      details: error.message 
+    });
+  }
+});
+
         return res.status(400).json({ 
           error: 'Missing required fields: userId, rewardTitle, pointsRequired',
           received: { userId: !!userId, rewardTitle: !!rewardTitle, pointsRequired: !!pointsRequired }
@@ -1979,5 +2079,18 @@ app.listen(port, '0.0.0.0', () => {
       });
     }
   });
-// Force redeploy for redeem-reward endpoint - Fri Jul 25 04:27:26 CDT 2025
-app.get('/test-endpoint', (req, res) => { res.json({ message: 'Test endpoint working' }); });
+}
+
+// Force production environment
+process.env.NODE_ENV = 'production';
+
+const port = process.env.PORT || 3001;
+
+app.listen(port, '0.0.0.0', () => {
+  console.log(`🚀 Server running on port ${port}`);
+  console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔑 OpenAI API Key configured: ${process.env.OPENAI_API_KEY ? 'Yes' : 'No'}`);
+  console.log(`🔥 Firebase configured: ${admin.apps.length ? 'Yes' : 'No'}`);
+});
+// Force redeploy - Sat Jul 19 14:12:02 CDT 2025
+// Force complete redeploy - Sat Jul 19 14:15:27 CDT 2025
