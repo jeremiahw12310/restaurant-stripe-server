@@ -651,9 +651,10 @@ VALIDATION RULES:
 5. The order number is ALWAYS next to the words "Walk In", "Dine In", or "Pickup" and found nowhere else
 6. If the order number is more than 3 digits, it cannot be the order number - look for a smaller number
 7. Order numbers CANNOT be greater than 400 - if you see a number over 400, it's not the order number and should be ignored completely
-8. If the image quality is poor and numbers are blurry, unclear, or hard to read, return {"error": "Poor image quality - please take a clearer photo"}
-9. ALWAYS return the date as MM/DD format only (no year, no other format)
-10. CRITICAL: You MUST double-check all extracted information before returning it. Verify that the order number, total, and date are accurate and match what you see on the receipt. This is essential for preventing system abuse and maintaining data integrity.
+8. CRITICAL: If the receipt is faded, blurry, hard to read, or if ANY numbers are unclear or difficult to see, return {"error": "Receipt is too faded or unclear - please take a clearer photo"} - DO NOT attempt to guess or estimate any numbers
+9. If the image quality is poor and numbers are blurry, unclear, or hard to read, return {"error": "Poor image quality - please take a clearer photo"}
+10. ALWAYS return the date as MM/DD format only (no year, no other format)
+11. CRITICAL: You MUST double-check all extracted information before returning it. Verify that the order number, total, and date are accurate and match what you see on the receipt. This is essential for preventing system abuse and maintaining data integrity.
 
 EXTRACTION RULES:
 - orderNumber: For dine-in orders, find the BIGGER number in the black box with white text (ignore smaller numbers below). For pickup orders, find the number near "Pickup". Must be 3 digits or less and cannot exceed 400. If no valid order number under 400 is found, return {"error": "No valid order number found - order numbers must be under 400"}
@@ -663,9 +664,11 @@ EXTRACTION RULES:
 IMPORTANT: 
 - On dine-in receipts, there may be a smaller number below the black box - this is NOT the order number. The order number is the bigger number inside the black box with white text.
 - If you cannot clearly read the numbers due to poor image quality, DO NOT GUESS. Return an error instead.
+- If the receipt is faded, blurry, or any numbers are unclear, DO NOT ATTEMPT TO READ THEM. Return an error immediately.
 - Order numbers must be between 1-400. Any number over 400 is completely invalid and should not be returned at all.
 - If the only numbers you see are over 400, return {"error": "No valid order number found - order numbers must be under 400"}
 - DOUBLE-CHECK REQUIREMENT: Before returning any data, carefully review the extracted order number, total, and date to ensure they are accurate and match the receipt. This verification step is crucial for preventing fraud and maintaining system integrity.
+- SAFETY FIRST: It's better to reject a receipt and ask for a clearer photo than to guess and return incorrect information.
 
 Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderDate": "..."} or {"error": "error message"}
 If a field is missing, use null.`;
