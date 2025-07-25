@@ -121,15 +121,18 @@ app.post('/analyze-receipt', upload.single('image'), async (req, res) => {
 VALIDATION RULES:
 1. If there are NO words stating "Dumpling House" at the top of the receipt, return {"error": "Invalid receipt - must be from Dumpling House"}
 2. If there is anything covering up numbers or text on the receipt, return {"error": "Invalid receipt - numbers are covered or obstructed"}
-3. The order number is ALWAYS the biggest sized number on the receipt and is often found inside a black box (except on pickup receipts)
-4. The order number is ALWAYS next to the words "Walk In", "Dine In", or "Pickup" and found nowhere else
-5. If the order number is more than 3 digits, it cannot be the order number - look for a smaller number
-6. ALWAYS return the date as MM/DD format only (no year, no other format)
+3. For DINE-IN orders: The order number is the BIGGER number inside the black box with white text. IGNORE any smaller numbers below the black box - those are NOT the order number.
+4. For PICKUP orders: The order number is typically found near "Pickup" text and may not be in a black box.
+5. The order number is ALWAYS next to the words "Walk In", "Dine In", or "Pickup" and found nowhere else
+6. If the order number is more than 3 digits, it cannot be the order number - look for a smaller number
+7. ALWAYS return the date as MM/DD format only (no year, no other format)
 
 EXTRACTION RULES:
-- orderNumber: Find the largest number that appears next to "Walk In", "Dine In", or "Pickup". Must be 3 digits or less.
+- orderNumber: For dine-in orders, find the BIGGER number in the black box with white text (ignore smaller numbers below). For pickup orders, find the number near "Pickup". Must be 3 digits or less.
 - orderTotal: The total amount paid (as a number, e.g. 23.45)
 - orderDate: The date in MM/DD format only (e.g. "12/25")
+
+IMPORTANT: On dine-in receipts, there may be a smaller number below the black box - this is NOT the order number. The order number is the bigger number inside the black box with white text.
 
 Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderDate": "..."} or {"error": "error message"}
 If a field is missing, use null.`;
