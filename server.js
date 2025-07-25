@@ -650,19 +650,20 @@ VALIDATION RULES:
 4. For PICKUP orders: The order number is typically found near "Pickup" text and may not be in a black box.
 5. The order number is ALWAYS next to the words "Walk In", "Dine In", or "Pickup" and found nowhere else
 6. If the order number is more than 3 digits, it cannot be the order number - look for a smaller number
-7. Order numbers CANNOT be greater than 200 - if you see a number over 200, it's not the order number
+7. Order numbers CANNOT be greater than 400 - if you see a number over 400, it's not the order number and should be ignored completely
 8. If the image quality is poor and numbers are blurry, unclear, or hard to read, return {"error": "Poor image quality - please take a clearer photo"}
 9. ALWAYS return the date as MM/DD format only (no year, no other format)
 
 EXTRACTION RULES:
-- orderNumber: For dine-in orders, find the BIGGER number in the black box with white text (ignore smaller numbers below). For pickup orders, find the number near "Pickup". Must be 3 digits or less and cannot exceed 200.
+- orderNumber: For dine-in orders, find the BIGGER number in the black box with white text (ignore smaller numbers below). For pickup orders, find the number near "Pickup". Must be 3 digits or less and cannot exceed 400. If no valid order number under 400 is found, return {"error": "No valid order number found - order numbers must be under 400"}
 - orderTotal: The total amount paid (as a number, e.g. 23.45)
 - orderDate: The date in MM/DD format only (e.g. "12/25")
 
 IMPORTANT: 
 - On dine-in receipts, there may be a smaller number below the black box - this is NOT the order number. The order number is the bigger number inside the black box with white text.
 - If you cannot clearly read the numbers due to poor image quality, DO NOT GUESS. Return an error instead.
-- Order numbers must be between 1-200. Any number over 200 is invalid.
+- Order numbers must be between 1-400. Any number over 400 is completely invalid and should not be returned at all.
+- If the only numbers you see are over 400, return {"error": "No valid order number found - order numbers must be under 400"}
 
 Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderDate": "..."} or {"error": "error message"}
 If a field is missing, use null.`;
@@ -714,16 +715,32 @@ If a field is missing, use null.`;
       
       // Validate order number format (must be 3 digits or less and not exceed 200)
       const orderNumberStr = data.orderNumber.toString();
+      console.log('🔍 Validating order number:', orderNumberStr);
+      
       if (orderNumberStr.length > 3) {
         console.log('❌ Order number too long:', orderNumberStr);
-        return res.status(400).json({ error: "Invalid order number format" });
+        return res.status(400).json({ error: "Invalid order number format - must be 3 digits or less" });
       }
       
       const orderNumber = parseInt(data.orderNumber);
-      if (isNaN(orderNumber) || orderNumber < 1 || orderNumber > 200) {
-        console.log('❌ Order number out of valid range (1-200):', orderNumber);
-        return res.status(400).json({ error: "Invalid order number - must be between 1 and 200" });
+      console.log('🔍 Parsed order number:', orderNumber);
+      
+      if (isNaN(orderNumber)) {
+        console.log('❌ Order number is not a valid number:', data.orderNumber);
+        return res.status(400).json({ error: "Invalid order number - must be a valid number" });
       }
+      
+      if (orderNumber < 1) {
+        console.log('❌ Order number too small:', orderNumber);
+        return res.status(400).json({ error: "Invalid order number - must be at least 1" });
+      }
+      
+      if (orderNumber > 200) {
+        console.log('❌ Order number too large (over 200):', orderNumber);
+        return res.status(400).json({ error: "Invalid order number - must be 200 or less" });
+      }
+      
+      console.log('✅ Order number validation passed:', orderNumber);
       
       // Validate date format (must be MM/DD)
       const dateRegex = /^\d{2}\/\d{2}$/;
