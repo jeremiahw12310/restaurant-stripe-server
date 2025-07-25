@@ -673,9 +673,10 @@ IMPORTANT:
 Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderDate": "..."} or {"error": "error message"}
 If a field is missing, use null.`;
 
-      console.log('🤖 Sending request to OpenAI...');
+      console.log('🤖 Sending request to OpenAI for FIRST validation...');
       
-      const response = await openai.chat.completions.create({
+      // First OpenAI call
+      const response1 = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
           {
@@ -689,28 +690,90 @@ If a field is missing, use null.`;
         max_tokens: 300
       });
 
-      console.log('✅ OpenAI response received');
+      console.log('✅ First OpenAI response received');
+      
+      console.log('🤖 Sending request to OpenAI for SECOND validation...');
+      
+      // Second OpenAI call
+      const response2 = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageData}` } }
+            ]
+          }
+        ],
+        max_tokens: 300
+      });
+
+      console.log('✅ Second OpenAI response received');
       
       // Clean up the uploaded file
       fs.unlinkSync(imagePath);
 
-      const text = response.choices[0].message.content;
-      console.log('📝 Raw OpenAI response:', text);
+      // Parse first response
+      const text1 = response1.choices[0].message.content;
+      console.log('📝 Raw OpenAI response 1:', text1);
       
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        console.log('❌ Could not extract JSON from response');
-        return res.status(422).json({ error: "Could not extract JSON from response", raw: text });
+      const jsonMatch1 = text1.match(/\{[\s\S]*\}/);
+      if (!jsonMatch1) {
+        console.log('❌ Could not extract JSON from first response');
+        return res.status(422).json({ error: "Could not extract JSON from first response", raw: text1 });
       }
       
-      const data = JSON.parse(jsonMatch[0]);
-      console.log('✅ Parsed JSON data:', data);
+      const data1 = JSON.parse(jsonMatch1[0]);
+      console.log('✅ Parsed JSON data 1:', data1);
       
-      // Check if the response contains an error
-      if (data.error) {
-        console.log('❌ Receipt validation failed:', data.error);
-        return res.status(400).json({ error: data.error });
+      // Parse second response
+      const text2 = response2.choices[0].message.content;
+      console.log('📝 Raw OpenAI response 2:', text2);
+      
+      const jsonMatch2 = text2.match(/\{[\s\S]*\}/);
+      if (!jsonMatch2) {
+        console.log('❌ Could not extract JSON from second response');
+        return res.status(422).json({ error: "Could not extract JSON from second response", raw: text2 });
       }
+      
+      const data2 = JSON.parse(jsonMatch2[0]);
+      console.log('✅ Parsed JSON data 2:', data2);
+      
+      // Check if either response contains an error
+      if (data1.error) {
+        console.log('❌ First validation failed:', data1.error);
+        return res.status(400).json({ error: data1.error });
+      }
+      
+      if (data2.error) {
+        console.log('❌ Second validation failed:', data2.error);
+        return res.status(400).json({ error: data2.error });
+      }
+      
+      // Compare the two responses
+      console.log('🔍 COMPARING TWO VALIDATIONS:');
+      console.log('   Response 1 - Order Number:', data1.orderNumber, 'Total:', data1.orderTotal, 'Date:', data1.orderDate);
+      console.log('   Response 2 - Order Number:', data2.orderNumber, 'Total:', data2.orderTotal, 'Date:', data2.orderDate);
+      
+      // Check if responses match
+      const responsesMatch = 
+        data1.orderNumber === data2.orderNumber &&
+        data1.orderTotal === data2.orderTotal &&
+        data1.orderDate === data2.orderDate;
+      
+      if (!responsesMatch) {
+        console.log('❌ VALIDATION MISMATCH - Responses do not match');
+        console.log('   This indicates unclear or ambiguous receipt data');
+        return res.status(400).json({ 
+          error: "Receipt data is unclear - the two validations returned different results. Please take a clearer photo of the receipt." 
+        });
+      }
+      
+      console.log('✅ VALIDATION MATCH - Both responses are identical');
+      
+      // Use the validated data (both are the same)
+      const data = data1;
       
       // Validate that we have the required fields
       if (!data.orderNumber || !data.orderTotal || !data.orderDate) {
