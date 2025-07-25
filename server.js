@@ -678,7 +678,7 @@ If a field is missing, use null.`;
       
       // First OpenAI call
       const response1 = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model: "gpt-4-vision-preview",
         messages: [
           {
             role: "user",
@@ -688,7 +688,8 @@ If a field is missing, use null.`;
             ]
           }
         ],
-        max_tokens: 300
+        max_tokens: 500,
+        temperature: 0.1
       });
 
       console.log('✅ First OpenAI response received');
@@ -699,7 +700,7 @@ If a field is missing, use null.`;
       
       // Second OpenAI call
       const response2 = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model: "gpt-4-vision-preview",
         messages: [
           {
             role: "user",
@@ -709,7 +710,8 @@ If a field is missing, use null.`;
             ]
           }
         ],
-        max_tokens: 300
+        max_tokens: 500,
+        temperature: 0.1
       });
 
       console.log('✅ Second OpenAI response received');
