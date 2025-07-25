@@ -661,18 +661,20 @@ EXTRACTION RULES:
 - orderNumber: CRITICAL - Find the number directly underneath the word "Nashville" on the receipt. For dine-in orders, this is the BIGGER number in the black box with white text (ignore smaller numbers below). For pickup orders, this is the number directly under "Nashville". Must be 3 digits or less and cannot exceed 400. If no valid order number under 400 is found, return {"error": "No valid order number found - order numbers must be under 400"}
 - orderTotal: The total amount paid (as a number, e.g. 23.45)
 - orderDate: The date in MM/DD format only (e.g. "12/25")
+- orderTime: The time in HH:MM format only (e.g. "14:30"). This is always located to the right of the date on the receipt.
 
 IMPORTANT: 
 - CRITICAL LOCATION: The order number is ALWAYS directly underneath the word "Nashville" on the receipt. Do not look for numbers further down on the receipt.
 - On dine-in receipts, there may be a smaller number below the black box - this is NOT the order number. The order number is the bigger number inside the black box with white text, located directly under "Nashville".
+- TIME LOCATION: The time is ALWAYS located to the right of the date on the receipt and must be in HH:MM format.
 - If you cannot clearly read the numbers due to poor image quality, DO NOT GUESS. Return an error instead.
 - If the receipt is faded, blurry, or any numbers are unclear, DO NOT ATTEMPT TO READ THEM. Return an error immediately.
 - Order numbers must be between 1-400. Any number over 400 is completely invalid and should not be returned at all.
 - If the only numbers you see are over 400, return {"error": "No valid order number found - order numbers must be under 400"}
-- DOUBLE-CHECK REQUIREMENT: Before returning any data, carefully review the extracted order number, total, and date to ensure they are accurate and match the receipt. This verification step is crucial for preventing fraud and maintaining system integrity.
+- DOUBLE-CHECK REQUIREMENT: Before returning any data, carefully review the extracted order number, total, date, and time to ensure they are accurate and match the receipt. This verification step is crucial for preventing fraud and maintaining system integrity.
 - SAFETY FIRST: It's better to reject a receipt and ask for a clearer photo than to guess and return incorrect information.
 
-Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderDate": "..."} or {"error": "error message"}
+Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "..."} or {"error": "error message"}
 If a field is missing, use null.`;
 
       console.log('🤖 Sending request to OpenAI for FIRST validation...');
@@ -761,19 +763,21 @@ If a field is missing, use null.`;
       
       // Compare the two responses
       console.log('🔍 COMPARING TWO VALIDATIONS:');
-      console.log('   Response 1 - Order Number:', data1.orderNumber, 'Total:', data1.orderTotal, 'Date:', data1.orderDate);
-      console.log('   Response 2 - Order Number:', data2.orderNumber, 'Total:', data2.orderTotal, 'Date:', data2.orderDate);
+      console.log('   Response 1 - Order Number:', data1.orderNumber, 'Total:', data1.orderTotal, 'Date:', data1.orderDate, 'Time:', data1.orderTime);
+      console.log('   Response 2 - Order Number:', data2.orderNumber, 'Total:', data2.orderTotal, 'Date:', data2.orderDate, 'Time:', data2.orderTime);
       
       // Check if responses match
       const responsesMatch = 
         data1.orderNumber === data2.orderNumber &&
         data1.orderTotal === data2.orderTotal &&
-        data1.orderDate === data2.orderDate;
+        data1.orderDate === data2.orderDate &&
+        data1.orderTime === data2.orderTime;
       
       console.log('🔍 COMPARISON DETAILS:');
       console.log('   Order Number Match:', data1.orderNumber === data2.orderNumber, `(${data1.orderNumber} vs ${data2.orderNumber})`);
       console.log('   Order Total Match:', data1.orderTotal === data2.orderTotal, `(${data1.orderTotal} vs ${data2.orderTotal})`);
       console.log('   Order Date Match:', data1.orderDate === data2.orderDate, `(${data1.orderDate} vs ${data2.orderDate})`);
+      console.log('   Order Time Match:', data1.orderTime === data2.orderTime, `(${data1.orderTime} vs ${data2.orderTime})`);
       console.log('   Overall Match:', responsesMatch);
       
       if (!responsesMatch) {
@@ -790,7 +794,7 @@ If a field is missing, use null.`;
       const data = data1;
       
       // Validate that we have the required fields
-      if (!data.orderNumber || !data.orderTotal || !data.orderDate) {
+      if (!data.orderNumber || !data.orderTotal || !data.orderDate || !data.orderTime) {
         console.log('❌ Missing required fields in receipt data');
         return res.status(400).json({ error: "Could not extract all required fields from receipt" });
       }
@@ -831,11 +835,28 @@ If a field is missing, use null.`;
         return res.status(400).json({ error: "Invalid date format - must be MM/DD" });
       }
       
+      // Validate time format (must be HH:MM)
+      const timeRegex = /^\d{2}:\d{2}$/;
+      if (!timeRegex.test(data.orderTime)) {
+        console.log('❌ Invalid time format:', data.orderTime);
+        return res.status(400).json({ error: "Invalid time format - must be HH:MM" });
+      }
+      
+      // Validate time is reasonable (00:00 to 23:59)
+      const [hours, minutes] = data.orderTime.split(':').map(Number);
+      if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+        console.log('❌ Invalid time values:', data.orderTime);
+        return res.status(400).json({ error: "Invalid time - must be between 00:00 and 23:59" });
+      }
+      
+      console.log('✅ Time validation passed:', data.orderTime);
+      
       // Additional server-side validation to double-check extracted data
       console.log('🔍 DOUBLE-CHECKING EXTRACTED DATA:');
       console.log('   Order Number:', data.orderNumber);
       console.log('   Order Total:', data.orderTotal);
       console.log('   Order Date:', data.orderDate);
+      console.log('   Order Time:', data.orderTime);
       
       // Validate order total is a reasonable amount (between $1 and $500)
       const orderTotal = parseFloat(data.orderTotal);
@@ -861,6 +882,49 @@ If a field is missing, use null.`;
       }
       
       console.log('✅ All validations passed - data integrity confirmed');
+      
+      // DUPLICATE DETECTION SYSTEM
+      console.log('🔍 CHECKING FOR DUPLICATE RECEIPTS...');
+      
+      try {
+        // Query Firestore for existing receipts with matching criteria
+        const receiptsRef = db.collection('receipts');
+        
+        // Check for duplicates: if ANY 2 of the 3 fields match (orderNumber, date, time)
+        const duplicateQueries = [
+          // Same order number AND date
+          receiptsRef.where('orderNumber', '==', data.orderNumber).where('orderDate', '==', data.orderDate),
+          // Same order number AND time  
+          receiptsRef.where('orderNumber', '==', data.orderNumber).where('orderTime', '==', data.orderTime),
+          // Same date AND time
+          receiptsRef.where('orderDate', '==', data.orderDate).where('orderTime', '==', data.orderTime)
+        ];
+        
+        let duplicateFound = false;
+        
+        for (const query of duplicateQueries) {
+          const snapshot = await query.get();
+          if (!snapshot.empty) {
+            console.log('❌ DUPLICATE RECEIPT DETECTED');
+            console.log('   Matching criteria found in existing receipt');
+            duplicateFound = true;
+            break;
+          }
+        }
+        
+        if (duplicateFound) {
+          return res.status(409).json({ 
+            error: "Receipt already submitted - this receipt has already been processed and points will not be awarded",
+            duplicate: true
+          });
+        }
+        
+        console.log('✅ No duplicates found - receipt is unique');
+        
+      } catch (duplicateError) {
+        console.log('⚠️ Error checking for duplicates:', duplicateError.message);
+        // Continue processing even if duplicate check fails
+      }
       
       res.json(data);
     } catch (err) {
