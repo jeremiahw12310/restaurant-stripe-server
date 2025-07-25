@@ -1851,6 +1851,8 @@ IMPORTANT:
       
       if (!userId || !rewardTitle || !pointsRequired) {
         console.log('❌ Missing required fields for reward redemption');
+app.get("/simple-test", (req, res) => { res.json({ message: "Simple test working" }); });
+
 
 // Redeem reward endpoint
 app.post("/redeem-reward", async (req, res) => {
