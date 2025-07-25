@@ -653,6 +653,7 @@ VALIDATION RULES:
 7. Order numbers CANNOT be greater than 400 - if you see a number over 400, it's not the order number and should be ignored completely
 8. If the image quality is poor and numbers are blurry, unclear, or hard to read, return {"error": "Poor image quality - please take a clearer photo"}
 9. ALWAYS return the date as MM/DD format only (no year, no other format)
+10. CRITICAL: You MUST double-check all extracted information before returning it. Verify that the order number, total, and date are accurate and match what you see on the receipt. This is essential for preventing system abuse and maintaining data integrity.
 
 EXTRACTION RULES:
 - orderNumber: For dine-in orders, find the BIGGER number in the black box with white text (ignore smaller numbers below). For pickup orders, find the number near "Pickup". Must be 3 digits or less and cannot exceed 400. If no valid order number under 400 is found, return {"error": "No valid order number found - order numbers must be under 400"}
@@ -664,6 +665,7 @@ IMPORTANT:
 - If you cannot clearly read the numbers due to poor image quality, DO NOT GUESS. Return an error instead.
 - Order numbers must be between 1-400. Any number over 400 is completely invalid and should not be returned at all.
 - If the only numbers you see are over 400, return {"error": "No valid order number found - order numbers must be under 400"}
+- DOUBLE-CHECK REQUIREMENT: Before returning any data, carefully review the extracted order number, total, and date to ensure they are accurate and match the receipt. This verification step is crucial for preventing fraud and maintaining system integrity.
 
 Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderDate": "..."} or {"error": "error message"}
 If a field is missing, use null.`;
@@ -748,6 +750,37 @@ If a field is missing, use null.`;
         console.log('❌ Invalid date format:', data.orderDate);
         return res.status(400).json({ error: "Invalid date format - must be MM/DD" });
       }
+      
+      // Additional server-side validation to double-check extracted data
+      console.log('🔍 DOUBLE-CHECKING EXTRACTED DATA:');
+      console.log('   Order Number:', data.orderNumber);
+      console.log('   Order Total:', data.orderTotal);
+      console.log('   Order Date:', data.orderDate);
+      
+      // Validate order total is a reasonable amount (between $1 and $500)
+      const orderTotal = parseFloat(data.orderTotal);
+      if (isNaN(orderTotal) || orderTotal < 1 || orderTotal > 500) {
+        console.log('❌ Order total validation failed:', data.orderTotal);
+        return res.status(400).json({ error: "Invalid order total - must be a reasonable amount between $1 and $500" });
+      }
+      
+      // Validate date is reasonable (not in the future and not too far in the past)
+      const [month, day] = data.orderDate.split('/').map(Number);
+      const currentDate = new Date();
+      const receiptDate = new Date(currentDate.getFullYear(), month - 1, day);
+      
+      // Check if date is in the future (adjust year if needed)
+      if (receiptDate > currentDate) {
+        receiptDate.setFullYear(currentDate.getFullYear() - 1);
+      }
+      
+      const daysDiff = Math.abs((currentDate - receiptDate) / (1000 * 60 * 60 * 24));
+      if (daysDiff > 30) {
+        console.log('❌ Receipt date too old:', data.orderDate);
+        return res.status(400).json({ error: "Receipt date is too old - must be within the last 30 days" });
+      }
+      
+      console.log('✅ All validations passed - data integrity confirmed');
       
       res.json(data);
     } catch (err) {
