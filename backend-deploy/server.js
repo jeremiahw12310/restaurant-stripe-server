@@ -1843,6 +1843,25 @@ IMPORTANT:
   
   // Redeem reward endpoint
 
+// Force production environment
+process.env.NODE_ENV = 'production';
+
+const port = process.env.PORT || 3001;
+
+app.listen(port, '0.0.0.0', () => {
+  console.log(`🚀 Server running on port ${port}`);
+  console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔑 OpenAI API Key configured: ${process.env.OPENAI_API_KEY ? 'Yes' : 'No'}`);
+  console.log(`🔥 Firebase configured: ${admin.apps.length ? 'Yes' : 'No'}`);
+});
+// Force redeploy - Sat Jul 19 14:12:02 CDT 2025
+// Force complete redeploy - Sat Jul 19 14:15:27 CDT 2025
+// Force redeploy for reward redemption - Fri Jul 25 09:15:00 CDT 2025
+}
+
+// Redeem reward endpoint
+
+
   app.post('/redeem-reward', async (req, res) => {
     try {
       console.log('🎁 Received reward redemption request');
@@ -1960,19 +1979,3 @@ IMPORTANT:
       });
     }
   });
-
-// Force production environment
-process.env.NODE_ENV = 'production';
-
-const port = process.env.PORT || 3001;
-
-app.listen(port, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${port}`);
-  console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔑 OpenAI API Key configured: ${process.env.OPENAI_API_KEY ? 'Yes' : 'No'}`);
-  console.log(`🔥 Firebase configured: ${admin.apps.length ? 'Yes' : 'No'}`);
-});
-// Force redeploy - Sat Jul 19 14:12:02 CDT 2025
-// Force complete redeploy - Sat Jul 19 14:15:27 CDT 2025
-// Force redeploy for reward redemption - Fri Jul 25 09:15:00 CDT 2025
-}
