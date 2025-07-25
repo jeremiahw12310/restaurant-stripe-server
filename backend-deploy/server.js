@@ -1958,7 +1958,6 @@ IMPORTANT:
         details: error.message 
       });
     }
-  });
 }
 
 // Force production environment
