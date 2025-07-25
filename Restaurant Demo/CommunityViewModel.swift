@@ -5,6 +5,11 @@ import FirebaseAuth
 import FirebaseStorage
 import Kingfisher
 
+// FIXED: Add notification extension for cache clearing
+extension Notification.Name {
+    static let clearAllCaches = Notification.Name("clearAllCaches")
+}
+
 // MARK: - Verification Request Model
 struct VerificationRequest: Identifiable {
     let id: String
@@ -110,7 +115,8 @@ class CommunityViewModel: ObservableObject {
     
     // MARK: - Advanced Optimization Properties for Large Scale
     @Published var imageCache: [String: UIImage] = [:]
-    private var maxImageCacheSize = 12 // OPTIMIZED: Further reduced from 15 to 12 for lower memory usage
+    // FIXED: Further reduced image cache size to prevent storage bloat
+    private var maxImageCacheSize = 8 // OPTIMIZED: Reduced from 12 to 8 for lower memory usage
     private var commentCache: [String: [CommunityReply]] = [:]
     private var maxCommentCacheSize = 6 // OPTIMIZED: Further reduced from 8 to 6
     private var commentPaginationState: [String: (lastDoc: DocumentSnapshot?, hasMore: Bool)] = [:]
@@ -136,6 +142,14 @@ class CommunityViewModel: ObservableObject {
                 self?.isAdmin = adminStatus
             })
         }
+        
+        // FIXED: Listen for cache clearing notifications
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(clearAllCachesForAccountSwitch),
+            name: .clearAllCaches,
+            object: nil
+        )
     }
     
     deinit {
@@ -235,6 +249,39 @@ class CommunityViewModel: ObservableObject {
         
         print("🧹 Advanced cache cleanup completed")
     }
+    
+    // FIXED: Handle cache clearing notification for account switching
+    @objc private func clearAllCachesForAccountSwitch() {
+        print("🧹 Clearing all CommunityViewModel caches for account switch...")
+        
+        // Clear all caches completely
+        userProfiles.removeAll()
+        imageCache.removeAll()
+        commentCache.removeAll()
+        commentPaginationState.removeAll()
+        
+        // Clear posts
+        pinnedPosts.removeAll()
+        regularPosts.removeAll()
+        
+        // Reset pagination
+        lastDocument = nil
+        hasMorePosts = true
+        
+        // Clear listener
+        listener?.remove()
+        listener = nil
+        
+        // Clear user profile listeners
+        for (_, listener) in userProfileListeners {
+            listener.remove()
+        }
+        userProfileListeners.removeAll()
+        
+        print("✅ All CommunityViewModel caches cleared for account switch")
+    }
+    
+
     
     private func cleanupProfileCache() {
         if userProfiles.count > maxCachedProfiles {
