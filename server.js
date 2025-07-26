@@ -50,6 +50,17 @@ const upload = multer({ dest: 'uploads/' });
 app.use(cors());
 app.use(express.json());
 
+// ---------------------------------------------------------------------------
+// Minimal always-on Redeem Reward endpoint
+// ---------------------------------------------------------------------------
+app.post('/redeem-reward', (req, res) => {
+  console.log('🎁 [Minimal] redeem-reward hit');
+  res.status(501).json({
+    error: 'Redeem reward logic temporarily unavailable on this instance',
+    message: 'Endpoint registered successfully; full implementation pending.'
+  });
+});
+
 // Enhanced combo variety system to encourage exploration
 const comboInsights = []; // Track combo patterns for insights, not restrictions
 const MAX_INSIGHTS = 100;
@@ -2030,6 +2041,125 @@ IMPORTANT:
       console.error('❌ Error generating simple Dumpling Hero comment:', error);
       res.status(500).json({ 
         error: 'Failed to generate Dumpling Hero comment',
+        details: error.message 
+      });
+    }
+  });
+
+  // Redeem reward endpoint
+  app.post('/redeem-reward', async (req, res) => {
+    try {
+      console.log('🎁 Received reward redemption request');
+      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      
+      const { userId, rewardTitle, rewardDescription, pointsRequired, rewardCategory } = req.body;
+      
+      if (!userId || !rewardTitle || !pointsRequired) {
+        console.log('❌ Missing required fields for reward redemption');
+        return res.status(400).json({ 
+          error: 'Missing required fields: userId, rewardTitle, pointsRequired',
+          received: { userId: !!userId, rewardTitle: !!rewardTitle, pointsRequired: !!pointsRequired }
+        });
+      }
+      
+      const db = admin.firestore();
+      
+      // Get user's current points
+      const userRef = db.collection('users').doc(userId);
+      const userDoc = await userRef.get();
+      
+      if (!userDoc.exists) {
+        console.log('❌ User not found:', userId);
+        return res.status(404).json({ error: 'User not found' });
+      }
+      
+      const userData = userDoc.data();
+      const currentPoints = userData.points || 0;
+      
+      console.log(`👤 User ${userId} has ${currentPoints} points, needs ${pointsRequired} for reward`);
+      
+      // Check if user has enough points
+      if (currentPoints < pointsRequired) {
+        console.log('❌ Insufficient points for redemption');
+        return res.status(400).json({ 
+          error: 'Insufficient points for redemption',
+          currentPoints,
+          pointsRequired,
+          pointsNeeded: pointsRequired - currentPoints
+        });
+      }
+      
+      // Generate 8-digit random code
+      const redemptionCode = Math.floor(10000000 + Math.random() * 90000000).toString();
+      console.log(`🔢 Generated redemption code: ${redemptionCode}`);
+      
+      // Calculate new points balance
+      const newPointsBalance = currentPoints - pointsRequired;
+      
+      // Create redeemed reward document
+      const redeemedReward = {
+        id: `reward_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        userId: userId,
+        rewardTitle: rewardTitle,
+        rewardDescription: rewardDescription || '',
+        rewardCategory: rewardCategory || 'General',
+        pointsRequired: pointsRequired,
+        redemptionCode: redemptionCode,
+        redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes from now
+        isExpired: false,
+        isUsed: false
+      };
+      
+      // Create points transaction for deduction
+      const pointsTransaction = {
+        id: `deduction_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        userId: userId,
+        type: 'reward_redemption',
+        amount: -pointsRequired, // Negative amount for deduction
+        description: `Redeemed: ${rewardTitle}`,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        isEarned: false,
+        redemptionCode: redemptionCode,
+        rewardTitle: rewardTitle
+      };
+      
+      // Perform database operations in a batch
+      const batch = db.batch();
+      
+      // Update user points
+      batch.update(userRef, { points: newPointsBalance });
+      
+      // Add redeemed reward
+      const redeemedRewardRef = db.collection('redeemedRewards').doc(redeemedReward.id);
+      batch.set(redeemedRewardRef, redeemedReward);
+      
+      // Add points transaction
+      const transactionRef = db.collection('pointsTransactions').doc(pointsTransaction.id);
+      batch.set(transactionRef, pointsTransaction);
+      
+      // Commit the batch
+      await batch.commit();
+      
+      console.log(`✅ Reward redeemed successfully!`);
+      console.log(`💰 Points deducted: ${pointsRequired}`);
+      console.log(`💳 New balance: ${newPointsBalance}`);
+      console.log(`🔢 Redemption code: ${redemptionCode}`);
+      
+      res.json({
+        success: true,
+        redemptionCode: redemptionCode,
+        newPointsBalance: newPointsBalance,
+        pointsDeducted: pointsRequired,
+        rewardTitle: rewardTitle,
+        expiresAt: redeemedReward.expiresAt,
+        message: 'Reward redeemed successfully! Show the code to your cashier.'
+      });
+      
+    } catch (error) {
+      console.error('❌ Error redeeming reward:', error);
+      res.status(500).json({ 
+        error: 'Failed to redeem reward',
         details: error.message 
       });
     }
