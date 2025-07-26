@@ -3,22 +3,39 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const cors = require('cors');
 const admin = require('firebase-admin');
 
-// Initialize Firebase Admin using Application Default Credentials (ADC)
-try {
-  admin.initializeApp({
-    projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp'
-  });
-  console.log('✅ Firebase Admin initialized with ADC in Stripe server');
-} catch (firebaseInitError) {
-  console.error('❌ Failed to initialize Firebase Admin in Stripe server:', firebaseInitError);
-}
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// ---------------------------------------------------------------------------
+// Firebase Admin (Application Default Credentials) setup
+// ---------------------------------------------------------------------------
+if (!admin.apps.length) {
+  if (process.env.FIREBASE_AUTH_TYPE === 'adc') {
+    try {
+      admin.initializeApp({
+        projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp'
+      });
+      console.log('✅ Firebase Admin initialized with ADC');
+    } catch (error) {
+      console.error('❌ Error initializing Firebase Admin with ADC:', error);
+    }
+  } else if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+    // Fallback to service-account key if provided (not recommended per user rules)
+    try {
+      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+      console.log('✅ Firebase Admin initialized with service account key');
+    } catch (error) {
+      console.error('❌ Error initializing Firebase Admin with service account key:', error);
+    }
+  } else {
+    console.warn('⚠️  Firebase not configured – reward redemption will fail');
+  }
+}
 
 // Create checkout session endpoint
 app.post('/create-checkout-session', async (req, res) => {
@@ -140,38 +157,48 @@ app.post('/orders/orders', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Redeem reward endpoint (mirrors backend-deploy logic)
+// ---------------------------------------------------------------------------
+
 app.post('/redeem-reward', async (req, res) => {
   try {
-    console.log('🎁 [Stripe Server] Redeem reward request received');
-    console.log('📥 Body:', req.body);
+    console.log('🎁 Received reward redemption request');
+    console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
 
     const { userId, rewardTitle, rewardDescription, pointsRequired, rewardCategory } = req.body;
 
     if (!userId || !rewardTitle || !pointsRequired) {
+      console.log('❌ Missing required fields for reward redemption');
       return res.status(400).json({
-        error: 'Missing required fields: userId, rewardTitle, pointsRequired'
+        error: 'Missing required fields: userId, rewardTitle, pointsRequired',
+        received: { userId: !!userId, rewardTitle: !!rewardTitle, pointsRequired: !!pointsRequired }
       });
     }
 
     if (!admin.apps.length) {
-      console.error('⚠️ Firebase not initialized – cannot redeem reward');
+      console.log('❌ Firebase not initialized');
       return res.status(500).json({ error: 'Firebase not configured' });
     }
 
     const db = admin.firestore();
 
-    // Fetch current points
+    // Fetch user
     const userRef = db.collection('users').doc(userId);
-    const userSnap = await userRef.get();
+    const userDoc = await userRef.get();
 
-    if (!userSnap.exists) {
+    if (!userDoc.exists) {
+      console.log('❌ User not found:', userId);
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const userData = userSnap.data();
+    const userData = userDoc.data();
     const currentPoints = userData.points || 0;
 
+    console.log(`👤 User ${userId} has ${currentPoints} points, needs ${pointsRequired}`);
+
     if (currentPoints < pointsRequired) {
+      console.log('❌ Insufficient points for redemption');
       return res.status(400).json({
         error: 'Insufficient points for redemption',
         currentPoints,
@@ -183,7 +210,7 @@ app.post('/redeem-reward', async (req, res) => {
     // Generate 8-digit redemption code
     const redemptionCode = Math.floor(10000000 + Math.random() * 90000000).toString();
 
-    const newBalance = currentPoints - pointsRequired;
+    const newPointsBalance = currentPoints - pointsRequired;
 
     const redeemedReward = {
       id: `reward_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -194,7 +221,7 @@ app.post('/redeem-reward', async (req, res) => {
       pointsRequired,
       redemptionCode,
       redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
-      expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 min expiry
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 min
       isExpired: false,
       isUsed: false
     };
@@ -211,28 +238,28 @@ app.post('/redeem-reward', async (req, res) => {
       rewardTitle
     };
 
-    // Firestore batch
     const batch = db.batch();
-    batch.update(userRef, { points: newBalance });
+    batch.update(userRef, { points: newPointsBalance });
     batch.set(db.collection('redeemedRewards').doc(redeemedReward.id), redeemedReward);
     batch.set(db.collection('pointsTransactions').doc(pointsTransaction.id), pointsTransaction);
 
     await batch.commit();
 
-    console.log('✅ Reward redeemed successfully via Stripe server');
+    console.log('✅ Reward redeemed successfully');
 
     res.json({
       success: true,
       redemptionCode,
-      newPointsBalance: newBalance,
+      newPointsBalance,
       pointsDeducted: pointsRequired,
       rewardTitle,
       expiresAt: redeemedReward.expiresAt,
       message: 'Reward redeemed successfully! Show the code to your cashier.'
     });
-  } catch (err) {
-    console.error('❌ Error redeeming reward in Stripe server:', err);
-    res.status(500).json({ error: 'Failed to redeem reward', details: err.message });
+
+  } catch (error) {
+    console.error('❌ Error redeeming reward:', error);
+    res.status(500).json({ error: 'Failed to redeem reward', details: error.message });
   }
 });
 
