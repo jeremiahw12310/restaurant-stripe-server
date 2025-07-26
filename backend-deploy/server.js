@@ -8,40 +8,26 @@ const { OpenAI } = require('openai');
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
 
-// Check authentication method
-if (process.env.FIREBASE_AUTH_TYPE === 'adc') {
-  // Use Application Default Credentials
+// ---------------------------------------------------------------------------
+// Firebase Admin initialization priority:
+// 1. Service-account key (env FIREBASE_SERVICE_ACCOUNT_KEY)
+// 2. ADC fallback (only if no key present)
+// ---------------------------------------------------------------------------
+
+if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
   try {
-    // Initialize Firebase Admin with just the project ID
-    // This will work on Render and use the default service account
-    admin.initializeApp({
-      projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp'
-    });
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    console.log('✅ Firebase Admin initialized with service account key');
+  } catch (error) {
+    console.error('❌ Error initializing Firebase Admin with service account key:', error);
+  }
+} else if (process.env.FIREBASE_AUTH_TYPE === 'adc' || process.env.GOOGLE_CLOUD_PROJECT) {
+  try {
+    admin.initializeApp({ projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp' });
     console.log('✅ Firebase Admin initialized with project ID for ADC');
   } catch (error) {
     console.error('❌ Error initializing Firebase Admin with ADC:', error);
-  }
-} else if (process.env.FIREBASE_AUTH_TYPE === 'service-account' && process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-  // Use service account key
-  try {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-    });
-    console.log('✅ Firebase Admin initialized with service account key');
-  } catch (error) {
-    console.error('❌ Error initializing Firebase Admin with service account:', error);
-  }
-} else if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-  // Fallback: Use service account key if available
-  try {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-    });
-    console.log('✅ Firebase Admin initialized with service account key (fallback)');
-  } catch (error) {
-    console.error('❌ Error initializing Firebase Admin with service account:', error);
   }
 } else {
   console.warn('⚠️ No Firebase authentication method found - Firebase features will not work');
