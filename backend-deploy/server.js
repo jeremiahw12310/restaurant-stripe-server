@@ -52,6 +52,17 @@ const upload = multer({ dest: 'uploads/' });
 app.use(cors());
 app.use(express.json());
 
+// ---------------------------------------------------------------------------
+// Minimal always-on Redeem Reward endpoint (ensures 404 is eliminated)
+// ---------------------------------------------------------------------------
+app.post('/redeem-reward', (req, res) => {
+  console.log('🎁 [Minimal] redeem-reward hit');
+  res.status(501).json({
+    error: 'Redeem reward logic temporarily unavailable on this instance',
+    message: 'Endpoint registered successfully; full implementation pending.'
+  });
+});
+
 // Enhanced combo variety system to encourage exploration
 const comboInsights = []; // Track combo patterns for insights, not restrictions
 const MAX_INSIGHTS = 100;
