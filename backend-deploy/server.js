@@ -55,12 +55,9 @@ app.use(express.json());
 // ---------------------------------------------------------------------------
 // Minimal always-on Redeem Reward endpoint (ensures 404 is eliminated)
 // ---------------------------------------------------------------------------
-app.post('/redeem-reward', (req, res) => {
-  console.log('🎁 [Minimal] redeem-reward hit');
-  res.status(501).json({
-    error: 'Redeem reward logic temporarily unavailable on this instance',
-    message: 'Endpoint registered successfully; full implementation pending.'
-  });
+app.post('/redeem-reward', (req, res, next) => {
+  // Pass control to the comprehensive handler defined later in the file
+  return next();
 });
 
 // Enhanced combo variety system to encourage exploration
