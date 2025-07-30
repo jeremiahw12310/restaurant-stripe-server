@@ -37,11 +37,16 @@ struct Config {
     static var backendURL: String {
         switch currentEnvironment {
         case .localNetwork:
-            return "http://192.168.1.100:3001" // Update with your computer's IP
+            return localNetworkBackendURL
         case .production:
-            return "https://restaurant-stripe-server-1.onrender.com"
+            return productionBackendURL
         }
     }
+    
+    // Individual backend URLs
+    static let localBackendURL = "http://192.168.1.100:3001" // Update with your computer's IP
+    static let localNetworkBackendURL = "http://192.168.1.100:3001" // Update with your computer's IP
+    static let productionBackendURL = "https://restaurant-stripe-server-1.onrender.com"
     
     // Firebase configuration
     static let firebaseProjectID = "restaurant-demo-12345"
