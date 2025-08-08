@@ -531,7 +531,6 @@ Calculate the total price accurately. Keep the response warm and personal.`;
           content: prompt
         }
       ],
-      temperature: 0.8, // Slightly higher temperature for more variety
       max_completion_tokens: 500
     });
 
@@ -876,8 +875,7 @@ Remember: You're not just an assistant—you love helping people discover the be
       const response = await openai.chat.completions.create({
         model: "gpt-5-mini",
         messages: messages,
-        max_completion_tokens: 300,
-        temperature: 0.7
+        max_completion_tokens: 300
       });
 
       console.log('✅ OpenAI response received');
@@ -1077,8 +1075,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
         ],
-        max_completion_tokens: 500,
-        temperature: 0.8
+        max_completion_tokens: 500
       });
 
       console.log('✅ Received Dumpling Hero post from OpenAI');
@@ -1219,8 +1216,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
         ],
-        max_completion_tokens: 300,
-        temperature: 0.8
+        max_completion_tokens: 300
       });
 
       console.log('✅ Received Dumpling Hero comment from OpenAI');
@@ -1440,8 +1436,7 @@ IMPORTANT:
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
         ],
-        max_completion_tokens: 200,
-        temperature: 0.8
+        max_completion_tokens: 200
       });
 
       console.log('✅ Received simple Dumpling Hero comment from OpenAI');
