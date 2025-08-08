@@ -547,7 +547,7 @@ Calculate the total price accurately. Keep the response warm and personal.`;
         }
       ],
       temperature: 0.8, // Slightly higher temperature for more variety
-      max_tokens: 500
+      max_completion_tokens: 500
     });
 
     console.log('✅ Received response from OpenAI');
@@ -703,7 +703,7 @@ If a field is missing, use null.`;
             ]
           }
         ],
-        max_tokens: 500,
+        max_completion_tokens: 500,
         temperature: 0.1
       });
 
@@ -725,7 +725,7 @@ If a field is missing, use null.`;
             ]
           }
         ],
-        max_tokens: 500,
+        max_completion_tokens: 500,
         temperature: 0.1
       });
 
@@ -1099,7 +1099,7 @@ Remember: You're not just an assistant—you love helping people discover the be
       const response = await openai.chat.completions.create({
         model: "gpt-5-mini",
         messages: messages,
-        max_tokens: 300,
+        max_completion_tokens: 300,
         temperature: 0.7
       });
 
@@ -1300,7 +1300,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
         ],
-        max_tokens: 500,
+        max_completion_tokens: 500,
         temperature: 0.8
       });
 
@@ -1548,7 +1548,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
         ],
-        max_tokens: 300,
+        max_completion_tokens: 300,
         temperature: 0.8
       });
 
@@ -1777,7 +1777,7 @@ IMPORTANT:
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
         ],
-        max_tokens: 200,
+        max_completion_tokens: 200,
         temperature: 0.8
       });
 
@@ -2006,7 +2006,7 @@ IMPORTANT:
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
         ],
-        max_tokens: 200,
+        max_completion_tokens: 200,
         temperature: 0.8
       });
 

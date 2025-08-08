@@ -154,7 +154,7 @@ If a field is missing, use null.`;
           ]
         }
       ],
-      max_tokens: 300
+      max_completion_tokens: 300
     });
 
     fs.unlinkSync(imagePath);
