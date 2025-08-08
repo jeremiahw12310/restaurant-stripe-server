@@ -63,7 +63,7 @@ app.get('/', (req, res) => {
     status: 'Server is running!', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    server: 'BACKEND server.js with gpt-5-mini',
+    server: 'BACKEND server.js with gpt-4o-mini',
     firebaseConfigured: !!admin.apps.length,
     openaiConfigured: !!process.env.OPENAI_API_KEY
   });
@@ -526,7 +526,7 @@ Calculate the total price accurately. Keep the response warm and personal.`;
     
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const completion = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
@@ -537,7 +537,8 @@ Calculate the total price accurately. Keep the response warm and personal.`;
           content: prompt
         }
       ],
-      max_completion_tokens: 500
+      temperature: 0.8, // Slightly higher temperature for more variety
+      max_tokens: 500
     });
 
     console.log('✅ Received response from OpenAI');
@@ -663,7 +664,7 @@ If a field is missing, use null.`;
       console.log('🤖 Sending request to OpenAI...');
       
       const response = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4o",
         messages: [
           {
             role: "user",
@@ -673,7 +674,7 @@ If a field is missing, use null.`;
             ]
           }
         ],
-        max_completion_tokens: 300
+        max_tokens: 300
       });
 
       console.log('✅ OpenAI response received');
@@ -879,9 +880,10 @@ Remember: You're not just an assistant—you love helping people discover the be
       console.log('📋 System prompt preview:', systemPrompt.substring(0, 200) + '...');
       
       const response = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4o-mini",
         messages: messages,
-        max_completion_tokens: 300
+        max_tokens: 300,
+        temperature: 0.7
       });
 
       console.log('✅ OpenAI response received');
@@ -1076,12 +1078,13 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       console.log('🤖 Sending request to OpenAI for Dumpling Hero post...');
       
       const response = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4o-mini",
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
         ],
-        max_completion_tokens: 500
+        max_tokens: 500,
+        temperature: 0.8
       });
 
       console.log('✅ Received Dumpling Hero post from OpenAI');
@@ -1217,12 +1220,13 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       console.log('🤖 Sending request to OpenAI for Dumpling Hero comment...');
       
       const response = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4o-mini",
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
         ],
-        max_completion_tokens: 300
+        max_tokens: 300,
+        temperature: 0.8
       });
 
       console.log('✅ Received Dumpling Hero comment from OpenAI');
@@ -1437,12 +1441,13 @@ IMPORTANT:
       console.log('🤖 Sending request to OpenAI for simple Dumpling Hero comment...');
       
       const response = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4o-mini",
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
         ],
-        max_completion_tokens: 200
+        max_tokens: 200,
+        temperature: 0.8
       });
 
       console.log('✅ Received simple Dumpling Hero comment from OpenAI');
