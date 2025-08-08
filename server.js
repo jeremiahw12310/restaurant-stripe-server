@@ -72,7 +72,7 @@ app.get('/', (req, res) => {
     status: 'Server is running!', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    server: 'BACKEND server.js with gpt-4o-mini',
+    server: 'BACKEND server.js with gpt-5-mini',
     firebaseConfigured: !!admin.apps.length,
     openaiConfigured: !!process.env.OPENAI_API_KEY
   });
@@ -535,7 +535,7 @@ Calculate the total price accurately. Keep the response warm and personal.`;
     
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-5-mini",
       messages: [
         {
           role: "system",
@@ -693,7 +693,7 @@ If a field is missing, use null.`;
       
       // First OpenAI call
       const response1 = await openai.chat.completions.create({
-        model: "gpt-4-vision-preview",
+        model: "gpt-5-mini",
         messages: [
           {
             role: "user",
@@ -715,7 +715,7 @@ If a field is missing, use null.`;
       
       // Second OpenAI call
       const response2 = await openai.chat.completions.create({
-        model: "gpt-4-vision-preview",
+        model: "gpt-5-mini",
         messages: [
           {
             role: "user",
@@ -1097,7 +1097,7 @@ Remember: You're not just an assistant—you love helping people discover the be
       console.log('📋 System prompt preview:', systemPrompt.substring(0, 200) + '...');
       
       const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-5-mini",
         messages: messages,
         max_tokens: 300,
         temperature: 0.7
@@ -1295,7 +1295,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       console.log('🤖 Sending request to OpenAI for Dumpling Hero post...');
       
       const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-5-mini",
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
@@ -1543,7 +1543,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       console.log('---END OF MESSAGE---');
       
       const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-5-mini",
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
@@ -1772,7 +1772,7 @@ IMPORTANT:
       console.log(userMessage);
       
       const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-5-mini",
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
@@ -2001,7 +2001,7 @@ IMPORTANT:
       console.log(userMessage);
       
       const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-5-mini",
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
