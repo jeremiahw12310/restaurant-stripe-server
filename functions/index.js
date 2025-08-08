@@ -144,7 +144,7 @@ If a field is missing, use null.`;
 
     // Call OpenAI Vision
     const response = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model: "gpt-4-vision-preview", // or "gpt-4o"
       messages: [
         {
           role: "user",
@@ -154,7 +154,7 @@ If a field is missing, use null.`;
           ]
         }
       ],
-      max_completion_tokens: 300
+      max_tokens: 300
     });
 
     fs.unlinkSync(imagePath);
