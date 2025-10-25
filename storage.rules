@@ -26,6 +26,13 @@ service firebase.storage {
       allow read, write, delete: if request.auth != null && userIdFile.matches('^' + request.auth.uid + '\\.jpg$');
     }
     
+    // Allow admin users to manage promo slides (images for the carousel)
+    match /promo_slides/{fileName} {
+      allow read: if true; // Public read access to promo slides
+      allow write, delete: if request.auth != null && 
+                              firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+    
     // Default rule - deny all other access
     match /{allPaths=**} {
       allow read, write: if false;
