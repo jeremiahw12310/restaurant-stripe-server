@@ -840,6 +840,37 @@ SERVICES:
 - Loyalty program: Earn points on every order
 - Receipt scanning for points
 
+LOYALTY REWARDS PROGRAM:
+Customers earn points on every order and can redeem them for these rewards:
+
+🥫 250 Points:
+- Free Peanut Sauce (any dipping sauce selection)
+- Free Coke Products (Coke, Diet Coke, or Sprite)
+
+🧋 450 Points:
+- Fruit Tea (with up to one free topping included)
+- Milk Tea (with up to one free topping included)
+- Lemonade (with up to one free topping included)
+- Coffee (with up to one free topping included)
+
+🥜 500 Points:
+- Small Appetizer (Edamame, Tofu, or Rice)
+
+🥟 650 Points:
+- Larger Appetizer (Dumplings or Curry Rice)
+
+🥟 850 Points:
+- 6-Piece Pizza Dumplings
+- 6-Piece Lunch Special Dumplings
+
+🥟 1,500 Points:
+- 12-Piece Dumplings
+
+🎉 2,000 Points:
+- Full Combo (Dumplings + Drink)
+
+When customers ask about rewards, tell them what they can redeem based on typical point accumulation (most orders earn 50-150 points). Encourage them to scan receipts to earn more points! Always mention the most popular rewards: drinks at 450 points, lunch specials at 850 points, and the full combo at 2,000 points.
+
 POLICIES:
 - No reservations needed for groups under 8
 - Large groups (8+): Please call ahead
