@@ -889,7 +889,7 @@ LOYALTY/REWARDS CONTEXT:
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: messages,
-        max_tokens: 800,
+        max_tokens: 1200,
         temperature: 0.7
       });
 

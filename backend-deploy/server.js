@@ -918,11 +918,11 @@ LOYALTY/REWARDS CONTEXT:
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: messages,
-        // Tighter, more concise replies
-        max_tokens: 160,
-        temperature: 0.8,
-        presence_penalty: 0.3,
-        frequency_penalty: 0.2
+        // Allow fuller replies to avoid mid-sentence truncation
+        max_tokens: 1200,
+        temperature: 0.7,
+        presence_penalty: 0.0,
+        frequency_penalty: 0.0
       });
 
       console.log('✅ OpenAI response received');
