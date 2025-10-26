@@ -726,7 +726,7 @@ If a field is missing, use null.`;
     try {
       console.log('💬 Received chat request');
       
-      const { message, conversation_history, userFirstName, userPreferences } = req.body;
+      const { message, conversation_history, userFirstName, userPreferences, userPoints } = req.body;
       
       if (!message) {
         return res.status(400).json({ error: 'Message is required' });
@@ -735,6 +735,7 @@ If a field is missing, use null.`;
       console.log('📝 User message:', message);
       console.log('👤 User first name:', userFirstName || 'Not provided');
       console.log('⚙️ User preferences:', userPreferences || 'Not provided');
+      console.log('🏅 User points:', typeof userPoints === 'number' ? userPoints : 'Not provided');
       
       // Create the system prompt with restaurant information
       const userGreeting = userFirstName ? `Hello ${userFirstName}! ` : '';
@@ -886,7 +887,17 @@ PERSONALITY:
 - Keep responses friendly but concise (2-3 sentences max)
 - Always end with a question to encourage conversation
 
-Remember: You're not just an assistant—you love helping people discover the best dumplings in Nashville!${userPreferencesContext}`;
+Remember: You're not just an assistant—you love helping people discover the best dumplings in Nashville!${userPreferencesContext}
+
+CRITICAL LOYALTY HANDLING:
+- If userPoints is provided (it is ${typeof userPoints === 'number' ? 'provided' : 'not provided'} for this user), you MUST use it to personalize responses.
+- Do NOT say you "can't check points". Instead, if points are not provided, say "I don't see your points right now" and suggest opening the Rewards tab or scanning a receipt.
+
+LOYALTY/REWARDS CONTEXT:
+- The user currently has ${typeof userPoints === 'number' ? userPoints : 'an unknown number of'} points in their account.
+- REWARD TIERS (points required): 250 (Sauce or Coke), 450 (Fruit Tea/Milk Tea/Lemonade/Coffee), 500 (Small Appetizer), 650 (Larger Appetizer), 850 (Pizza Dumplings 6pc or Lunch Special 6pc), 1500 (12-Piece Dumplings), 2000 (Full Combo).
+- When a user asks about what they can redeem or what they are eligible for, ONLY mention rewards that are at or below their current point balance. Do NOT list rewards they cannot afford yet unless they specifically ask about higher tiers; in that case, clearly note the remaining points needed.
+- Keep responses concise and personalized. If you reference eligibility, compute it based on the provided points.`;
 
       // Build conversation history for context
       const messages = [
