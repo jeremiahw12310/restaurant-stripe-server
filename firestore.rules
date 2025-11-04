@@ -175,6 +175,29 @@ service cloud.firestore {
       // Writes remain restricted to the reward owner, admins, or backend server.
       allow write: if (isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin())) || isServer();
     }
+
+    // Referrals: server/admin write-only; limited reads
+    match /referralCodes/{code} {
+      // Codes are managed by server; no direct client writes
+      allow read: if isAdmin() || isServer();
+      allow write: if isAdmin() || isServer();
+    }
+
+    match /referrals/{referralId} {
+      // Read if user is the referrer or the referred, or admin/server
+      allow read: if (isAuthenticated() && (
+          (resource.data.referrerUserId == request.auth.uid) ||
+          (resource.data.referredUserId == request.auth.uid) ||
+          isAdmin()
+        )) || isServer();
+      // Writes server/admin only
+      allow write: if isAdmin() || isServer();
+    }
+
+    // IP usage counters for abuse prevention - server/admin only
+    match /referralIpUsage/{dayIp} {
+      allow read, write: if isAdmin() || isServer();
+    }
     
     // Promo slides collection - public read, admin write
     match /promoSlides/{slideId} {

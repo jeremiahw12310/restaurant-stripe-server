@@ -56,6 +56,14 @@ struct Config {
     static let performanceLoggingEnabled = false // Set to true for debugging
 }
 
+extension Config {
+    // Whitelisted Order Online URL for Community link policy
+    static var orderOnlineURL: URL {
+        // Default to backend base + "/order"; update if a dedicated ordering domain is used
+        return URL(string: backendURL + "/order")!
+    }
+}
+
 // MARK: - Setup Instructions
 
 /*

@@ -1527,6 +1527,971 @@ IMPORTANT:
 
 }
 
+// ---------------------------------------------------------------------------
+// Community API (Feed, Posts, Reactions, Comments, Reports, Moderation)
+// - Feed-centric; no explore/trending
+// - Link policy: only allow "Order Online" link; strip others
+// - Flagged-only moderation with LLM auto-triage
+// ---------------------------------------------------------------------------
+
+// Helpers
+const ORDER_ONLINE_URL = process.env.ORDER_ONLINE_URL || (process.env.RENDER ? `https://restaurant-stripe-server-1.onrender.com/order` : `http://localhost:3001/order`);
+
+function mapPostDocToDTO(doc, likedByMe = false) {
+  const d = doc.data() || {};
+  return {
+    id: doc.id,
+    authorId: d.authorId || 'anon',
+    authorName: d.authorName || 'Anonymous',
+    createdAt: (d.createdAt && d.createdAt.toDate ? d.createdAt.toDate().toISOString() : new Date().toISOString()),
+    text: d.text || '',
+    media: Array.isArray(d.media) ? d.media : [],
+    likeCount: d.likeCount || 0,
+    commentCount: d.commentCount || 0,
+    likedByMe: !!likedByMe,
+    allowedLink: d.allowedLink || null,
+    pinned: !!d.pinned
+  };
+}
+
+function sanitizeAllowedLink(input) {
+  if (!input || typeof input !== 'object') return null;
+  const type = String(input.type || '').toLowerCase();
+  const url = String(input.url || '');
+  if (type === 'orderonline' && url === ORDER_ONLINE_URL) {
+    return { type: 'orderOnline', url };
+  }
+  return null;
+}
+
+async function incrementMetric(db, field, by = 1) {
+  try {
+    const ref = db.collection('community_metrics').doc('global');
+    await ref.set({ [field]: admin.firestore.FieldValue.increment(by) }, { merge: true });
+  } catch (e) {
+    console.warn('⚠️ metric increment failed', field, e.message);
+  }
+}
+
+async function notifyMentions(names, payload) {
+  try {
+    if (!admin.apps.length || !admin.messaging) return;
+    if (!Array.isArray(names) || names.length === 0) return;
+    // NOTE: Implementation depends on mapping displayName->tokens; placeholder log only
+    console.log('🔔 Mentions detected (stub):', names, payload);
+  } catch (e) {
+    console.warn('⚠️ notifyMentions failed', e.message);
+  }
+}
+
+// GET /community/feed?segment=forYou|latest|following&cursor=iso
+app.get('/community/feed', async (req, res) => {
+  try {
+    if (!admin.apps.length) return res.json({ posts: [], nextCursor: null });
+    const db = admin.firestore();
+    const segment = (req.query.segment || 'latest').toString();
+    const pageSize = 20;
+    let q = db.collection('community_posts').orderBy('createdAt', 'desc').limit(pageSize);
+    if (req.query.cursor) {
+      const cursorDate = new Date(req.query.cursor.toString());
+      q = q.startAfter(cursorDate);
+    }
+    const snap = await q.get();
+    const posts = snap.docs.map(d => mapPostDocToDTO(d, false));
+    const nextCursor = snap.docs.length === pageSize ? posts[posts.length - 1].createdAt : null;
+    res.json({ posts, nextCursor });
+  } catch (e) {
+    console.error('❌ /community/feed error', e);
+    res.json({ posts: [], nextCursor: null });
+  }
+});
+
+// POST /community/posts { text, allowedLink? }
+app.post('/community/posts', async (req, res) => {
+  try {
+    if (!admin.apps.length) return res.status(200).json({
+      id: `local_${Date.now()}`,
+      authorId: 'anon', authorName: 'Anonymous', createdAt: new Date().toISOString(),
+      text: (req.body.text || '').toString(), media: [], likeCount: 0, commentCount: 0,
+      likedByMe: false, allowedLink: sanitizeAllowedLink(req.body.allowedLink), pinned: false
+    });
+    const db = admin.firestore();
+    const text = (req.body.text || '').toString();
+    const allowedLink = sanitizeAllowedLink(req.body.allowedLink);
+    const docRef = db.collection('community_posts').doc();
+    const payload = {
+      authorId: req.headers['x-user-id']?.toString() || 'anon',
+      authorName: req.headers['x-user-name']?.toString() || 'Anonymous',
+      text,
+      media: [],
+      likeCount: 0,
+      commentCount: 0,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      allowedLink: allowedLink,
+      pinned: false
+    };
+    await docRef.set(payload);
+    const saved = await docRef.get();
+    const dto = mapPostDocToDTO(saved, false);
+    await incrementMetric(db, 'posts', 1);
+
+    // Mentions (very basic): @Name tokens
+    const mentions = (text.match(/@([A-Za-z0-9_]+)/g) || []).map(s => s.slice(1));
+    if (mentions.length) await notifyMentions(mentions, { type: 'post', postId: docRef.id });
+    return res.status(201).json(dto);
+  } catch (e) {
+    console.error('❌ /community/posts error', e);
+    res.status(500).json({ error: { code: 'create_failed', message: 'Failed to create post' } });
+  }
+});
+
+// POST /community/posts/:id/reactions (toggle like)
+app.post('/community/posts/:id/reactions', async (req, res) => {
+  try {
+    if (!admin.apps.length) return res.json({ likedByMe: true, likeCount: 1 });
+    const db = admin.firestore();
+    const postId = req.params.id;
+    const userId = (req.headers['x-user-id'] || 'anon').toString();
+    const likeRef = db.collection('community_posts').doc(postId).collection('reactions').doc(userId);
+    const postRef = db.collection('community_posts').doc(postId);
+    const likeDoc = await likeRef.get();
+    const batch = db.batch();
+    if (likeDoc.exists) {
+      batch.delete(likeRef);
+      batch.update(postRef, { likeCount: admin.firestore.FieldValue.increment(-1) });
+      await batch.commit();
+      return res.json({ likedByMe: false, likeCountDelta: -1 });
+    } else {
+      batch.set(likeRef, { createdAt: admin.firestore.FieldValue.serverTimestamp() });
+      batch.update(postRef, { likeCount: admin.firestore.FieldValue.increment(1) });
+      await batch.commit();
+      await incrementMetric(db, 'likes', 1);
+      return res.json({ likedByMe: true, likeCountDelta: 1 });
+    }
+  } catch (e) {
+    console.error('❌ /community/posts/:id/reactions error', e);
+    res.json({ likedByMe: true });
+  }
+});
+
+// Comments
+app.get('/community/posts/:id/comments', async (req, res) => {
+  try {
+    if (!admin.apps.length) return res.json({ comments: [], nextCursor: null });
+    const db = admin.firestore();
+    const pageSize = 20;
+    let q = db.collection('community_posts').doc(req.params.id).collection('comments')
+      .orderBy('createdAt', 'desc').limit(pageSize);
+    if (req.query.cursor) q = q.startAfter(new Date(req.query.cursor.toString()));
+    const snap = await q.get();
+    const comments = snap.docs.map(d => {
+      const c = d.data() || {};
+      return {
+        id: d.id,
+        postId: req.params.id,
+        authorId: c.authorId || 'anon',
+        authorName: c.authorName || 'Anonymous',
+        createdAt: (c.createdAt && c.createdAt.toDate ? c.createdAt.toDate().toISOString() : new Date().toISOString()),
+        text: c.text || '',
+        likeCount: c.likeCount || 0,
+        likedByMe: false,
+        parentId: c.parentId || null
+      };
+    });
+    const nextCursor = snap.docs.length === pageSize ? comments[comments.length - 1].createdAt : null;
+    res.json({ comments, nextCursor });
+  } catch (e) {
+    console.error('❌ GET comments error', e);
+    res.json({ comments: [], nextCursor: null });
+  }
+});
+
+app.post('/community/posts/:id/comments', async (req, res) => {
+  try {
+    if (!admin.apps.length) return res.status(201).json({ id: `local_${Date.now()}`, postId: req.params.id, authorId: 'anon', authorName: 'Anonymous', createdAt: new Date().toISOString(), text: (req.body.text || '').toString(), likeCount: 0, likedByMe: false });
+    const db = admin.firestore();
+    const postRef = db.collection('community_posts').doc(req.params.id);
+    const cRef = postRef.collection('comments').doc();
+    const payload = {
+      authorId: req.headers['x-user-id']?.toString() || 'anon',
+      authorName: req.headers['x-user-name']?.toString() || 'Anonymous',
+      text: (req.body.text || '').toString(),
+      likeCount: 0,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      parentId: req.body.parentId || null
+    };
+    const batch = db.batch();
+    batch.set(cRef, payload);
+    batch.update(postRef, { commentCount: admin.firestore.FieldValue.increment(1) });
+    await batch.commit();
+    await incrementMetric(db, 'comments', 1);
+    const saved = await cRef.get();
+    const d = saved.data() || {};
+    // Mentions from comment
+    const mentions = (d.text || '').match(/@([A-Za-z0-9_]+)/g)?.map(s => s.slice(1)) || [];
+    if (mentions.length) await notifyMentions(mentions, { type: 'comment', postId: req.params.id, commentId: saved.id });
+    return res.status(201).json({ id: saved.id, postId: req.params.id, authorId: d.authorId, authorName: d.authorName, createdAt: new Date().toISOString(), text: d.text, likeCount: 0, likedByMe: false, parentId: d.parentId || null });
+  } catch (e) {
+    console.error('❌ POST comment error', e);
+    res.status(500).json({ error: { code: 'comment_failed', message: 'Failed to comment' } });
+  }
+});
+
+// Reports (flagged-only moderation)
+app.post('/community/reports', async (req, res) => {
+  try {
+    const { target, reason } = req.body || {};
+    if (!target || !target.type || !target.id) return res.status(400).json({ error: { code: 'bad_request', message: 'target required' } });
+    if (!admin.apps.length) return res.status(202).json({ status: 'queued' });
+
+    const db = admin.firestore();
+    const modRef = db.collection('community_reports').doc();
+    const base = {
+      target,
+      reason: (reason || '').toString(),
+      reporterId: req.headers['x-user-id']?.toString() || 'anon',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      status: 'open'
+    };
+
+    // First-pass LLM classification if OpenAI configured
+    let llmVerdict = null;
+    if (process.env.OPENAI_API_KEY) {
+      try {
+        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        const moderationPrompt = `Classify this community content for a family-friendly restaurant app. Output JSON with fields: verdict (allowed|borderline|violation), confidence (0-1), categories (array), recommended_action (none|auto_hide|escalate), rationale_snippet.\nCONTENT: ${JSON.stringify(req.body.snapshot || {})}`;
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [ { role: 'system', content: 'You are a strict content policy classifier.' }, { role: 'user', content: moderationPrompt } ],
+          max_tokens: 250,
+          temperature: 0
+        });
+        const text = completion.choices[0].message.content || '{}';
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) llmVerdict = JSON.parse(jsonMatch[0]);
+      } catch (err) {
+        console.warn('⚠️ LLM moderation failed, continuing without auto-hide', err.message);
+      }
+    }
+
+    // Auto-hide if high-confidence violation
+    if (llmVerdict && llmVerdict.verdict === 'violation' && Number(llmVerdict.confidence || 0) >= 0.85) {
+      try {
+        if (target.type === 'post') {
+          await db.collection('community_posts').doc(target.id).update({ hidden: true });
+        } else if (target.type === 'comment') {
+          const parts = target.id.split(':'); // format optional: postId:commentId
+          if (parts.length === 2) await db.collection('community_posts').doc(parts[0]).collection('comments').doc(parts[1]).update({ hidden: true });
+        }
+        await modRef.set({ ...base, llmVerdict, status: 'auto_hidden' });
+        return res.status(202).json({ status: 'auto_hidden' });
+      } catch (e) {
+        console.error('❌ Auto-hide failed, falling back to queue', e);
+      }
+    }
+
+    await modRef.set({ ...base, llmVerdict, status: 'open' });
+    return res.status(202).json({ status: 'queued' });
+  } catch (e) {
+    console.error('❌ /community/reports error', e);
+    res.status(500).json({ error: { code: 'report_failed', message: 'Failed to report' } });
+  }
+});
+
+// Announcements
+app.get('/community/announcements', async (req, res) => {
+  try {
+    if (!admin.apps.length) return res.json({ announcements: [] });
+    const db = admin.firestore();
+    const now = new Date();
+    let q = db.collection('community_announcements');
+    const snap = await q.get();
+    const anns = [];
+    snap.forEach(doc => {
+      const d = doc.data() || {};
+      const startsAt = d.startsAt?.toDate ? d.startsAt.toDate() : null;
+      const expiresAt = d.expiresAt?.toDate ? d.expiresAt.toDate() : null;
+      const active = (!startsAt || startsAt <= now) && (!expiresAt || expiresAt >= now);
+      if (active) {
+        anns.push({
+          id: doc.id,
+          title: d.title || '',
+          body: d.body || '',
+          media: Array.isArray(d.media) ? d.media : [],
+          pinned: !!d.pinned,
+          startsAt: startsAt ? startsAt.toISOString() : null,
+          expiresAt: expiresAt ? expiresAt.toISOString() : null
+        });
+      }
+    });
+    // Pinned first
+    anns.sort((a,b) => (b.pinned?1:0) - (a.pinned?1:0));
+    res.json({ announcements: anns });
+  } catch (e) {
+    console.error('❌ /community/announcements error', e);
+    res.json({ announcements: [] });
+  }
+});
+
+app.post('/community/announcements', async (req, res) => {
+  try {
+    if (!admin.apps.length) return res.status(201).json({ id: `local_${Date.now()}` });
+    const db = admin.firestore();
+    const { id, title, body, media, pinned, startsAt, expiresAt } = req.body || {};
+    const ref = id ? db.collection('community_announcements').doc(id) : db.collection('community_announcements').doc();
+    const payload = {
+      title: (title || '').toString(),
+      body: (body || '').toString(),
+      media: Array.isArray(media) ? media : [],
+      pinned: !!pinned,
+      startsAt: startsAt ? new Date(startsAt) : null,
+      expiresAt: expiresAt ? new Date(expiresAt) : null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+    await ref.set(payload, { merge: true });
+    res.status(201).json({ id: ref.id });
+  } catch (e) {
+    console.error('❌ POST /community/announcements error', e);
+    res.status(500).json({ error: { code: 'announcement_failed', message: 'Failed to save announcement' } });
+  }
+});
+
+// Admin moderation queue (role-gated upstream; no auth here yet)
+app.get('/community/mod/queue', async (req, res) => {
+  try {
+    if (!admin.apps.length) return res.json({ items: [], nextCursor: null });
+    const db = admin.firestore();
+    const status = (req.query.status || 'open').toString();
+    const pageSize = 50;
+    let q = db.collection('community_reports').orderBy('createdAt', 'desc').limit(pageSize);
+    if (status) q = q.where('status', '==', status);
+    if (req.query.cursor) q = q.startAfter(new Date(req.query.cursor.toString()));
+    const snap = await q.get();
+    const items = [];
+    for (const doc of snap.docs) {
+      const d = doc.data() || {};
+      let preview = { text: '', authorName: 'Unknown', createdAt: new Date().toISOString() };
+      try {
+        if (d.target?.type === 'post') {
+          const p = await db.collection('community_posts').doc(d.target.id).get();
+          const pv = p.data() || {};
+          preview = {
+            text: pv.text || '',
+            authorName: pv.authorName || 'Unknown',
+            createdAt: (pv.createdAt && pv.createdAt.toDate ? pv.createdAt.toDate().toISOString() : new Date().toISOString())
+          };
+        }
+      } catch (e) {}
+      items.push({
+        id: doc.id,
+        target: d.target,
+        reporterCount: 1,
+        llmVerdict: d.llmVerdict || null,
+        status: d.status || 'open',
+        preview
+      });
+    }
+    const nextCursor = snap.docs.length === pageSize ? items[items.length - 1].preview.createdAt : null;
+    res.json({ items, nextCursor });
+  } catch (e) {
+    console.error('❌ /community/mod/queue error', e);
+    res.json({ items: [], nextCursor: null });
+  }
+});
+
+// Admin action on report
+app.post('/community/mod/:id/action', async (req, res) => {
+  try {
+    if (!admin.apps.length) return res.json({ status: 'noop' });
+    const { action, reason } = req.body || {};
+    const db = admin.firestore();
+    const modRef = db.collection('community_reports').doc(req.params.id);
+    const modDoc = await modRef.get();
+    if (!modDoc.exists) return res.status(404).json({ error: { code: 'not_found', message: 'Report not found' } });
+    const d = modDoc.data();
+    const target = d.target || {};
+    const actionsRef = db.collection('community_moderation_actions').doc();
+
+    if (action === 'hide' || action === 'unhide') {
+      const hidden = action === 'hide';
+      if (target.type === 'post') {
+        await db.collection('community_posts').doc(target.id).update({ hidden });
+      } else if (target.type === 'comment') {
+        const [postId, commentId] = (target.id || '').split(':');
+        if (postId && commentId) await db.collection('community_posts').doc(postId).collection('comments').doc(commentId).update({ hidden });
+      }
+      await modRef.update({ status: hidden ? 'auto_hidden' : 'resolved', lastAction: action, lastActionAt: admin.firestore.FieldValue.serverTimestamp(), lastActionReason: (reason || '').toString() });
+    } else if (action === 'warn' || action === 'ban' || action === 'shadowBan') {
+      await modRef.update({ status: 'resolved', lastAction: action, lastActionAt: admin.firestore.FieldValue.serverTimestamp(), lastActionReason: (reason || '').toString() });
+    } else {
+      return res.status(400).json({ error: { code: 'bad_action', message: 'Invalid action' } });
+    }
+
+    await actionsRef.set({
+      reportId: modRef.id,
+      action,
+      reason: (reason || '').toString(),
+      actorId: 'admin',
+      target,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    res.json({ status: 'ok' });
+  } catch (e) {
+    console.error('❌ /community/mod/:id/action error', e);
+    res.status(500).json({ error: { code: 'action_failed', message: 'Failed to apply action' } });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Referrals API (Create referral code/link)
+// ---------------------------------------------------------------------------
+
+// Feature flag (default enabled)
+const REFERRALS_ENABLED = (process.env.ENABLE_REFERRALS || 'true') !== 'false';
+
+// Share link base (production for Render; localhost for local dev)
+const REFERRAL_SHARE_BASE = process.env.RENDER ? 'https://restaurant-stripe-server-1.onrender.com' : 'http://localhost:3001';
+
+// Allow x-user-id fallback only for local/dev unless explicitly enabled
+const ALLOW_HEADER_USER_ID = (process.env.ALLOW_HEADER_USER_ID === 'true') || !process.env.RENDER;
+
+async function getAuthUserId(req) {
+  try {
+    const authHeader = (req.headers['authorization'] || '').toString();
+    if (authHeader.startsWith('Bearer ') && admin.apps.length) {
+      const idToken = authHeader.substring('Bearer '.length).trim();
+      if (idToken) {
+        const decoded = await admin.auth().verifyIdToken(idToken);
+        if (decoded && decoded.uid) return decoded.uid;
+      }
+    }
+  } catch (e) {
+    // ignore and fall back
+  }
+  if (ALLOW_HEADER_USER_ID && req.headers['x-user-id']) return req.headers['x-user-id'].toString();
+  if (ALLOW_HEADER_USER_ID && req.body && req.body.userId) return req.body.userId.toString();
+  return null;
+}
+
+async function requireAuth(req, res, next) {
+  const uid = await getAuthUserId(req);
+  if (!uid) return res.status(401).json({ error: 'unauthorized' });
+  req.user = { uid };
+  next();
+}
+
+function generateReferralCode(length = 6) {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // exclude easily confused chars
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+  }
+  return result;
+}
+
+function getMonthKey(date = new Date()) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+}
+
+function getDayKey(date = new Date()) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function getClientIp(req) {
+  const xf = (req.headers['x-forwarded-for'] || '').toString();
+  const ip = (xf.split(',')[0] || req.ip || req.connection?.remoteAddress || '').toString().trim();
+  return ip.replace(/[^0-9a-fA-F:\.]/g, '');
+}
+
+async function logReferralEvent(db, type, payload = {}) {
+  try {
+    const doc = {
+      type: String(type),
+      ...payload,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+    await db.collection('referral_events').add(doc);
+  } catch (e) {
+    console.warn('⚠️ referral event log failed', type, e.message);
+  }
+}
+
+// POST /referrals/create -> { code, shareUrl }
+app.post('/referrals/create', requireAuth, async (req, res) => {
+  try {
+    if (!REFERRALS_ENABLED) {
+      return res.status(404).json({ error: 'Referrals are disabled' });
+    }
+    if (!admin.apps.length) {
+      return res.status(500).json({ error: 'Firebase not configured' });
+    }
+
+    const db = admin.firestore();
+
+    // Identify the referrer user
+    const referrerUserId = req.user.uid;
+
+    // Reuse existing active code if present
+    const existingSnap = await db
+      .collection('referralCodes')
+      .where('referrerUserId', '==', referrerUserId)
+      .where('disabled', '==', false)
+      .limit(1)
+      .get();
+
+    let code; let reused = false;
+    if (!existingSnap.empty) {
+      code = existingSnap.docs[0].id;
+      reused = true;
+    } else {
+      // Create a unique code (6–7 chars if collisions)
+      let attempts = 0;
+      while (attempts < 10) {
+        const candidate = generateReferralCode(6 + (attempts >= 5 ? 1 : 0));
+        const candidateRef = db.collection('referralCodes').doc(candidate);
+        const candidateDoc = await candidateRef.get();
+        if (!candidateDoc.exists) {
+          await candidateRef.set({
+            referrerUserId: referrerUserId,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            disabled: false,
+            monthlyCap: 20,
+            monthlyUsage: {},
+            totalUsage: 0
+          });
+          code = candidate;
+          break;
+        }
+        attempts++;
+      }
+
+      if (!code) {
+        return res.status(500).json({ error: 'Failed to generate referral code' });
+      }
+    }
+
+    const shareUrl = `${REFERRAL_SHARE_BASE}/r/${code}`;
+    // Log event
+    await logReferralEvent(db, reused ? 'referral_code_reused' : 'referral_code_created', {
+      referrerUserId,
+      code,
+      shareUrl
+    });
+    return res.json({ code, shareUrl });
+  } catch (e) {
+    console.error('❌ /referrals/create error', e);
+    return res.status(500).json({ error: 'Failed to create referral code' });
+  }
+});
+
+// POST /referrals/accept -> { status: 'accepted', referralId, referrerUserId }
+app.post('/referrals/accept', requireAuth, async (req, res) => {
+  try {
+    if (!REFERRALS_ENABLED) {
+      return res.status(404).json({ error: 'Referrals are disabled' });
+    }
+    if (!admin.apps.length) {
+      return res.status(500).json({ error: 'Firebase not configured' });
+    }
+
+    const db = admin.firestore();
+
+    const referredUserId = req.user.uid;
+
+    const codeRaw = (req.body && req.body.code) ? String(req.body.code) : '';
+    const deviceId = (req.body && req.body.deviceId) ? String(req.body.deviceId) : null;
+    const code = codeRaw.trim().toUpperCase();
+    if (!code) {
+      return res.status(400).json({ error: 'Missing referral code' });
+    }
+
+    const ip = getClientIp(req);
+    const userAgent = (req.headers['user-agent'] || '').toString();
+    const monthKey = getMonthKey();
+    const dayKey = getDayKey();
+
+    const result = await db.runTransaction(async (tx) => {
+      const codeRef = db.collection('referralCodes').doc(code);
+      const codeDoc = await tx.get(codeRef);
+      if (!codeDoc.exists) {
+        throw { status: 404, code: 'code_not_found', message: 'Referral code not found' };
+      }
+      const codeData = codeDoc.data() || {};
+      if (codeData.disabled) {
+        throw { status: 400, code: 'code_disabled', message: 'Referral code is disabled' };
+      }
+
+      const referrerUserId = String(codeData.referrerUserId || '');
+      if (!referrerUserId) {
+        throw { status: 500, code: 'invalid_code', message: 'Code is misconfigured' };
+      }
+      if (referrerUserId === referredUserId) {
+        throw { status: 400, code: 'self_referral', message: 'You cannot refer yourself' };
+      }
+
+      // Enforce monthly cap
+      const monthlyCap = typeof codeData.monthlyCap === 'number' ? codeData.monthlyCap : 20;
+      const monthlyUsage = (codeData.monthlyUsage || {});
+      const usedThisMonth = Number(monthlyUsage[monthKey] || 0);
+      if (usedThisMonth >= monthlyCap) {
+        throw { status: 429, code: 'monthly_cap_reached', message: 'Referral code monthly limit reached' };
+      }
+
+      // Enforce one referral per receiver + early lifecycle (< 50 points)
+      const userRef = db.collection('users').doc(referredUserId);
+      const userDoc = await tx.get(userRef);
+      if (!userDoc.exists) {
+        throw { status: 404, code: 'user_not_found', message: 'User not found' };
+      }
+      const userData = userDoc.data() || {};
+      const userPoints = Number(userData.points || 0);
+      if (userPoints >= 50) {
+        throw { status: 400, code: 'receiver_not_eligible', message: 'Receiver already has enough points' };
+      }
+      if (userData.referredBy) {
+        throw { status: 409, code: 'already_referred', message: 'Receiver already linked to a referrer' };
+      }
+
+      // Double-check via referrals query
+      const existingReferralSnap = await db.collection('referrals')
+        .where('referredUserId', '==', referredUserId)
+        .limit(1)
+        .get();
+      if (!existingReferralSnap.empty) {
+        throw { status: 409, code: 'already_referred', message: 'Receiver already linked to a referrer' };
+      }
+
+      // IP daily rate limit
+      const ipKey = `${dayKey}:${ip || 'unknown'}`;
+      const ipRef = db.collection('referralIpUsage').doc(ipKey);
+      const ipDoc = await tx.get(ipRef);
+      const ipCount = ipDoc.exists ? Number(ipDoc.data().count || 0) : 0;
+      if (ipCount >= 5) {
+        throw { status: 429, code: 'ip_rate_limited', message: 'Too many referral accepts from this IP today' };
+      }
+
+      // Create referral and update related docs
+      const referralRef = db.collection('referrals').doc();
+      tx.set(referralRef, {
+        code,
+        referrerUserId,
+        referredUserId,
+        status: 'accepted',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        acceptedAt: admin.firestore.FieldValue.serverTimestamp(),
+        awardedAt: null,
+        awardedTxnId: null,
+        ipAtAccept: ip || null,
+        userAgentAtAccept: userAgent || null,
+        deviceIdAtAccept: deviceId || null
+      });
+
+      tx.update(userRef, {
+        referredBy: referrerUserId,
+        referralId: referralRef.id
+      });
+
+      const updates = {
+        totalUsage: admin.firestore.FieldValue.increment(1),
+      };
+      updates[`monthlyUsage.${monthKey}`] = admin.firestore.FieldValue.increment(1);
+      tx.update(codeRef, updates);
+
+      tx.set(ipRef, {
+        date: dayKey,
+        ip: ip || 'unknown',
+        count: ipCount + 1,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      return { referralId: referralRef.id, referrerUserId };
+    });
+
+    await logReferralEvent(db, 'referral_accepted', {
+      referralId: result.referralId,
+      referrerUserId: result.referrerUserId,
+      referredUserId,
+      code,
+      ip,
+      userAgent
+    });
+    return res.json({ status: 'accepted', referralId: result.referralId, referrerUserId: result.referrerUserId });
+  } catch (e) {
+    try {
+      const db = admin.firestore();
+      await logReferralEvent(db, 'referral_accept_denied', {
+        code: (req.body && req.body.code) ? String(req.body.code).toUpperCase() : undefined,
+        referredUserId: (req.user && req.user.uid) || undefined,
+        reason: (e && e.code) ? e.code : 'unknown_error'
+      });
+    } catch {}
+    if (e && typeof e.status === 'number' && e.code) {
+      return res.status(e.status).json({ error: e.code, message: e.message || 'Failed to accept referral' });
+    }
+    console.error('❌ /referrals/accept error', e);
+    return res.status(500).json({ error: 'accept_failed', message: 'Failed to accept referral' });
+  }
+});
+
+// POST /referrals/award-check -> { status: 'awarded'|'already_awarded'|'not_eligible', bonus }
+app.post('/referrals/award-check', requireAuth, async (req, res) => {
+  try {
+    if (!REFERRALS_ENABLED) {
+      return res.status(404).json({ status: 'not_eligible', reason: 'disabled', bonus: 0 });
+    }
+    if (!admin.apps.length) {
+      return res.status(500).json({ error: 'Firebase not configured' });
+    }
+
+    const db = admin.firestore();
+    const tenMinutesMs = 10 * 60 * 1000;
+    const bonusAmount = 50;
+
+    const body = req.body || {};
+    const referralId = body.referralId ? String(body.referralId) : null;
+    const bodyUserId = body.referredUserId ? String(body.referredUserId) : null;
+    const referredUserId = bodyUserId || (req.user && req.user.uid) || null;
+
+    let referralRef;
+    if (referralId) {
+      referralRef = db.collection('referrals').doc(referralId);
+    } else if (referredUserId) {
+      // Lookup user's referralId
+      const userDoc = await db.collection('users').doc(referredUserId).get();
+      if (!userDoc.exists) {
+        return res.status(404).json({ status: 'not_eligible', reason: 'user_not_found', bonus: 0 });
+      }
+      const userData = userDoc.data() || {};
+      if (!userData.referralId) {
+        return res.json({ status: 'not_eligible', reason: 'no_referral', bonus: 0 });
+      }
+      referralRef = db.collection('referrals').doc(String(userData.referralId));
+    } else {
+      return res.status(400).json({ error: 'missing_parameters', message: 'Provide referralId or referredUserId' });
+    }
+
+    const result = await db.runTransaction(async (tx) => {
+      const refDoc = await tx.get(referralRef);
+      if (!refDoc.exists) {
+        return { status: 'not_eligible', reason: 'referral_not_found', bonus: 0 };
+      }
+      const data = refDoc.data() || {};
+      const status = String(data.status || 'pending');
+      const referrerUserId = String(data.referrerUserId || '');
+      const receiverUserId = String(data.referredUserId || '');
+      const acceptedAt = data.acceptedAt && data.acceptedAt.toDate ? data.acceptedAt.toDate() : null;
+      const awardedTxnIdExisting = data.awardedTxnId || null;
+
+      if (awardedTxnIdExisting || status === 'awarded') {
+        return { status: 'already_awarded', reason: 'already_awarded', bonus: 0 };
+      }
+      if (status !== 'accepted') {
+        return { status: 'not_eligible', reason: 'not_accepted', bonus: 0 };
+      }
+      if (!acceptedAt || (Date.now() - acceptedAt.getTime()) < tenMinutesMs) {
+        return { status: 'not_eligible', reason: 'too_early', bonus: 0 };
+      }
+      if (!referrerUserId || !receiverUserId) {
+        return { status: 'not_eligible', reason: 'invalid_referral', bonus: 0 };
+      }
+
+      const receiverRef = db.collection('users').doc(receiverUserId);
+      const referrerRef = db.collection('users').doc(referrerUserId);
+      const receiverDoc = await tx.get(receiverRef);
+      const referrerDoc = await tx.get(referrerRef);
+      if (!receiverDoc.exists || !referrerDoc.exists) {
+        return { status: 'not_eligible', reason: 'user_docs_missing', bonus: 0 };
+      }
+
+      const receiverPoints = Number((receiverDoc.data() || {}).points || 0);
+      if (receiverPoints < 50) {
+        return { status: 'not_eligible', reason: 'threshold_not_met', bonus: 0 };
+      }
+
+      // Idempotent award: use deterministic txn id
+      const awardedTxnId = `referral_award_${referralRef.id}`;
+
+      // Create two pointsTransactions (one per user)
+      const t1 = db.collection('pointsTransactions').doc(`award_${awardedTxnId}_referrer`);
+      const t2 = db.collection('pointsTransactions').doc(`award_${awardedTxnId}_receiver`);
+
+      const nowTs = admin.firestore.FieldValue.serverTimestamp();
+
+      tx.set(t1, {
+        id: t1.id,
+        userId: referrerUserId,
+        type: 'referral_bonus',
+        amount: bonusAmount,
+        description: 'Referral bonus: Your friend reached 50 points',
+        timestamp: nowTs,
+        isEarned: true,
+        referralId: referralRef.id,
+        awardedTxnId
+      });
+
+      tx.set(t2, {
+        id: t2.id,
+        userId: receiverUserId,
+        type: 'referral_bonus',
+        amount: bonusAmount,
+        description: 'Referral bonus: You reached 50 points',
+        timestamp: nowTs,
+        isEarned: true,
+        referralId: referralRef.id,
+        awardedTxnId
+      });
+
+      // Increment points atomically on both users
+      tx.update(referrerRef, { points: admin.firestore.FieldValue.increment(bonusAmount) });
+      tx.update(receiverRef, { points: admin.firestore.FieldValue.increment(bonusAmount) });
+
+      // Update referral to awarded
+      tx.update(referralRef, {
+        status: 'awarded',
+        awardedAt: nowTs,
+        awardedTxnId
+      });
+
+      return { status: 'awarded', reason: 'ok', bonus: bonusAmount };
+    });
+
+    // Log event based on result
+    if (result && result.status === 'awarded') {
+      await logReferralEvent(db, 'referral_award_granted', {
+        referralId: referralId || undefined,
+        referredUserId: referredUserId || undefined,
+        bonus: bonusAmount
+      });
+    } else if (result && result.status === 'already_awarded') {
+      await logReferralEvent(db, 'referral_already_awarded', {
+        referralId: referralId || undefined,
+        referredUserId: referredUserId || undefined
+      });
+    } else {
+      await logReferralEvent(db, 'referral_award_not_eligible', {
+        referralId: referralId || undefined,
+        referredUserId: referredUserId || undefined,
+        reason: result && result.reason ? result.reason : 'unknown'
+      });
+    }
+    return res.json(result);
+  } catch (e) {
+    console.error('❌ /referrals/award-check error', e);
+    return res.status(500).json({ error: 'award_failed', message: 'Failed to process award check' });
+  }
+});
+
+// POST /analytics/referral-share { code, action: 'share'|'copy', shareUrl? }
+app.post('/analytics/referral-share', requireAuth, async (req, res) => {
+  try {
+    if (!REFERRALS_ENABLED) return res.status(404).json({ ok: false });
+    if (!admin.apps.length) return res.status(500).json({ ok: false, error: 'Firebase not configured' });
+    const db = admin.firestore();
+    const uid = req.user.uid;
+    const code = (req.body && req.body.code) ? String(req.body.code).toUpperCase() : null;
+    const action = (req.body && req.body.action) ? String(req.body.action) : 'share';
+    const shareUrl = (req.body && req.body.shareUrl) ? String(req.body.shareUrl) : null;
+    await logReferralEvent(db, 'referral_share', {
+      userId: uid,
+      code,
+      action,
+      shareUrl,
+      ip: getClientIp(req),
+      userAgent: (req.headers['user-agent'] || '').toString()
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false });
+  }
+});
+
+// GET /r/:code -> Landing/redirect page for referral links
+app.get('/r/:code', async (req, res) => {
+  try {
+    if (!REFERRALS_ENABLED) {
+      return res.status(404).send('Not found');
+    }
+
+    const raw = (req.params.code || '').toString();
+    const code = raw.trim().toUpperCase();
+    if (!code) {
+      return res.status(400).send('Missing code');
+    }
+
+    let valid = true;
+    if (admin.apps.length) {
+      try {
+        const snap = await admin.firestore().collection('referralCodes').doc(code).get();
+        const data = snap.exists ? (snap.data() || {}) : null;
+        if (!snap.exists || !data || data.disabled) valid = false;
+      } catch (e) {
+        valid = false;
+      }
+    }
+
+    const scheme = process.env.APP_DEEP_LINK_SCHEME || 'myapp://referral?code=';
+    const deepLink = `${scheme}${encodeURIComponent(code)}`;
+    const appStoreUrl = process.env.APP_STORE_URL || '#';
+
+    const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dumpling House Referral</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; margin: 0; padding: 24px; background: #fafafa; color: #111; }
+      .card { max-width: 520px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 6px 24px rgba(0,0,0,0.08); }
+      .title { font-size: 22px; font-weight: 800; margin: 0 0 8px; }
+      .subtitle { color: #666; margin: 0 0 20px; }
+      .code { font-size: 20px; font-weight: 700; letter-spacing: 2px; padding: 12px 16px; background: #f3f4f6; border-radius: 10px; display: inline-block; }
+      .row { margin-top: 18px; display: flex; gap: 12px; flex-wrap: wrap; }
+      .btn { appearance: none; border: none; padding: 12px 16px; border-radius: 10px; font-weight: 700; cursor: pointer; }
+      .primary { background: #111827; color: #fff; }
+      .secondary { background: #e5e7eb; color: #111827; }
+      .msg { margin-top: 14px; color: #059669; font-weight: 600; display: none; }
+      .invalid { color: #b91c1c; font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1 class="title">Refer a Friend</h1>
+      <p class="subtitle">${valid ? 'Use this code in the app to link your referral.' : '<span class="invalid">This referral code is invalid or disabled.</span>'}</p>
+      <div class="code" id="code">${code}</div>
+      <div class="row">
+        <button class="btn secondary" id="copy">Copy Code</button>
+        <a class="btn primary" id="open" href="${deepLink}">Open App</a>
+        ${appStoreUrl && appStoreUrl !== '#' ? `<a class="btn secondary" href="${appStoreUrl}">Get the App</a>` : ''}
+      </div>
+      <div id="msg" class="msg">Copied!</div>
+    </div>
+    <script>
+      const btn = document.getElementById('copy');
+      const codeEl = document.getElementById('code');
+      const msgEl = document.getElementById('msg');
+      btn?.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(codeEl.textContent || '');
+          msgEl.style.display = 'block';
+          setTimeout(() => msgEl.style.display = 'none', 1200);
+        } catch {}
+      });
+    </script>
+  </body>
+ </html>`;
+
+    res.set('Content-Type', 'text/html').status(valid ? 200 : 404).send(html);
+  } catch (e) {
+    return res.status(500).send('Server error');
+  }
+});
+
 // Redeem reward endpoint (always available, independent of OpenAI)
 app.post('/redeem-reward', async (req, res) => {
   try {
