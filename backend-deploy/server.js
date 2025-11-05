@@ -2492,6 +2492,67 @@ app.get('/r/:code', async (req, res) => {
   }
 });
 
+// GET /referrals/mine -> { inbound?, outbound: [] }
+app.get('/referrals/mine', requireAuth, async (req, res) => {
+  try {
+    if (!REFERRALS_ENABLED) return res.status(404).json({});
+    if (!admin.apps.length) return res.status(500).json({ error: 'Firebase not configured' });
+    const db = admin.firestore();
+    const uid = req.user.uid;
+
+    // Inbound: I was referred by someone (limit 1)
+    const inboundSnap = await db.collection('referrals')
+      .where('referredUserId', '==', uid)
+      .limit(1)
+      .get();
+    let inbound = null;
+    if (!inboundSnap.empty) {
+      const d = inboundSnap.docs[0];
+      const data = d.data() || {};
+      const status = String(data.status || 'pending');
+      const referrerUserId = String(data.referrerUserId || '');
+      let referrerName = null;
+      if (referrerUserId) {
+        const userDoc = await db.collection('users').doc(referrerUserId).get();
+        referrerName = (userDoc.exists ? (userDoc.data() || {}).firstName : null) || null;
+      }
+      inbound = {
+        referralId: d.id,
+        referrerUserId,
+        referrerName,
+        status
+      };
+    }
+
+    // Outbound: I referred others
+    const outboundSnap = await db.collection('referrals')
+      .where('referrerUserId', '==', uid)
+      .get();
+    const outbound = [];
+    for (const d of outboundSnap.docs) {
+      const data = d.data() || {};
+      const status = String(data.status || 'pending');
+      const referredUserId = String(data.referredUserId || '');
+      let referredName = null;
+      if (referredUserId) {
+        const userDoc = await db.collection('users').doc(referredUserId).get();
+        referredName = (userDoc.exists ? (userDoc.data() || {}).firstName : null) || null;
+      }
+      outbound.push({
+        referralId: d.id,
+        referredUserId,
+        referredName,
+        status
+      });
+    }
+
+    res.json({ inbound, outbound });
+  } catch (e) {
+    console.error('❌ /referrals/mine error', e);
+    res.status(500).json({ error: 'failed_to_fetch' });
+  }
+});
+
 // Redeem reward endpoint (always available, independent of OpenAI)
 app.post('/redeem-reward', async (req, res) => {
   try {
