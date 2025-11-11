@@ -8,26 +8,38 @@ const { OpenAI } = require('openai');
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
 
-// ---------------------------------------------------------------------------
-// Firebase Admin initialization priority:
-// 1. Service-account key (env FIREBASE_SERVICE_ACCOUNT_KEY)
-// 2. ADC fallback (only if no key present)
-// ---------------------------------------------------------------------------
-
-if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+// Check authentication method
+if (process.env.FIREBASE_AUTH_TYPE === 'adc') {
+  // Use Application Default Credentials
   try {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-    console.log('✅ Firebase Admin initialized with service account key');
-  } catch (error) {
-    console.error('❌ Error initializing Firebase Admin with service account key:', error);
-  }
-} else if (process.env.FIREBASE_AUTH_TYPE === 'adc' || process.env.GOOGLE_CLOUD_PROJECT) {
-  try {
-    admin.initializeApp({ projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp' });
-    console.log('✅ Firebase Admin initialized with project ID for ADC');
+    admin.initializeApp({
+      projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp'
+    });
+    console.log('✅ Firebase Admin initialized with Application Default Credentials');
   } catch (error) {
     console.error('❌ Error initializing Firebase Admin with ADC:', error);
+  }
+} else if (process.env.FIREBASE_AUTH_TYPE === 'service-account' && process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+  // Use service account key
+  try {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+    console.log('✅ Firebase Admin initialized with service account key');
+  } catch (error) {
+    console.error('❌ Error initializing Firebase Admin with service account:', error);
+  }
+} else if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+  // Fallback: Use service account key if available
+  try {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+    console.log('✅ Firebase Admin initialized with service account key (fallback)');
+  } catch (error) {
+    console.error('❌ Error initializing Firebase Admin with service account:', error);
   }
 } else {
   console.warn('⚠️ No Firebase authentication method found - Firebase features will not work');
@@ -39,11 +51,14 @@ app.use(cors());
 app.use(express.json());
 
 // ---------------------------------------------------------------------------
-// Minimal always-on Redeem Reward endpoint (ensures 404 is eliminated)
+// Minimal always-on Redeem Reward endpoint
 // ---------------------------------------------------------------------------
-app.post('/redeem-reward', (req, res, next) => {
-  // Pass control to the comprehensive handler defined later in the file
-  return next();
+app.post('/redeem-reward', (req, res) => {
+  console.log('🎁 [Minimal] redeem-reward hit');
+  res.status(501).json({
+    error: 'Redeem reward logic temporarily unavailable on this instance',
+    message: 'Endpoint registered successfully; full implementation pending.'
+  });
 });
 
 // Enhanced combo variety system to encourage exploration
@@ -642,23 +657,43 @@ if (!process.env.OPENAI_API_KEY) {
 VALIDATION RULES:
 1. If there are NO words stating "Dumpling House" at the top of the receipt, return {"error": "Invalid receipt - must be from Dumpling House"}
 2. If there is anything covering up numbers or text on the receipt, return {"error": "Invalid receipt - numbers are covered or obstructed"}
-3. The order number is ALWAYS the biggest sized number on the receipt and is often found inside a black box (except on pickup receipts)
-4. The order number is ALWAYS next to the words "Walk In", "Dine In", or "Pickup" and found nowhere else
-5. If the order number is more than 3 digits, it cannot be the order number - look for a smaller number
-6. ALWAYS return the date as MM/DD format only (no year, no other format)
+3. CRITICAL LOCATION: The order number is ALWAYS directly underneath the word "Nashville" on the receipt. Look for "Nashville" and find the number immediately below it.
+4. For DINE-IN orders: The order number is the BIGGER number inside the black box with white text, located directly under "Nashville". IGNORE any smaller numbers below the black box - those are NOT the order number.
+5. For PICKUP orders: The order number is found directly underneath the word "Nashville" and may not be in a black box.
+6. The order number is NEVER found further down on the receipt - it's always in the top section under "Nashville"
+7. If the order number is more than 3 digits, it cannot be the order number - look for a smaller number
+8. Order numbers CANNOT be greater than 400 - if you see a number over 400, it's not the order number and should be ignored completely
+9. CRITICAL: If the receipt is faded, blurry, hard to read, or if ANY numbers are unclear or difficult to see, return {"error": "Receipt is too faded or unclear - please take a clearer photo"} - DO NOT attempt to guess or estimate any numbers
+10. If the image quality is poor and numbers are blurry, unclear, or hard to read, return {"error": "Poor image quality - please take a clearer photo"}
+11. ALWAYS return the date as MM/DD format only (no year, no other format)
+12. CRITICAL: You MUST double-check all extracted information before returning it. Verify that the order number, total, and date are accurate and match what you see on the receipt. This is essential for preventing system abuse and maintaining data integrity.
 
 EXTRACTION RULES:
-- orderNumber: Find the largest number that appears next to "Walk In", "Dine In", or "Pickup". Must be 3 digits or less.
+- orderNumber: CRITICAL - Find the number directly underneath the word "Nashville" on the receipt. For dine-in orders, this is the BIGGER number in the black box with white text (ignore smaller numbers below). For pickup orders, this is the number directly under "Nashville". Must be 3 digits or less and cannot exceed 400. If no valid order number under 400 is found, return {"error": "No valid order number found - order numbers must be under 400"}
 - orderTotal: The total amount paid (as a number, e.g. 23.45)
 - orderDate: The date in MM/DD format only (e.g. "12/25")
+- orderTime: The time in HH:MM format only (e.g. "14:30"). This is always located to the right of the date on the receipt.
 
-Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderDate": "..."} or {"error": "error message"}
+IMPORTANT: 
+- CRITICAL LOCATION: The order number is ALWAYS directly underneath the word "Nashville" on the receipt. Do not look for numbers further down on the receipt.
+- On dine-in receipts, there may be a smaller number below the black box - this is NOT the order number. The order number is the bigger number inside the black box with white text, located directly under "Nashville".
+- TIME LOCATION: The time is ALWAYS located to the right of the date on the receipt and must be in HH:MM format.
+- If you cannot clearly read the numbers due to poor image quality, DO NOT GUESS. Return an error instead.
+- If the receipt is faded, blurry, or any numbers are unclear, DO NOT ATTEMPT TO READ THEM. Return an error immediately.
+- Order numbers must be between 1-400. Any number over 400 is completely invalid and should not be returned at all.
+- If the only numbers you see are over 400, return {"error": "No valid order number found - order numbers must be under 400"}
+- DOUBLE-CHECK REQUIREMENT: Before returning any data, carefully review the extracted order number, total, date, and time to ensure they are accurate and match the receipt. This verification step is crucial for preventing fraud and maintaining system integrity.
+- SAFETY FIRST: It's better to reject a receipt and ask for a clearer photo than to guess and return incorrect information.
+
+Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "..."} or {"error": "error message"}
 If a field is missing, use null.`;
 
-      console.log('🤖 Sending request to OpenAI...');
+      console.log('🤖 Sending request to OpenAI for FIRST validation...');
+      console.log('📊 API Call 1 - Starting at:', new Date().toISOString());
       
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o",
+      // First OpenAI call
+      const response1 = await openai.chat.completions.create({
+        model: "gpt-4-vision-preview",
         messages: [
           {
             role: "user",
@@ -668,50 +703,238 @@ If a field is missing, use null.`;
             ]
           }
         ],
-        max_tokens: 300
+        max_tokens: 500,
+        temperature: 0.1
       });
 
-      console.log('✅ OpenAI response received');
+      console.log('✅ First OpenAI response received');
+      console.log('📊 API Call 1 - Completed at:', new Date().toISOString());
+      
+      console.log('🤖 Sending request to OpenAI for SECOND validation...');
+      console.log('📊 API Call 2 - Starting at:', new Date().toISOString());
+      
+      // Second OpenAI call
+      const response2 = await openai.chat.completions.create({
+        model: "gpt-4-vision-preview",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageData}` } }
+            ]
+          }
+        ],
+        max_tokens: 500,
+        temperature: 0.1
+      });
+
+      console.log('✅ Second OpenAI response received');
+      console.log('📊 API Call 2 - Completed at:', new Date().toISOString());
       
       // Clean up the uploaded file
       fs.unlinkSync(imagePath);
 
-      const text = response.choices[0].message.content;
-      console.log('📝 Raw OpenAI response:', text);
+      // Parse first response
+      const text1 = response1.choices[0].message.content;
+      console.log('📝 Raw OpenAI response 1:', text1);
       
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        console.log('❌ Could not extract JSON from response');
-        return res.status(422).json({ error: "Could not extract JSON from response", raw: text });
+      const jsonMatch1 = text1.match(/\{[\s\S]*\}/);
+      if (!jsonMatch1) {
+        console.log('❌ Could not extract JSON from first response');
+        return res.status(422).json({ error: "Could not extract JSON from first response", raw: text1 });
       }
       
-      const data = JSON.parse(jsonMatch[0]);
-      console.log('✅ Parsed JSON data:', data);
+      const data1 = JSON.parse(jsonMatch1[0]);
+      console.log('✅ Parsed JSON data 1:', data1);
       
-      // Check if the response contains an error
-      if (data.error) {
-        console.log('❌ Receipt validation failed:', data.error);
-        return res.status(400).json({ error: data.error });
+      // Parse second response
+      const text2 = response2.choices[0].message.content;
+      console.log('📝 Raw OpenAI response 2:', text2);
+      
+      const jsonMatch2 = text2.match(/\{[\s\S]*\}/);
+      if (!jsonMatch2) {
+        console.log('❌ Could not extract JSON from second response');
+        return res.status(422).json({ error: "Could not extract JSON from second response", raw: text2 });
       }
+      
+      const data2 = JSON.parse(jsonMatch2[0]);
+      console.log('✅ Parsed JSON data 2:', data2);
+      
+      // Check if either response contains an error
+      if (data1.error) {
+        console.log('❌ First validation failed:', data1.error);
+        return res.status(400).json({ error: data1.error });
+      }
+      
+      if (data2.error) {
+        console.log('❌ Second validation failed:', data2.error);
+        return res.status(400).json({ error: data2.error });
+      }
+      
+      // Compare the two responses
+      console.log('🔍 COMPARING TWO VALIDATIONS:');
+      console.log('   Response 1 - Order Number:', data1.orderNumber, 'Total:', data1.orderTotal, 'Date:', data1.orderDate, 'Time:', data1.orderTime);
+      console.log('   Response 2 - Order Number:', data2.orderNumber, 'Total:', data2.orderTotal, 'Date:', data2.orderDate, 'Time:', data2.orderTime);
+      
+      // Check if responses match
+      const responsesMatch = 
+        data1.orderNumber === data2.orderNumber &&
+        data1.orderTotal === data2.orderTotal &&
+        data1.orderDate === data2.orderDate &&
+        data1.orderTime === data2.orderTime;
+      
+      console.log('🔍 COMPARISON DETAILS:');
+      console.log('   Order Number Match:', data1.orderNumber === data2.orderNumber, `(${data1.orderNumber} vs ${data2.orderNumber})`);
+      console.log('   Order Total Match:', data1.orderTotal === data2.orderTotal, `(${data1.orderTotal} vs ${data2.orderTotal})`);
+      console.log('   Order Date Match:', data1.orderDate === data2.orderDate, `(${data1.orderDate} vs ${data2.orderDate})`);
+      console.log('   Order Time Match:', data1.orderTime === data2.orderTime, `(${data1.orderTime} vs ${data2.orderTime})`);
+      console.log('   Overall Match:', responsesMatch);
+      
+      if (!responsesMatch) {
+        console.log('❌ VALIDATION MISMATCH - Responses do not match');
+        console.log('   This indicates unclear or ambiguous receipt data');
+        return res.status(400).json({ 
+          error: "Receipt data is unclear - the two validations returned different results. Please take a clearer photo of the receipt." 
+        });
+      }
+      
+      console.log('✅ VALIDATION MATCH - Both responses are identical');
+      
+      // Use the validated data (both are the same)
+      const data = data1;
       
       // Validate that we have the required fields
-      if (!data.orderNumber || !data.orderTotal || !data.orderDate) {
+      if (!data.orderNumber || !data.orderTotal || !data.orderDate || !data.orderTime) {
         console.log('❌ Missing required fields in receipt data');
         return res.status(400).json({ error: "Could not extract all required fields from receipt" });
       }
       
-      // Validate order number format (must be 3 digits or less)
+      // Validate order number format (must be 3 digits or less and not exceed 200)
       const orderNumberStr = data.orderNumber.toString();
+      console.log('🔍 Validating order number:', orderNumberStr);
+      
       if (orderNumberStr.length > 3) {
         console.log('❌ Order number too long:', orderNumberStr);
-        return res.status(400).json({ error: "Invalid order number format" });
+        return res.status(400).json({ error: "Invalid order number format - must be 3 digits or less" });
       }
+      
+      const orderNumber = parseInt(data.orderNumber);
+      console.log('🔍 Parsed order number:', orderNumber);
+      
+      if (isNaN(orderNumber)) {
+        console.log('❌ Order number is not a valid number:', data.orderNumber);
+        return res.status(400).json({ error: "Invalid order number - must be a valid number" });
+      }
+      
+      if (orderNumber < 1) {
+        console.log('❌ Order number too small:', orderNumber);
+        return res.status(400).json({ error: "Invalid order number - must be at least 1" });
+      }
+      
+      if (orderNumber > 200) {
+        console.log('❌ Order number too large (over 200):', orderNumber);
+        return res.status(400).json({ error: "Invalid order number - must be 200 or less" });
+      }
+      
+      console.log('✅ Order number validation passed:', orderNumber);
       
       // Validate date format (must be MM/DD)
       const dateRegex = /^\d{2}\/\d{2}$/;
       if (!dateRegex.test(data.orderDate)) {
         console.log('❌ Invalid date format:', data.orderDate);
         return res.status(400).json({ error: "Invalid date format - must be MM/DD" });
+      }
+      
+      // Validate time format (must be HH:MM)
+      const timeRegex = /^\d{2}:\d{2}$/;
+      if (!timeRegex.test(data.orderTime)) {
+        console.log('❌ Invalid time format:', data.orderTime);
+        return res.status(400).json({ error: "Invalid time format - must be HH:MM" });
+      }
+      
+      // Validate time is reasonable (00:00 to 23:59)
+      const [hours, minutes] = data.orderTime.split(':').map(Number);
+      if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+        console.log('❌ Invalid time values:', data.orderTime);
+        return res.status(400).json({ error: "Invalid time - must be between 00:00 and 23:59" });
+      }
+      
+      console.log('✅ Time validation passed:', data.orderTime);
+      
+      // Additional server-side validation to double-check extracted data
+      console.log('🔍 DOUBLE-CHECKING EXTRACTED DATA:');
+      console.log('   Order Number:', data.orderNumber);
+      console.log('   Order Total:', data.orderTotal);
+      console.log('   Order Date:', data.orderDate);
+      console.log('   Order Time:', data.orderTime);
+      
+      // Validate order total is a reasonable amount (between $1 and $500)
+      const orderTotal = parseFloat(data.orderTotal);
+      if (isNaN(orderTotal) || orderTotal < 1 || orderTotal > 500) {
+        console.log('❌ Order total validation failed:', data.orderTotal);
+        return res.status(400).json({ error: "Invalid order total - must be a reasonable amount between $1 and $500" });
+      }
+      
+      // Validate date is reasonable (not in the future and not too far in the past)
+      const [month, day] = data.orderDate.split('/').map(Number);
+      const currentDate = new Date();
+      const receiptDate = new Date(currentDate.getFullYear(), month - 1, day);
+      
+      // Check if date is in the future (adjust year if needed)
+      if (receiptDate > currentDate) {
+        receiptDate.setFullYear(currentDate.getFullYear() - 1);
+      }
+      
+      const daysDiff = Math.abs((currentDate - receiptDate) / (1000 * 60 * 60 * 24));
+      if (daysDiff > 30) {
+        console.log('❌ Receipt date too old:', data.orderDate);
+        return res.status(400).json({ error: "Receipt date is too old - must be within the last 30 days" });
+      }
+      
+      console.log('✅ All validations passed - data integrity confirmed');
+      
+      // DUPLICATE DETECTION SYSTEM
+      console.log('🔍 CHECKING FOR DUPLICATE RECEIPTS...');
+      
+      try {
+        // Query Firestore for existing receipts with matching criteria
+        const receiptsRef = db.collection('receipts');
+        
+        // Check for duplicates: if ANY 2 of the 3 fields match (orderNumber, date, time)
+        const duplicateQueries = [
+          // Same order number AND date
+          receiptsRef.where('orderNumber', '==', data.orderNumber).where('orderDate', '==', data.orderDate),
+          // Same order number AND time  
+          receiptsRef.where('orderNumber', '==', data.orderNumber).where('orderTime', '==', data.orderTime),
+          // Same date AND time
+          receiptsRef.where('orderDate', '==', data.orderDate).where('orderTime', '==', data.orderTime)
+        ];
+        
+        let duplicateFound = false;
+        
+        for (const query of duplicateQueries) {
+          const snapshot = await query.get();
+          if (!snapshot.empty) {
+            console.log('❌ DUPLICATE RECEIPT DETECTED');
+            console.log('   Matching criteria found in existing receipt');
+            duplicateFound = true;
+            break;
+          }
+        }
+        
+        if (duplicateFound) {
+          return res.status(409).json({ 
+            error: "Receipt already submitted - this receipt has already been processed and points will not be awarded",
+            duplicate: true
+          });
+        }
+        
+        console.log('✅ No duplicates found - receipt is unique');
+        
+      } catch (duplicateError) {
+        console.log('⚠️ Error checking for duplicates:', duplicateError.message);
+        // Continue processing even if duplicate check fails
       }
       
       res.json(data);
@@ -841,37 +1064,6 @@ SERVICES:
 - Loyalty program: Earn points on every order
 - Receipt scanning for points
 
-LOYALTY REWARDS PROGRAM:
-Customers earn points on every order and can redeem them for these rewards:
-
-🥫 250 Points:
-- Free Peanut Sauce (any dipping sauce selection)
-- Free Coke Products (Coke, Diet Coke, or Sprite)
-
-🧋 450 Points:
-- Fruit Tea (with up to one free topping included)
-- Milk Tea (with up to one free topping included)
-- Lemonade (with up to one free topping included)
-- Coffee (with up to one free topping included)
-
-🥜 500 Points:
-- Small Appetizer (Edamame, Tofu, or Rice)
-
-🥟 650 Points:
-- Larger Appetizer (Dumplings or Curry Rice)
-
-🥟 850 Points:
-- 6-Piece Pizza Dumplings
-- 6-Piece Lunch Special Dumplings
-
-🥟 1,500 Points:
-- 12-Piece Dumplings
-
-🎉 2,000 Points:
-- Full Combo (Dumplings + Drink)
-
-When customers ask about rewards, tell them what they can redeem based on typical point accumulation (most orders earn 50-150 points). Encourage them to scan receipts to earn more points! Always mention the most popular rewards: drinks at 450 points, lunch specials at 850 points, and the full combo at 2,000 points.
-
 POLICIES:
 - No reservations needed for groups under 8
 - Large groups (8+): Please call ahead
@@ -918,11 +1110,8 @@ LOYALTY/REWARDS CONTEXT:
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: messages,
-        // Allow fuller replies to avoid mid-sentence truncation
         max_tokens: 1200,
-        temperature: 0.7,
-        presence_penalty: 0.0,
-        frequency_penalty: 0.0
+        temperature: 0.7
       });
 
       console.log('✅ OpenAI response received');
@@ -1175,7 +1364,27 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       console.log('🤖 Received Dumpling Hero comment generation request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
       
-      const { prompt, replyingTo } = req.body;
+      const { prompt, replyingTo, postContext } = req.body;
+      
+      // Debug logging for post context
+      console.log('🔍 Post Context Analysis:');
+      if (postContext && Object.keys(postContext).length > 0) {
+        console.log('✅ Post context received:');
+        console.log('   - Content:', postContext.content);
+        console.log('   - Author:', postContext.authorName);
+        console.log('   - Type:', postContext.postType);
+        console.log('   - Images:', postContext.imageURLs?.length || 0);
+        console.log('   - Has Menu Item:', !!postContext.attachedMenuItem);
+        console.log('   - Has Poll:', !!postContext.poll);
+        if (postContext.attachedMenuItem) {
+          console.log('   - Menu Item:', postContext.attachedMenuItem.description);
+        }
+        if (postContext.poll) {
+          console.log('   - Poll Question:', postContext.poll.question);
+        }
+      } else {
+        console.log('❌ No post context received or empty context');
+      }
       
       if (!process.env.OPENAI_API_KEY) {
         return res.status(500).json({ 
@@ -1218,6 +1427,18 @@ RESTAURANT INFO:
 - Hours: Sunday - Thursday 11:30 AM - 9:00 PM, Friday and Saturday 11:30 AM - 10:00 PM
 - Cuisine: Authentic Chinese dumplings and Asian cuisine
 
+POST CONTEXT AWARENESS:
+You will receive detailed information about the post you're commenting on. You MUST use this context to make your comments specific and relevant:
+
+- If the post has images/videos: Reference what you see in the media
+- If the post mentions specific menu items: Show enthusiasm for those specific items and mention them by name
+- If the post has a poll: Engage with the poll question and options specifically
+- If the post has hashtags: Use them naturally in your response
+- If the post is about a specific dish: Show knowledge and excitement about that specific dish
+- If the post has text content: Respond directly to what was said
+
+CRITICAL: You MUST reference specific details from the post context. Don't give generic responses - make it personal to the actual content provided.
+
 COMMENT EXAMPLES:
 1. Agreement: "Absolutely! Those steamed dumplings are pure magic! ✨🥟"
 2. Encouragement: "You're going to love it! The flavors are incredible! 🤤"
@@ -1238,25 +1459,99 @@ IMPORTANT:
 - Don't be overly promotional - focus on being helpful and enthusiastic
 - If replying to a specific comment, acknowledge what they said
 - Make it naturally engaging so people want to continue the conversation
+- Reference specific details from the post context when relevant
 
 If a specific prompt is provided, use it as inspiration but maintain the Dumpling Hero personality.`;
 
-      // Build the user message
-      let userMessage;
+      // Build the user message with post context
+      let userMessage = "";
+      
+      // Add post context if available
+      if (postContext && Object.keys(postContext).length > 0) {
+        userMessage += "POST CONTEXT:\n";
+        userMessage += `- Content: "${postContext.content}"\n`;
+        userMessage += `- Author: ${postContext.authorName}\n`;
+        userMessage += `- Post Type: ${postContext.postType}\n`;
+        
+        if (postContext.caption) {
+          userMessage += `- Caption: "${postContext.caption}"\n`;
+        }
+        
+        if (postContext.imageURLs && postContext.imageURLs.length > 0) {
+          userMessage += `- Images: ${postContext.imageURLs.length} image(s) attached\n`;
+        }
+        
+        if (postContext.videoURL) {
+          userMessage += `- Video: Video content attached\n`;
+        }
+        
+        if (postContext.hashtags && postContext.hashtags.length > 0) {
+          userMessage += `- Hashtags: ${postContext.hashtags.join(', ')}\n`;
+        }
+        
+        if (postContext.attachedMenuItem) {
+          const item = postContext.attachedMenuItem;
+          userMessage += `- Menu Item: ${item.description} ($${item.price}) - ${item.category}\n`;
+          if (item.isDumpling) userMessage += `  * This is a dumpling item! 🥟\n`;
+          if (item.isDrink) userMessage += `  * This is a drink item! 🥤\n`;
+        }
+        
+        if (postContext.poll) {
+          const poll = postContext.poll;
+          userMessage += `- Poll: "${poll.question}"\n`;
+          userMessage += `  Options: ${poll.options.map(opt => `"${opt.text}" (${opt.voteCount} votes)`).join(', ')}\n`;
+          userMessage += `  Total Votes: ${poll.totalVotes}\n`;
+        }
+        
+        userMessage += "\n";
+      }
+      
+      // Add prompt or instruction
       if (prompt) {
-        userMessage = `Generate a Dumpling Hero comment based on this prompt: "${prompt}"`;
+        userMessage += `Generate a Dumpling Hero comment based on this prompt: "${prompt}"`;
         if (replyingTo) {
           userMessage += ` You're replying to: "${replyingTo}"`;
         }
       } else {
-        let instruction = "Generate a random Dumpling Hero comment. Make it supportive and enthusiastic!";
+        let instruction = "Generate a Dumpling Hero comment that DIRECTLY REFERENCES specific details from the post context above. ";
+        
+        // Add specific instructions based on what's available
+        if (postContext && Object.keys(postContext).length > 0) {
+          instruction += "You MUST reference: ";
+          
+          if (postContext.content) {
+            instruction += `- The post content: "${postContext.content}" `;
+          }
+          
+          if (postContext.attachedMenuItem) {
+            const item = postContext.attachedMenuItem;
+            instruction += `- The menu item: ${item.description} ($${item.price}) `;
+            if (item.isDumpling) instruction += "(this is a dumpling!) ";
+            if (item.isDrink) instruction += "(this is a drink!) ";
+          }
+          
+          if (postContext.poll) {
+            instruction += `- The poll question: "${postContext.poll.question}" `;
+          }
+          
+          if (postContext.imageURLs && postContext.imageURLs.length > 0) {
+            instruction += `- The ${postContext.imageURLs.length} image(s) in the post `;
+          }
+          
+          instruction += "Make your comment feel like you're genuinely responding to these specific details, not just giving a generic response!";
+        }
+        
         if (replyingTo) {
           instruction += ` You're replying to: "${replyingTo}"`;
         }
-        userMessage = instruction;
+        userMessage += instruction;
       }
 
       console.log('🤖 Sending request to OpenAI for Dumpling Hero comment...');
+      console.log('📤 Final user message being sent to OpenAI:');
+      console.log('---START OF MESSAGE---');
+      console.log(userMessage);
+      console.log('---END OF MESSAGE---');
       
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
@@ -1302,6 +1597,235 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       console.error('❌ Error generating Dumpling Hero comment:', error);
       res.status(500).json({ 
         error: 'Failed to generate Dumpling Hero comment',
+        details: error.message 
+      });
+    }
+  });
+
+  // Dumpling Hero Comment Preview endpoint (for preview before posting)
+  app.post('/preview-dumpling-hero-comment', async (req, res) => {
+    try {
+      console.log('🤖 Received Dumpling Hero comment preview request');
+      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      
+      const { prompt, postContext } = req.body;
+      
+      if (!process.env.OPENAI_API_KEY) {
+        return res.status(500).json({ 
+          error: 'OpenAI API key not configured',
+          message: 'Please configure the OPENAI_API_KEY environment variable'
+        });
+      }
+      
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      
+      // Build the system prompt for simple Dumpling Hero comments
+      const systemPrompt = `You are Dumpling Hero, the official mascot and social media personality for Dumpling House restaurant in Nashville, TN. You're now responding to comments and posts with your signature enthusiasm and dumpling love.
+
+PERSONALITY:
+- You are enthusiastic, funny, and slightly dramatic about dumplings
+- You use lots of emojis and exclamation marks
+- You speak in a friendly, casual tone that appeals to food lovers
+- You occasionally make puns and food-related jokes
+- You're passionate about dumplings and want to share that passion
+- You're genuinely excited about the food and want to share that excitement
+- You're supportive and encouraging to other users
+
+COMMENT STYLE:
+- Keep comments between 50-200 characters (including emojis)
+- Use 2-5 relevant emojis per comment
+- Make comments naturally engaging and supportive
+- Respond appropriately to the context of what you're replying to
+- Vary between different types of responses:
+  * Agreement and enthusiasm ("Yes! That's exactly right! 🥟✨")
+  * Food appreciation ("Those dumplings look amazing! 🤤")
+  * Encouragement ("You're going to love it! 💪")
+  * Humor ("Dumpling power! 🥟⚡")
+  * Support ("We've got your back! 🙌")
+  * Food facts ("Did you know? Dumplings are happiness in a wrapper! 🎁")
+
+RESTAURANT INFO:
+- Name: Dumpling House
+- Address: 2117 Belcourt Ave, Nashville, TN 37212
+- Phone: +1 (615) 891-4728
+- Hours: Sunday - Thursday 11:30 AM - 9:00 PM, Friday and Saturday 11:30 AM - 10:00 PM
+- Cuisine: Authentic Chinese dumplings and Asian cuisine
+
+POST CONTEXT AWARENESS:
+You will receive detailed information about the post you're commenting on. You MUST use this context to make your comments specific and relevant:
+
+- If the post has images/videos: Reference what you see in the media
+- If the post mentions specific menu items: Show enthusiasm for those specific items and mention them by name
+- If the post has a poll: Engage with the poll question and options specifically
+- If the post has hashtags: Use them naturally in your response
+- If the post is about a specific dish: Show knowledge and excitement about that specific dish
+- If the post has text content: Respond directly to what was said
+
+CRITICAL: You MUST reference specific details from the post context. Don't give generic responses - make it personal to the actual content provided.
+
+COMMENT EXAMPLES:
+1. Agreement: "Absolutely! Those steamed dumplings are pure magic! ✨🥟"
+2. Encouragement: "You're going to love it! The flavors are incredible! 🤤"
+3. Humor: "Dumpling power activated! 🥟⚡ Ready to conquer hunger!"
+4. Support: "We've got your back! 🙌🥟 Dumpling House family!"
+5. Food Appreciation: "That looks delicious! 🤤 The perfect dumpling moment!"
+6. Enthusiasm: "Yes! That's the spirit! 🥟✨ Dumpling love all around!"
+
+RESPONSE FORMAT:
+Return a JSON object with:
+{ "commentText": "The generated comment text with emojis" }
+
+IMPORTANT: 
+- Make the comment feel like you're genuinely responding to the context
+- Keep it supportive and encouraging
+- Don't be overly promotional - focus on being helpful and enthusiastic
+- If replying to a specific comment, acknowledge what they said
+- Make it naturally engaging so people want to continue the conversation
+- If a specific prompt is provided, use it as inspiration but maintain the Dumpling Hero personality
+- CRITICAL: You MUST reference specific details from the post context when provided`;
+
+      // Build the user message with post context
+      let userMessage = "";
+      
+      // Add post context if available
+      if (postContext && Object.keys(postContext).length > 0) {
+        console.log('🔍 Post Context Analysis for Preview Endpoint:');
+        console.log('✅ Post context received:');
+        console.log('   - Content:', postContext.content);
+        console.log('   - Author:', postContext.authorName);
+        console.log('   - Type:', postContext.postType);
+        
+        userMessage += "POST CONTEXT:\n";
+        userMessage += `- Content: "${postContext.content}"\n`;
+        userMessage += `- Author: ${postContext.authorName}\n`;
+        userMessage += `- Post Type: ${postContext.postType}\n`;
+        
+        if (postContext.caption) {
+          userMessage += `- Caption: "${postContext.caption}"\n`;
+        }
+        
+        if (postContext.imageURLs && postContext.imageURLs.length > 0) {
+          userMessage += `- Images: ${postContext.imageURLs.length} image(s) attached\n`;
+        }
+        
+        if (postContext.videoURL) {
+          userMessage += `- Video: Video content attached\n`;
+        }
+        
+        if (postContext.hashtags && postContext.hashtags.length > 0) {
+          userMessage += `- Hashtags: ${postContext.hashtags.join(', ')}\n`;
+        }
+        
+        if (postContext.attachedMenuItem) {
+          const item = postContext.attachedMenuItem;
+          userMessage += `- Menu Item: ${item.description} ($${item.price}) - ${item.category}\n`;
+          if (item.isDumpling) userMessage += `  * This is a dumpling item! 🥟\n`;
+          if (item.isDrink) userMessage += `  * This is a drink item! 🥤\n`;
+        }
+        
+        if (postContext.poll) {
+          const poll = postContext.poll;
+          userMessage += `- Poll: "${poll.question}"\n`;
+          userMessage += `  Options: ${poll.options.map(opt => `"${opt.text}" (${opt.voteCount} votes)`).join(', ')}\n`;
+          userMessage += `  Total Votes: ${poll.totalVotes}\n`;
+        }
+        
+        userMessage += "\n";
+      }
+      
+      // Add prompt or instruction
+      if (prompt) {
+        userMessage += `Generate a Dumpling Hero comment based on this prompt: "${prompt}"`;
+        if (postContext && Object.keys(postContext).length > 0) {
+          userMessage += " You MUST reference specific details from the post context above.";
+        }
+      } else {
+        if (postContext && Object.keys(postContext).length > 0) {
+          // When we have post context but no prompt, create a specific instruction
+          userMessage += "Generate a Dumpling Hero comment that DIRECTLY REFERENCES the post context above. ";
+          userMessage += "You MUST reference: ";
+          
+          if (postContext.content) {
+            userMessage += `- The post content: "${postContext.content}" `;
+          }
+          
+          if (postContext.caption) {
+            userMessage += `- The caption: "${postContext.caption}" `;
+          }
+          
+          if (postContext.videoURL) {
+            userMessage += `- The video content `;
+          }
+          
+          if (postContext.attachedMenuItem) {
+            const item = postContext.attachedMenuItem;
+            userMessage += `- The menu item: ${item.description} ($${item.price}) `;
+            if (item.isDumpling) userMessage += "(this is a dumpling!) ";
+            if (item.isDrink) userMessage += "(this is a drink!) ";
+          }
+          
+          if (postContext.poll) {
+            userMessage += `- The poll question: "${postContext.poll.question}" `;
+          }
+          
+          if (postContext.imageURLs && postContext.imageURLs.length > 0) {
+            userMessage += `- The ${postContext.imageURLs.length} image(s) in the post `;
+          }
+          
+          userMessage += "Make your comment feel like you're genuinely responding to these specific details, not just giving a generic response!";
+        } else {
+          userMessage += "Generate a random Dumpling Hero comment. Make it supportive and enthusiastic!";
+        }
+      }
+
+      console.log('🤖 Sending request to OpenAI for Dumpling Hero comment preview...');
+      console.log('📝 User message being sent to ChatGPT:');
+      console.log(userMessage);
+      
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ],
+        max_tokens: 200,
+        temperature: 0.8
+      });
+
+      console.log('✅ Received Dumpling Hero comment preview from OpenAI');
+      
+      const generatedContent = response.choices[0].message.content;
+      console.log('📝 Generated content:', generatedContent);
+      
+      // Try to parse the JSON response
+      let parsedResponse;
+      try {
+        // Extract JSON from the response (in case there's extra text)
+        const jsonMatch = generatedContent.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          parsedResponse = JSON.parse(jsonMatch[0]);
+        } else {
+          // If no JSON found, create a simple response
+          parsedResponse = {
+            commentText: generatedContent
+          };
+        }
+      } catch (parseError) {
+        console.log('⚠️ Could not parse JSON response, using raw text');
+        parsedResponse = {
+          commentText: generatedContent
+        };
+      }
+      
+      res.json({
+        success: true,
+        comment: parsedResponse
+      });
+      
+    } catch (error) {
+      console.error('❌ Error generating Dumpling Hero comment preview:', error);
+      res.status(500).json({ 
+        error: 'Failed to generate Dumpling Hero comment preview',
         details: error.message 
       });
     }
@@ -1445,39 +1969,47 @@ IMPORTANT:
           userMessage += " You MUST reference specific details from the post context above.";
         }
       } else {
-        let instruction = "Generate a Dumpling Hero comment";
-        
         if (postContext && Object.keys(postContext).length > 0) {
-          instruction += " that DIRECTLY REFERENCES specific details from the post context above. ";
-          instruction += "You MUST reference: ";
+          // When we have post context but no prompt, create a specific instruction
+          userMessage += "Generate a Dumpling Hero comment that DIRECTLY REFERENCES the post context above. ";
+          userMessage += "You MUST reference: ";
           
           if (postContext.content) {
-            instruction += `- The post content: "${postContext.content}" `;
+            userMessage += `- The post content: "${postContext.content}" `;
+          }
+          
+          if (postContext.caption) {
+            userMessage += `- The caption: "${postContext.caption}" `;
+          }
+          
+          if (postContext.videoURL) {
+            userMessage += `- The video content `;
           }
           
           if (postContext.attachedMenuItem) {
             const item = postContext.attachedMenuItem;
-            instruction += `- The menu item: ${item.description} ($${item.price}) `;
-            if (item.isDumpling) instruction += "(this is a dumpling!) ";
-            if (item.isDrink) instruction += "(this is a drink!) ";
+            userMessage += `- The menu item: ${item.description} ($${item.price}) `;
+            if (item.isDumpling) userMessage += "(this is a dumpling!) ";
+            if (item.isDrink) userMessage += "(this is a drink!) ";
           }
           
           if (postContext.poll) {
-            instruction += `- The poll question: "${postContext.poll.question}" `;
+            userMessage += `- The poll question: "${postContext.poll.question}" `;
           }
           
           if (postContext.imageURLs && postContext.imageURLs.length > 0) {
-            instruction += `- The ${postContext.imageURLs.length} image(s) in the post `;
+            userMessage += `- The ${postContext.imageURLs.length} image(s) in the post `;
           }
           
-          instruction += "Make your comment feel like you're genuinely responding to these specific details, not just giving a generic response!";
+          userMessage += "Make your comment feel like you're genuinely responding to these specific details, not just giving a generic response!";
         } else {
-          instruction += " that's enthusiastic and engaging about dumplings!";
+          userMessage += "Generate a random Dumpling Hero comment. Make it supportive and enthusiastic!";
         }
-        userMessage += instruction;
       }
 
       console.log('🤖 Sending request to OpenAI for simple Dumpling Hero comment...');
+      console.log('📝 User message being sent to ChatGPT:');
+      console.log(userMessage);
       
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
@@ -1525,1157 +2057,125 @@ IMPORTANT:
     }
   });
 
-}
-
-// ---------------------------------------------------------------------------
-// Community API (Feed, Posts, Reactions, Comments, Reports, Moderation)
-// - Feed-centric; no explore/trending
-// - Link policy: only allow "Order Online" link; strip others
-// - Flagged-only moderation with LLM auto-triage
-// ---------------------------------------------------------------------------
-
-// Helpers
-const ORDER_ONLINE_URL = process.env.ORDER_ONLINE_URL || (process.env.RENDER ? `https://restaurant-stripe-server-1.onrender.com/order` : `http://localhost:3001/order`);
-
-function mapPostDocToDTO(doc, likedByMe = false) {
-  const d = doc.data() || {};
-  return {
-    id: doc.id,
-    authorId: d.authorId || 'anon',
-    authorName: d.authorName || 'Anonymous',
-    createdAt: (d.createdAt && d.createdAt.toDate ? d.createdAt.toDate().toISOString() : new Date().toISOString()),
-    text: d.text || '',
-    media: Array.isArray(d.media) ? d.media : [],
-    likeCount: d.likeCount || 0,
-    commentCount: d.commentCount || 0,
-    likedByMe: !!likedByMe,
-    allowedLink: d.allowedLink || null,
-    pinned: !!d.pinned
-  };
-}
-
-function sanitizeAllowedLink(input) {
-  if (!input || typeof input !== 'object') return null;
-  const type = String(input.type || '').toLowerCase();
-  const url = String(input.url || '');
-  if (type === 'orderonline' && url === ORDER_ONLINE_URL) {
-    return { type: 'orderOnline', url };
-  }
-  return null;
-}
-
-async function incrementMetric(db, field, by = 1) {
-  try {
-    const ref = db.collection('community_metrics').doc('global');
-    await ref.set({ [field]: admin.firestore.FieldValue.increment(by) }, { merge: true });
-  } catch (e) {
-    console.warn('⚠️ metric increment failed', field, e.message);
-  }
-}
-
-async function notifyMentions(names, payload) {
-  try {
-    if (!admin.apps.length || !admin.messaging) return;
-    if (!Array.isArray(names) || names.length === 0) return;
-    // NOTE: Implementation depends on mapping displayName->tokens; placeholder log only
-    console.log('🔔 Mentions detected (stub):', names, payload);
-  } catch (e) {
-    console.warn('⚠️ notifyMentions failed', e.message);
-  }
-}
-
-// GET /community/feed?segment=forYou|latest|following&cursor=iso
-app.get('/community/feed', async (req, res) => {
-  try {
-    if (!admin.apps.length) return res.json({ posts: [], nextCursor: null });
-    const db = admin.firestore();
-    const segment = (req.query.segment || 'latest').toString();
-    const pageSize = 20;
-    let q = db.collection('community_posts').orderBy('createdAt', 'desc').limit(pageSize);
-    if (req.query.cursor) {
-      const cursorDate = new Date(req.query.cursor.toString());
-      q = q.startAfter(cursorDate);
-    }
-    const snap = await q.get();
-    const posts = snap.docs.map(d => mapPostDocToDTO(d, false));
-    const nextCursor = snap.docs.length === pageSize ? posts[posts.length - 1].createdAt : null;
-    res.json({ posts, nextCursor });
-  } catch (e) {
-    console.error('❌ /community/feed error', e);
-    res.json({ posts: [], nextCursor: null });
-  }
-});
-
-// POST /community/posts { text, allowedLink? }
-app.post('/community/posts', async (req, res) => {
-  try {
-    if (!admin.apps.length) return res.status(200).json({
-      id: `local_${Date.now()}`,
-      authorId: 'anon', authorName: 'Anonymous', createdAt: new Date().toISOString(),
-      text: (req.body.text || '').toString(), media: [], likeCount: 0, commentCount: 0,
-      likedByMe: false, allowedLink: sanitizeAllowedLink(req.body.allowedLink), pinned: false
-    });
-    const db = admin.firestore();
-    const text = (req.body.text || '').toString();
-    const allowedLink = sanitizeAllowedLink(req.body.allowedLink);
-    const docRef = db.collection('community_posts').doc();
-    const payload = {
-      authorId: req.headers['x-user-id']?.toString() || 'anon',
-      authorName: req.headers['x-user-name']?.toString() || 'Anonymous',
-      text,
-      media: [],
-      likeCount: 0,
-      commentCount: 0,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      allowedLink: allowedLink,
-      pinned: false
-    };
-    await docRef.set(payload);
-    const saved = await docRef.get();
-    const dto = mapPostDocToDTO(saved, false);
-    await incrementMetric(db, 'posts', 1);
-
-    // Mentions (very basic): @Name tokens
-    const mentions = (text.match(/@([A-Za-z0-9_]+)/g) || []).map(s => s.slice(1));
-    if (mentions.length) await notifyMentions(mentions, { type: 'post', postId: docRef.id });
-    return res.status(201).json(dto);
-  } catch (e) {
-    console.error('❌ /community/posts error', e);
-    res.status(500).json({ error: { code: 'create_failed', message: 'Failed to create post' } });
-  }
-});
-
-// POST /community/posts/:id/reactions (toggle like)
-app.post('/community/posts/:id/reactions', async (req, res) => {
-  try {
-    if (!admin.apps.length) return res.json({ likedByMe: true, likeCount: 1 });
-    const db = admin.firestore();
-    const postId = req.params.id;
-    const userId = (req.headers['x-user-id'] || 'anon').toString();
-    const likeRef = db.collection('community_posts').doc(postId).collection('reactions').doc(userId);
-    const postRef = db.collection('community_posts').doc(postId);
-    const likeDoc = await likeRef.get();
-    const batch = db.batch();
-    if (likeDoc.exists) {
-      batch.delete(likeRef);
-      batch.update(postRef, { likeCount: admin.firestore.FieldValue.increment(-1) });
-      await batch.commit();
-      return res.json({ likedByMe: false, likeCountDelta: -1 });
-    } else {
-      batch.set(likeRef, { createdAt: admin.firestore.FieldValue.serverTimestamp() });
-      batch.update(postRef, { likeCount: admin.firestore.FieldValue.increment(1) });
-      await batch.commit();
-      await incrementMetric(db, 'likes', 1);
-      return res.json({ likedByMe: true, likeCountDelta: 1 });
-    }
-  } catch (e) {
-    console.error('❌ /community/posts/:id/reactions error', e);
-    res.json({ likedByMe: true });
-  }
-});
-
-// Comments
-app.get('/community/posts/:id/comments', async (req, res) => {
-  try {
-    if (!admin.apps.length) return res.json({ comments: [], nextCursor: null });
-    const db = admin.firestore();
-    const pageSize = 20;
-    let q = db.collection('community_posts').doc(req.params.id).collection('comments')
-      .orderBy('createdAt', 'desc').limit(pageSize);
-    if (req.query.cursor) q = q.startAfter(new Date(req.query.cursor.toString()));
-    const snap = await q.get();
-    const comments = snap.docs.map(d => {
-      const c = d.data() || {};
-      return {
-        id: d.id,
-        postId: req.params.id,
-        authorId: c.authorId || 'anon',
-        authorName: c.authorName || 'Anonymous',
-        createdAt: (c.createdAt && c.createdAt.toDate ? c.createdAt.toDate().toISOString() : new Date().toISOString()),
-        text: c.text || '',
-        likeCount: c.likeCount || 0,
-        likedByMe: false,
-        parentId: c.parentId || null
-      };
-    });
-    const nextCursor = snap.docs.length === pageSize ? comments[comments.length - 1].createdAt : null;
-    res.json({ comments, nextCursor });
-  } catch (e) {
-    console.error('❌ GET comments error', e);
-    res.json({ comments: [], nextCursor: null });
-  }
-});
-
-app.post('/community/posts/:id/comments', async (req, res) => {
-  try {
-    if (!admin.apps.length) return res.status(201).json({ id: `local_${Date.now()}`, postId: req.params.id, authorId: 'anon', authorName: 'Anonymous', createdAt: new Date().toISOString(), text: (req.body.text || '').toString(), likeCount: 0, likedByMe: false });
-    const db = admin.firestore();
-    const postRef = db.collection('community_posts').doc(req.params.id);
-    const cRef = postRef.collection('comments').doc();
-    const payload = {
-      authorId: req.headers['x-user-id']?.toString() || 'anon',
-      authorName: req.headers['x-user-name']?.toString() || 'Anonymous',
-      text: (req.body.text || '').toString(),
-      likeCount: 0,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      parentId: req.body.parentId || null
-    };
-    const batch = db.batch();
-    batch.set(cRef, payload);
-    batch.update(postRef, { commentCount: admin.firestore.FieldValue.increment(1) });
-    await batch.commit();
-    await incrementMetric(db, 'comments', 1);
-    const saved = await cRef.get();
-    const d = saved.data() || {};
-    // Mentions from comment
-    const mentions = (d.text || '').match(/@([A-Za-z0-9_]+)/g)?.map(s => s.slice(1)) || [];
-    if (mentions.length) await notifyMentions(mentions, { type: 'comment', postId: req.params.id, commentId: saved.id });
-    return res.status(201).json({ id: saved.id, postId: req.params.id, authorId: d.authorId, authorName: d.authorName, createdAt: new Date().toISOString(), text: d.text, likeCount: 0, likedByMe: false, parentId: d.parentId || null });
-  } catch (e) {
-    console.error('❌ POST comment error', e);
-    res.status(500).json({ error: { code: 'comment_failed', message: 'Failed to comment' } });
-  }
-});
-
-// Reports (flagged-only moderation)
-app.post('/community/reports', async (req, res) => {
-  try {
-    const { target, reason } = req.body || {};
-    if (!target || !target.type || !target.id) return res.status(400).json({ error: { code: 'bad_request', message: 'target required' } });
-    if (!admin.apps.length) return res.status(202).json({ status: 'queued' });
-
-    const db = admin.firestore();
-    const modRef = db.collection('community_reports').doc();
-    const base = {
-      target,
-      reason: (reason || '').toString(),
-      reporterId: req.headers['x-user-id']?.toString() || 'anon',
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      status: 'open'
-    };
-
-    // First-pass LLM classification if OpenAI configured
-    let llmVerdict = null;
-    if (process.env.OPENAI_API_KEY) {
-      try {
-        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-        const moderationPrompt = `Classify this community content for a family-friendly restaurant app. Output JSON with fields: verdict (allowed|borderline|violation), confidence (0-1), categories (array), recommended_action (none|auto_hide|escalate), rationale_snippet.\nCONTENT: ${JSON.stringify(req.body.snapshot || {})}`;
-        const completion = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
-          messages: [ { role: 'system', content: 'You are a strict content policy classifier.' }, { role: 'user', content: moderationPrompt } ],
-          max_tokens: 250,
-          temperature: 0
-        });
-        const text = completion.choices[0].message.content || '{}';
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) llmVerdict = JSON.parse(jsonMatch[0]);
-      } catch (err) {
-        console.warn('⚠️ LLM moderation failed, continuing without auto-hide', err.message);
-      }
-    }
-
-    // Auto-hide if high-confidence violation
-    if (llmVerdict && llmVerdict.verdict === 'violation' && Number(llmVerdict.confidence || 0) >= 0.85) {
-      try {
-        if (target.type === 'post') {
-          await db.collection('community_posts').doc(target.id).update({ hidden: true });
-        } else if (target.type === 'comment') {
-          const parts = target.id.split(':'); // format optional: postId:commentId
-          if (parts.length === 2) await db.collection('community_posts').doc(parts[0]).collection('comments').doc(parts[1]).update({ hidden: true });
-        }
-        await modRef.set({ ...base, llmVerdict, status: 'auto_hidden' });
-        return res.status(202).json({ status: 'auto_hidden' });
-      } catch (e) {
-        console.error('❌ Auto-hide failed, falling back to queue', e);
-      }
-    }
-
-    await modRef.set({ ...base, llmVerdict, status: 'open' });
-    return res.status(202).json({ status: 'queued' });
-  } catch (e) {
-    console.error('❌ /community/reports error', e);
-    res.status(500).json({ error: { code: 'report_failed', message: 'Failed to report' } });
-  }
-});
-
-// Announcements
-app.get('/community/announcements', async (req, res) => {
-  try {
-    if (!admin.apps.length) return res.json({ announcements: [] });
-    const db = admin.firestore();
-    const now = new Date();
-    let q = db.collection('community_announcements');
-    const snap = await q.get();
-    const anns = [];
-    snap.forEach(doc => {
-      const d = doc.data() || {};
-      const startsAt = d.startsAt?.toDate ? d.startsAt.toDate() : null;
-      const expiresAt = d.expiresAt?.toDate ? d.expiresAt.toDate() : null;
-      const active = (!startsAt || startsAt <= now) && (!expiresAt || expiresAt >= now);
-      if (active) {
-        anns.push({
-          id: doc.id,
-          title: d.title || '',
-          body: d.body || '',
-          media: Array.isArray(d.media) ? d.media : [],
-          pinned: !!d.pinned,
-          startsAt: startsAt ? startsAt.toISOString() : null,
-          expiresAt: expiresAt ? expiresAt.toISOString() : null
-        });
-      }
-    });
-    // Pinned first
-    anns.sort((a,b) => (b.pinned?1:0) - (a.pinned?1:0));
-    res.json({ announcements: anns });
-  } catch (e) {
-    console.error('❌ /community/announcements error', e);
-    res.json({ announcements: [] });
-  }
-});
-
-app.post('/community/announcements', async (req, res) => {
-  try {
-    if (!admin.apps.length) return res.status(201).json({ id: `local_${Date.now()}` });
-    const db = admin.firestore();
-    const { id, title, body, media, pinned, startsAt, expiresAt } = req.body || {};
-    const ref = id ? db.collection('community_announcements').doc(id) : db.collection('community_announcements').doc();
-    const payload = {
-      title: (title || '').toString(),
-      body: (body || '').toString(),
-      media: Array.isArray(media) ? media : [],
-      pinned: !!pinned,
-      startsAt: startsAt ? new Date(startsAt) : null,
-      expiresAt: expiresAt ? new Date(expiresAt) : null,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    };
-    await ref.set(payload, { merge: true });
-    res.status(201).json({ id: ref.id });
-  } catch (e) {
-    console.error('❌ POST /community/announcements error', e);
-    res.status(500).json({ error: { code: 'announcement_failed', message: 'Failed to save announcement' } });
-  }
-});
-
-// Admin moderation queue (role-gated upstream; no auth here yet)
-app.get('/community/mod/queue', async (req, res) => {
-  try {
-    if (!admin.apps.length) return res.json({ items: [], nextCursor: null });
-    const db = admin.firestore();
-    const status = (req.query.status || 'open').toString();
-    const pageSize = 50;
-    let q = db.collection('community_reports').orderBy('createdAt', 'desc').limit(pageSize);
-    if (status) q = q.where('status', '==', status);
-    if (req.query.cursor) q = q.startAfter(new Date(req.query.cursor.toString()));
-    const snap = await q.get();
-    const items = [];
-    for (const doc of snap.docs) {
-      const d = doc.data() || {};
-      let preview = { text: '', authorName: 'Unknown', createdAt: new Date().toISOString() };
-      try {
-        if (d.target?.type === 'post') {
-          const p = await db.collection('community_posts').doc(d.target.id).get();
-          const pv = p.data() || {};
-          preview = {
-            text: pv.text || '',
-            authorName: pv.authorName || 'Unknown',
-            createdAt: (pv.createdAt && pv.createdAt.toDate ? pv.createdAt.toDate().toISOString() : new Date().toISOString())
-          };
-        }
-      } catch (e) {}
-      items.push({
-        id: doc.id,
-        target: d.target,
-        reporterCount: 1,
-        llmVerdict: d.llmVerdict || null,
-        status: d.status || 'open',
-        preview
-      });
-    }
-    const nextCursor = snap.docs.length === pageSize ? items[items.length - 1].preview.createdAt : null;
-    res.json({ items, nextCursor });
-  } catch (e) {
-    console.error('❌ /community/mod/queue error', e);
-    res.json({ items: [], nextCursor: null });
-  }
-});
-
-// Admin action on report
-app.post('/community/mod/:id/action', async (req, res) => {
-  try {
-    if (!admin.apps.length) return res.json({ status: 'noop' });
-    const { action, reason } = req.body || {};
-    const db = admin.firestore();
-    const modRef = db.collection('community_reports').doc(req.params.id);
-    const modDoc = await modRef.get();
-    if (!modDoc.exists) return res.status(404).json({ error: { code: 'not_found', message: 'Report not found' } });
-    const d = modDoc.data();
-    const target = d.target || {};
-    const actionsRef = db.collection('community_moderation_actions').doc();
-
-    if (action === 'hide' || action === 'unhide') {
-      const hidden = action === 'hide';
-      if (target.type === 'post') {
-        await db.collection('community_posts').doc(target.id).update({ hidden });
-      } else if (target.type === 'comment') {
-        const [postId, commentId] = (target.id || '').split(':');
-        if (postId && commentId) await db.collection('community_posts').doc(postId).collection('comments').doc(commentId).update({ hidden });
-      }
-      await modRef.update({ status: hidden ? 'auto_hidden' : 'resolved', lastAction: action, lastActionAt: admin.firestore.FieldValue.serverTimestamp(), lastActionReason: (reason || '').toString() });
-    } else if (action === 'warn' || action === 'ban' || action === 'shadowBan') {
-      await modRef.update({ status: 'resolved', lastAction: action, lastActionAt: admin.firestore.FieldValue.serverTimestamp(), lastActionReason: (reason || '').toString() });
-    } else {
-      return res.status(400).json({ error: { code: 'bad_action', message: 'Invalid action' } });
-    }
-
-    await actionsRef.set({
-      reportId: modRef.id,
-      action,
-      reason: (reason || '').toString(),
-      actorId: 'admin',
-      target,
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-
-    res.json({ status: 'ok' });
-  } catch (e) {
-    console.error('❌ /community/mod/:id/action error', e);
-    res.status(500).json({ error: { code: 'action_failed', message: 'Failed to apply action' } });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Referrals API (Create referral code/link)
-// ---------------------------------------------------------------------------
-
-// Feature flag (default enabled)
-const REFERRALS_ENABLED = (process.env.ENABLE_REFERRALS || 'true') !== 'false';
-
-// Share link base (production for Render; localhost for local dev)
-const REFERRAL_SHARE_BASE = process.env.RENDER ? 'https://restaurant-stripe-server-1.onrender.com' : 'http://localhost:3001';
-
-// Allow x-user-id fallback only for local/dev unless explicitly enabled
-const ALLOW_HEADER_USER_ID = (process.env.ALLOW_HEADER_USER_ID === 'true') || !process.env.RENDER;
-
-async function getAuthUserId(req) {
-  try {
-    const authHeader = (req.headers['authorization'] || '').toString();
-    if (authHeader.startsWith('Bearer ') && admin.apps.length) {
-      const idToken = authHeader.substring('Bearer '.length).trim();
-      if (idToken) {
-        const decoded = await admin.auth().verifyIdToken(idToken);
-        if (decoded && decoded.uid) return decoded.uid;
-      }
-    }
-  } catch (e) {
-    // ignore and fall back
-  }
-  if (ALLOW_HEADER_USER_ID && req.headers['x-user-id']) return req.headers['x-user-id'].toString();
-  if (ALLOW_HEADER_USER_ID && req.body && req.body.userId) return req.body.userId.toString();
-  return null;
-}
-
-async function requireAuth(req, res, next) {
-  const uid = await getAuthUserId(req);
-  if (!uid) return res.status(401).json({ error: 'unauthorized' });
-  req.user = { uid };
-  next();
-}
-
-function generateReferralCode(length = 6) {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // exclude easily confused chars
-  let result = '';
-  for (let i = 0; i < length; i++) {
-    result += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
-  }
-  return result;
-}
-
-function getMonthKey(date = new Date()) {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-  return `${y}-${m}`;
-}
-
-function getDayKey(date = new Date()) {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const d = String(date.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
-function getClientIp(req) {
-  const xf = (req.headers['x-forwarded-for'] || '').toString();
-  const ip = (xf.split(',')[0] || req.ip || req.connection?.remoteAddress || '').toString().trim();
-  return ip.replace(/[^0-9a-fA-F:\.]/g, '');
-}
-
-async function logReferralEvent(db, type, payload = {}) {
-  try {
-    const doc = {
-      type: String(type),
-      ...payload,
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    };
-    await db.collection('referral_events').add(doc);
-  } catch (e) {
-    console.warn('⚠️ referral event log failed', type, e.message);
-  }
-}
-
-// POST /referrals/create -> { code, shareUrl }
-app.post('/referrals/create', requireAuth, async (req, res) => {
-  try {
-    if (!REFERRALS_ENABLED) {
-      return res.status(404).json({ error: 'Referrals are disabled' });
-    }
-    if (!admin.apps.length) {
-      return res.status(500).json({ error: 'Firebase not configured' });
-    }
-
-    const db = admin.firestore();
-
-    // Identify the referrer user
-    const referrerUserId = req.user.uid;
-
-    // Reuse existing active code if present
-    const existingSnap = await db
-      .collection('referralCodes')
-      .where('referrerUserId', '==', referrerUserId)
-      .where('disabled', '==', false)
-      .limit(1)
-      .get();
-
-    let code; let reused = false;
-    if (!existingSnap.empty) {
-      code = existingSnap.docs[0].id;
-      reused = true;
-    } else {
-      // Create a unique code (6–7 chars if collisions)
-      let attempts = 0;
-      while (attempts < 10) {
-        const candidate = generateReferralCode(6 + (attempts >= 5 ? 1 : 0));
-        const candidateRef = db.collection('referralCodes').doc(candidate);
-        const candidateDoc = await candidateRef.get();
-        if (!candidateDoc.exists) {
-          await candidateRef.set({
-            referrerUserId: referrerUserId,
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            disabled: false,
-            monthlyCap: 20,
-            monthlyUsage: {},
-            totalUsage: 0
-          });
-          code = candidate;
-          break;
-        }
-        attempts++;
-      }
-
-      if (!code) {
-        return res.status(500).json({ error: 'Failed to generate referral code' });
-      }
-    }
-
-    const shareUrl = `${REFERRAL_SHARE_BASE}/r/${code}`;
-    // Log event
-    await logReferralEvent(db, reused ? 'referral_code_reused' : 'referral_code_created', {
-      referrerUserId,
-      code,
-      shareUrl
-    });
-    return res.json({ code, shareUrl });
-  } catch (e) {
-    console.error('❌ /referrals/create error', e);
-    return res.status(500).json({ error: 'Failed to create referral code' });
-  }
-});
-
-// POST /referrals/accept -> { status: 'accepted', referralId, referrerUserId }
-app.post('/referrals/accept', requireAuth, async (req, res) => {
-  try {
-    if (!REFERRALS_ENABLED) {
-      return res.status(404).json({ error: 'Referrals are disabled' });
-    }
-    if (!admin.apps.length) {
-      return res.status(500).json({ error: 'Firebase not configured' });
-    }
-
-    const db = admin.firestore();
-
-    const referredUserId = req.user.uid;
-
-    const codeRaw = (req.body && req.body.code) ? String(req.body.code) : '';
-    const deviceId = (req.body && req.body.deviceId) ? String(req.body.deviceId) : null;
-    const code = codeRaw.trim().toUpperCase();
-    if (!code) {
-      return res.status(400).json({ error: 'Missing referral code' });
-    }
-
-    const ip = getClientIp(req);
-    const userAgent = (req.headers['user-agent'] || '').toString();
-    const monthKey = getMonthKey();
-    const dayKey = getDayKey();
-
-    const result = await db.runTransaction(async (tx) => {
-      const codeRef = db.collection('referralCodes').doc(code);
-      const codeDoc = await tx.get(codeRef);
-      if (!codeDoc.exists) {
-        throw { status: 404, code: 'code_not_found', message: 'Referral code not found' };
-      }
-      const codeData = codeDoc.data() || {};
-      if (codeData.disabled) {
-        throw { status: 400, code: 'code_disabled', message: 'Referral code is disabled' };
-      }
-
-      const referrerUserId = String(codeData.referrerUserId || '');
-      if (!referrerUserId) {
-        throw { status: 500, code: 'invalid_code', message: 'Code is misconfigured' };
-      }
-      if (referrerUserId === referredUserId) {
-        throw { status: 400, code: 'self_referral', message: 'You cannot refer yourself' };
-      }
-
-      // Enforce monthly cap
-      const monthlyCap = typeof codeData.monthlyCap === 'number' ? codeData.monthlyCap : 20;
-      const monthlyUsage = (codeData.monthlyUsage || {});
-      const usedThisMonth = Number(monthlyUsage[monthKey] || 0);
-      if (usedThisMonth >= monthlyCap) {
-        throw { status: 429, code: 'monthly_cap_reached', message: 'Referral code monthly limit reached' };
-      }
-
-      // Enforce one referral per receiver + early lifecycle (< 50 points)
-      const userRef = db.collection('users').doc(referredUserId);
-      const userDoc = await tx.get(userRef);
-      if (!userDoc.exists) {
-        throw { status: 404, code: 'user_not_found', message: 'User not found' };
-      }
-      const userData = userDoc.data() || {};
-      const userPoints = Number(userData.points || 0);
-      if (userPoints >= 50) {
-        throw { status: 400, code: 'receiver_not_eligible', message: 'Receiver already has enough points' };
-      }
-      if (userData.referredBy) {
-        throw { status: 409, code: 'already_referred', message: 'Receiver already linked to a referrer' };
-      }
-
-      // Double-check via referrals query
-      const existingReferralSnap = await db.collection('referrals')
-        .where('referredUserId', '==', referredUserId)
-        .limit(1)
-        .get();
-      if (!existingReferralSnap.empty) {
-        throw { status: 409, code: 'already_referred', message: 'Receiver already linked to a referrer' };
-      }
-
-      // IP daily rate limit
-      const ipKey = `${dayKey}:${ip || 'unknown'}`;
-      const ipRef = db.collection('referralIpUsage').doc(ipKey);
-      const ipDoc = await tx.get(ipRef);
-      const ipCount = ipDoc.exists ? Number(ipDoc.data().count || 0) : 0;
-      if (ipCount >= 5) {
-        throw { status: 429, code: 'ip_rate_limited', message: 'Too many referral accepts from this IP today' };
-      }
-
-      // Create referral and update related docs
-      const referralRef = db.collection('referrals').doc();
-      tx.set(referralRef, {
-        code,
-        referrerUserId,
-        referredUserId,
-        status: 'accepted',
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        acceptedAt: admin.firestore.FieldValue.serverTimestamp(),
-        awardedAt: null,
-        awardedTxnId: null,
-        ipAtAccept: ip || null,
-        userAgentAtAccept: userAgent || null,
-        deviceIdAtAccept: deviceId || null
-      });
-
-      tx.update(userRef, {
-        referredBy: referrerUserId,
-        referralId: referralRef.id
-      });
-
-      const updates = {
-        totalUsage: admin.firestore.FieldValue.increment(1),
-      };
-      updates[`monthlyUsage.${monthKey}`] = admin.firestore.FieldValue.increment(1);
-      tx.update(codeRef, updates);
-
-      tx.set(ipRef, {
-        date: dayKey,
-        ip: ip || 'unknown',
-        count: ipCount + 1,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-
-      return { referralId: referralRef.id, referrerUserId };
-    });
-
-    await logReferralEvent(db, 'referral_accepted', {
-      referralId: result.referralId,
-      referrerUserId: result.referrerUserId,
-      referredUserId,
-      code,
-      ip,
-      userAgent
-    });
-    return res.json({ status: 'accepted', referralId: result.referralId, referrerUserId: result.referrerUserId });
-  } catch (e) {
+  // Redeem reward endpoint
+  app.post('/redeem-reward', async (req, res) => {
     try {
+      console.log('🎁 Received reward redemption request');
+      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      
+      const { userId, rewardTitle, rewardDescription, pointsRequired, rewardCategory } = req.body;
+      
+      if (!userId || !rewardTitle || !pointsRequired) {
+        console.log('❌ Missing required fields for reward redemption');
+        return res.status(400).json({ 
+          error: 'Missing required fields: userId, rewardTitle, pointsRequired',
+          received: { userId: !!userId, rewardTitle: !!rewardTitle, pointsRequired: !!pointsRequired }
+        });
+      }
+      
       const db = admin.firestore();
-      await logReferralEvent(db, 'referral_accept_denied', {
-        code: (req.body && req.body.code) ? String(req.body.code).toUpperCase() : undefined,
-        referredUserId: (req.user && req.user.uid) || undefined,
-        reason: (e && e.code) ? e.code : 'unknown_error'
-      });
-    } catch {}
-    if (e && typeof e.status === 'number' && e.code) {
-      return res.status(e.status).json({ error: e.code, message: e.message || 'Failed to accept referral' });
-    }
-    console.error('❌ /referrals/accept error', e);
-    return res.status(500).json({ error: 'accept_failed', message: 'Failed to accept referral' });
-  }
-});
-
-// POST /referrals/award-check -> { status: 'awarded'|'already_awarded'|'not_eligible', bonus }
-app.post('/referrals/award-check', requireAuth, async (req, res) => {
-  try {
-    if (!REFERRALS_ENABLED) {
-      return res.status(404).json({ status: 'not_eligible', reason: 'disabled', bonus: 0 });
-    }
-    if (!admin.apps.length) {
-      return res.status(500).json({ error: 'Firebase not configured' });
-    }
-
-    const db = admin.firestore();
-    const tenMinutesMs = 10 * 60 * 1000;
-    const bonusAmount = 50;
-
-    const body = req.body || {};
-    const referralId = body.referralId ? String(body.referralId) : null;
-    const bodyUserId = body.referredUserId ? String(body.referredUserId) : null;
-    const referredUserId = bodyUserId || (req.user && req.user.uid) || null;
-
-    let referralRef;
-    if (referralId) {
-      referralRef = db.collection('referrals').doc(referralId);
-    } else if (referredUserId) {
-      // Lookup user's referralId
-      const userDoc = await db.collection('users').doc(referredUserId).get();
+      
+      // Get user's current points
+      const userRef = db.collection('users').doc(userId);
+      const userDoc = await userRef.get();
+      
       if (!userDoc.exists) {
-        return res.status(404).json({ status: 'not_eligible', reason: 'user_not_found', bonus: 0 });
+        console.log('❌ User not found:', userId);
+        return res.status(404).json({ error: 'User not found' });
       }
-      const userData = userDoc.data() || {};
-      if (!userData.referralId) {
-        return res.json({ status: 'not_eligible', reason: 'no_referral', bonus: 0 });
+      
+      const userData = userDoc.data();
+      const currentPoints = userData.points || 0;
+      
+      console.log(`👤 User ${userId} has ${currentPoints} points, needs ${pointsRequired} for reward`);
+      
+      // Check if user has enough points
+      if (currentPoints < pointsRequired) {
+        console.log('❌ Insufficient points for redemption');
+        return res.status(400).json({ 
+          error: 'Insufficient points for redemption',
+          currentPoints,
+          pointsRequired,
+          pointsNeeded: pointsRequired - currentPoints
+        });
       }
-      referralRef = db.collection('referrals').doc(String(userData.referralId));
-    } else {
-      return res.status(400).json({ error: 'missing_parameters', message: 'Provide referralId or referredUserId' });
-    }
-
-    const result = await db.runTransaction(async (tx) => {
-      const refDoc = await tx.get(referralRef);
-      if (!refDoc.exists) {
-        return { status: 'not_eligible', reason: 'referral_not_found', bonus: 0 };
-      }
-      const data = refDoc.data() || {};
-      const status = String(data.status || 'pending');
-      const referrerUserId = String(data.referrerUserId || '');
-      const receiverUserId = String(data.referredUserId || '');
-      const acceptedAt = data.acceptedAt && data.acceptedAt.toDate ? data.acceptedAt.toDate() : null;
-      const awardedTxnIdExisting = data.awardedTxnId || null;
-
-      if (awardedTxnIdExisting || status === 'awarded') {
-        return { status: 'already_awarded', reason: 'already_awarded', bonus: 0 };
-      }
-      if (status !== 'accepted') {
-        return { status: 'not_eligible', reason: 'not_accepted', bonus: 0 };
-      }
-      if (!acceptedAt || (Date.now() - acceptedAt.getTime()) < tenMinutesMs) {
-        return { status: 'not_eligible', reason: 'too_early', bonus: 0 };
-      }
-      if (!referrerUserId || !receiverUserId) {
-        return { status: 'not_eligible', reason: 'invalid_referral', bonus: 0 };
-      }
-
-      const receiverRef = db.collection('users').doc(receiverUserId);
-      const referrerRef = db.collection('users').doc(referrerUserId);
-      const receiverDoc = await tx.get(receiverRef);
-      const referrerDoc = await tx.get(referrerRef);
-      if (!receiverDoc.exists || !referrerDoc.exists) {
-        return { status: 'not_eligible', reason: 'user_docs_missing', bonus: 0 };
-      }
-
-      const receiverPoints = Number((receiverDoc.data() || {}).points || 0);
-      if (receiverPoints < 50) {
-        return { status: 'not_eligible', reason: 'threshold_not_met', bonus: 0 };
-      }
-
-      // Idempotent award: use deterministic txn id
-      const awardedTxnId = `referral_award_${referralRef.id}`;
-
-      // Create two pointsTransactions (one per user)
-      const t1 = db.collection('pointsTransactions').doc(`award_${awardedTxnId}_referrer`);
-      const t2 = db.collection('pointsTransactions').doc(`award_${awardedTxnId}_receiver`);
-
-      const nowTs = admin.firestore.FieldValue.serverTimestamp();
-
-      tx.set(t1, {
-        id: t1.id,
-        userId: referrerUserId,
-        type: 'referral_bonus',
-        amount: bonusAmount,
-        description: 'Referral bonus: Your friend reached 50 points',
-        timestamp: nowTs,
-        isEarned: true,
-        referralId: referralRef.id,
-        awardedTxnId
-      });
-
-      tx.set(t2, {
-        id: t2.id,
-        userId: receiverUserId,
-        type: 'referral_bonus',
-        amount: bonusAmount,
-        description: 'Referral bonus: You reached 50 points',
-        timestamp: nowTs,
-        isEarned: true,
-        referralId: referralRef.id,
-        awardedTxnId
-      });
-
-      // Increment points atomically on both users
-      tx.update(referrerRef, { points: admin.firestore.FieldValue.increment(bonusAmount) });
-      tx.update(receiverRef, { points: admin.firestore.FieldValue.increment(bonusAmount) });
-
-      // Update referral to awarded
-      tx.update(referralRef, {
-        status: 'awarded',
-        awardedAt: nowTs,
-        awardedTxnId
-      });
-
-      return { status: 'awarded', reason: 'ok', bonus: bonusAmount };
-    });
-
-    // Log event based on result
-    if (result && result.status === 'awarded') {
-      await logReferralEvent(db, 'referral_award_granted', {
-        referralId: referralId || undefined,
-        referredUserId: referredUserId || undefined,
-        bonus: bonusAmount
-      });
-    } else if (result && result.status === 'already_awarded') {
-      await logReferralEvent(db, 'referral_already_awarded', {
-        referralId: referralId || undefined,
-        referredUserId: referredUserId || undefined
-      });
-    } else {
-      await logReferralEvent(db, 'referral_award_not_eligible', {
-        referralId: referralId || undefined,
-        referredUserId: referredUserId || undefined,
-        reason: result && result.reason ? result.reason : 'unknown'
-      });
-    }
-    return res.json(result);
-  } catch (e) {
-    console.error('❌ /referrals/award-check error', e);
-    return res.status(500).json({ error: 'award_failed', message: 'Failed to process award check' });
-  }
-});
-
-// POST /analytics/referral-share { code, action: 'share'|'copy', shareUrl? }
-app.post('/analytics/referral-share', requireAuth, async (req, res) => {
-  try {
-    if (!REFERRALS_ENABLED) return res.status(404).json({ ok: false });
-    if (!admin.apps.length) return res.status(500).json({ ok: false, error: 'Firebase not configured' });
-    const db = admin.firestore();
-    const uid = req.user.uid;
-    const code = (req.body && req.body.code) ? String(req.body.code).toUpperCase() : null;
-    const action = (req.body && req.body.action) ? String(req.body.action) : 'share';
-    const shareUrl = (req.body && req.body.shareUrl) ? String(req.body.shareUrl) : null;
-    await logReferralEvent(db, 'referral_share', {
-      userId: uid,
-      code,
-      action,
-      shareUrl,
-      ip: getClientIp(req),
-      userAgent: (req.headers['user-agent'] || '').toString()
-    });
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false });
-  }
-});
-
-// GET /r/:code -> Landing/redirect page for referral links
-app.get('/r/:code', async (req, res) => {
-  try {
-    if (!REFERRALS_ENABLED) {
-      return res.status(404).send('Not found');
-    }
-
-    const raw = (req.params.code || '').toString();
-    const code = raw.trim().toUpperCase();
-    if (!code) {
-      return res.status(400).send('Missing code');
-    }
-
-    let valid = true;
-    if (admin.apps.length) {
-      try {
-        const snap = await admin.firestore().collection('referralCodes').doc(code).get();
-        const data = snap.exists ? (snap.data() || {}) : null;
-        if (!snap.exists || !data || data.disabled) valid = false;
-      } catch (e) {
-        valid = false;
-      }
-    }
-
-    const scheme = process.env.APP_DEEP_LINK_SCHEME || 'myapp://referral?code=';
-    const deepLink = `${scheme}${encodeURIComponent(code)}`;
-    const appStoreUrl = process.env.APP_STORE_URL || '#';
-
-    const html = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Dumpling House Referral</title>
-    <style>
-      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; margin: 0; padding: 24px; background: #fafafa; color: #111; }
-      .card { max-width: 520px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 6px 24px rgba(0,0,0,0.08); }
-      .title { font-size: 22px; font-weight: 800; margin: 0 0 8px; }
-      .subtitle { color: #666; margin: 0 0 20px; }
-      .code { font-size: 20px; font-weight: 700; letter-spacing: 2px; padding: 12px 16px; background: #f3f4f6; border-radius: 10px; display: inline-block; }
-      .row { margin-top: 18px; display: flex; gap: 12px; flex-wrap: wrap; }
-      .btn { appearance: none; border: none; padding: 12px 16px; border-radius: 10px; font-weight: 700; cursor: pointer; }
-      .primary { background: #111827; color: #fff; }
-      .secondary { background: #e5e7eb; color: #111827; }
-      .msg { margin-top: 14px; color: #059669; font-weight: 600; display: none; }
-      .invalid { color: #b91c1c; font-weight: 700; }
-    </style>
-  </head>
-  <body>
-    <div class="card">
-      <h1 class="title">Refer a Friend</h1>
-      <p class="subtitle">${valid ? 'Use this code in the app to link your referral.' : '<span class="invalid">This referral code is invalid or disabled.</span>'}</p>
-      <div class="code" id="code">${code}</div>
-      <div class="row">
-        <button class="btn secondary" id="copy">Copy Code</button>
-        <a class="btn primary" id="open" href="${deepLink}">Open App</a>
-        ${appStoreUrl && appStoreUrl !== '#' ? `<a class="btn secondary" href="${appStoreUrl}">Get the App</a>` : ''}
-      </div>
-      <div id="msg" class="msg">Copied!</div>
-    </div>
-    <script>
-      const btn = document.getElementById('copy');
-      const codeEl = document.getElementById('code');
-      const msgEl = document.getElementById('msg');
-      btn?.addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(codeEl.textContent || '');
-          msgEl.style.display = 'block';
-          setTimeout(() => msgEl.style.display = 'none', 1200);
-        } catch {}
-      });
-    </script>
-  </body>
- </html>`;
-
-    res.set('Content-Type', 'text/html').status(valid ? 200 : 404).send(html);
-  } catch (e) {
-    return res.status(500).send('Server error');
-  }
-});
-
-// GET /referrals/mine -> { inbound?, outbound: [] }
-app.get('/referrals/mine', requireAuth, async (req, res) => {
-  try {
-    if (!REFERRALS_ENABLED) return res.status(404).json({});
-    if (!admin.apps.length) return res.status(500).json({ error: 'Firebase not configured' });
-    const db = admin.firestore();
-    const uid = req.user.uid;
-
-    // Inbound: I was referred by someone (limit 1)
-    const inboundSnap = await db.collection('referrals')
-      .where('referredUserId', '==', uid)
-      .limit(1)
-      .get();
-    let inbound = null;
-    if (!inboundSnap.empty) {
-      const d = inboundSnap.docs[0];
-      const data = d.data() || {};
-      const status = String(data.status || 'pending');
-      const referrerUserId = String(data.referrerUserId || '');
-      let referrerName = null;
-      if (referrerUserId) {
-        const userDoc = await db.collection('users').doc(referrerUserId).get();
-        referrerName = (userDoc.exists ? (userDoc.data() || {}).firstName : null) || null;
-      }
-      inbound = {
-        referralId: d.id,
-        referrerUserId,
-        referrerName,
-        status
+      
+      // Generate 8-digit random code
+      const redemptionCode = Math.floor(10000000 + Math.random() * 90000000).toString();
+      console.log(`🔢 Generated redemption code: ${redemptionCode}`);
+      
+      // Calculate new points balance
+      const newPointsBalance = currentPoints - pointsRequired;
+      
+      // Create redeemed reward document
+      const redeemedReward = {
+        id: `reward_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        userId: userId,
+        rewardTitle: rewardTitle,
+        rewardDescription: rewardDescription || '',
+        rewardCategory: rewardCategory || 'General',
+        pointsRequired: pointsRequired,
+        redemptionCode: redemptionCode,
+        redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes from now
+        isExpired: false,
+        isUsed: false
       };
-    }
-
-    // Outbound: I referred others
-    const outboundSnap = await db.collection('referrals')
-      .where('referrerUserId', '==', uid)
-      .get();
-    const outbound = [];
-    for (const d of outboundSnap.docs) {
-      const data = d.data() || {};
-      const status = String(data.status || 'pending');
-      const referredUserId = String(data.referredUserId || '');
-      let referredName = null;
-      if (referredUserId) {
-        const userDoc = await db.collection('users').doc(referredUserId).get();
-        referredName = (userDoc.exists ? (userDoc.data() || {}).firstName : null) || null;
-      }
-      outbound.push({
-        referralId: d.id,
-        referredUserId,
-        referredName,
-        status
+      
+      // Create points transaction for deduction
+      const pointsTransaction = {
+        id: `deduction_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        userId: userId,
+        type: 'reward_redemption',
+        amount: -pointsRequired, // Negative amount for deduction
+        description: `Redeemed: ${rewardTitle}`,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        isEarned: false,
+        redemptionCode: redemptionCode,
+        rewardTitle: rewardTitle
+      };
+      
+      // Perform database operations in a batch
+      const batch = db.batch();
+      
+      // Update user points
+      batch.update(userRef, { points: newPointsBalance });
+      
+      // Add redeemed reward
+      const redeemedRewardRef = db.collection('redeemedRewards').doc(redeemedReward.id);
+      batch.set(redeemedRewardRef, redeemedReward);
+      
+      // Add points transaction
+      const transactionRef = db.collection('pointsTransactions').doc(pointsTransaction.id);
+      batch.set(transactionRef, pointsTransaction);
+      
+      // Commit the batch
+      await batch.commit();
+      
+      console.log(`✅ Reward redeemed successfully!`);
+      console.log(`💰 Points deducted: ${pointsRequired}`);
+      console.log(`💳 New balance: ${newPointsBalance}`);
+      console.log(`🔢 Redemption code: ${redemptionCode}`);
+      
+      res.json({
+        success: true,
+        redemptionCode: redemptionCode,
+        newPointsBalance: newPointsBalance,
+        pointsDeducted: pointsRequired,
+        rewardTitle: rewardTitle,
+        expiresAt: redeemedReward.expiresAt,
+        message: 'Reward redeemed successfully! Show the code to your cashier.'
+      });
+      
+    } catch (error) {
+      console.error('❌ Error redeeming reward:', error);
+      res.status(500).json({ 
+        error: 'Failed to redeem reward',
+        details: error.message 
       });
     }
-
-    res.json({ inbound, outbound });
-  } catch (e) {
-    console.error('❌ /referrals/mine error', e);
-    res.status(500).json({ error: 'failed_to_fetch' });
-  }
-});
-
-// Redeem reward endpoint (always available, independent of OpenAI)
-app.post('/redeem-reward', async (req, res) => {
-  try {
-    console.log('🎁 Received reward redemption request');
-    console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
-    
-    const { userId, rewardTitle, rewardDescription, pointsRequired, rewardCategory } = req.body;
-    
-    if (!userId || !rewardTitle || !pointsRequired) {
-      console.log('❌ Missing required fields for reward redemption');
-      return res.status(400).json({ 
-        error: 'Missing required fields: userId, rewardTitle, pointsRequired',
-        received: { userId: !!userId, rewardTitle: !!rewardTitle, pointsRequired: !!pointsRequired }
-      });
-    }
-    
-    if (!admin.apps.length) {
-      console.log('❌ Firebase not initialized');
-      return res.status(500).json({ error: 'Firebase not configured' });
-    }
-    
-    const db = admin.firestore();
-    
-    // Get user's current points
-    const userRef = db.collection('users').doc(userId);
-    const userDoc = await userRef.get();
-    
-    if (!userDoc.exists) {
-      console.log('❌ User not found:', userId);
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
-    const userData = userDoc.data();
-    const currentPoints = userData.points || 0;
-    
-    console.log(`👤 User ${userId} has ${currentPoints} points, needs ${pointsRequired} for reward`);
-    
-    // Check if user has enough points
-    if (currentPoints < pointsRequired) {
-      console.log('❌ Insufficient points for redemption');
-      return res.status(400).json({ 
-        error: 'Insufficient points for redemption',
-        currentPoints,
-        pointsRequired,
-        pointsNeeded: pointsRequired - currentPoints
-      });
-    }
-    
-    // Generate 8-digit random code
-    const redemptionCode = Math.floor(10000000 + Math.random() * 90000000).toString();
-    console.log(`🔢 Generated redemption code: ${redemptionCode}`);
-    
-    // Calculate new points balance
-    const newPointsBalance = currentPoints - pointsRequired;
-    
-    // Create redeemed reward document
-    const redeemedReward = {
-      id: `reward_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      userId: userId,
-      rewardTitle: rewardTitle,
-      rewardDescription: rewardDescription || '',
-      rewardCategory: rewardCategory || 'General',
-      pointsRequired: pointsRequired,
-      redemptionCode: redemptionCode,
-      redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
-      expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes from now
-      isExpired: false,
-      isUsed: false
-    };
-    
-    // Create points transaction for deduction
-    const pointsTransaction = {
-      id: `deduction_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      userId: userId,
-      type: 'reward_redemption',
-      amount: -pointsRequired, // Negative amount for deduction
-      description: `Redeemed: ${rewardTitle}`,
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      isEarned: false,
-      redemptionCode: redemptionCode,
-      rewardTitle: rewardTitle
-    };
-    
-    // Perform database operations in a batch
-    const batch = db.batch();
-    
-    // Update user points
-    batch.update(userRef, { points: newPointsBalance });
-    
-    // Add redeemed reward
-    const redeemedRewardRef = db.collection('redeemedRewards').doc(redeemedReward.id);
-    batch.set(redeemedRewardRef, redeemedReward);
-    
-    // Add points transaction
-    const transactionRef = db.collection('pointsTransactions').doc(pointsTransaction.id);
-    batch.set(transactionRef, pointsTransaction);
-    
-    // Commit the batch
-    await batch.commit();
-    
-    console.log(`✅ Reward redeemed successfully!`);
-    console.log(`💰 Points deducted: ${pointsRequired}`);
-    console.log(`💳 New balance: ${newPointsBalance}`);
-    console.log(`🔢 Redemption code: ${redemptionCode}`);
-    
-    res.json({
-      success: true,
-      redemptionCode: redemptionCode,
-      newPointsBalance: newPointsBalance,
-      pointsDeducted: pointsRequired,
-      rewardTitle: rewardTitle,
-      expiresAt: redeemedReward.expiresAt,
-      message: 'Reward redeemed successfully! Show the code to your cashier.'
-    });
-    
-  } catch (error) {
-    console.error('❌ Error redeeming reward:', error);
-    res.status(500).json({ 
-      error: 'Failed to redeem reward',
-      details: error.message 
-    });
-  }
-});
+  });
+}
 
 // Force production environment
 process.env.NODE_ENV = 'production';
@@ -2690,6 +2190,3 @@ app.listen(port, '0.0.0.0', () => {
 });
 // Force redeploy - Sat Jul 19 14:12:02 CDT 2025
 // Force complete redeploy - Sat Jul 19 14:15:27 CDT 2025
-// Force redeploy for redeem-reward endpoint fix - July 25 2025
-// Force deployment update
-// Force redeploy trigger: update timestamp 2025-07-26T03:58Z
