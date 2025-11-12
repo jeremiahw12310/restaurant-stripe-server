@@ -1205,6 +1205,7 @@ DETAILED MENU INFORMATION:
 - Asian Pickled Cucumbers $5.75
 - (Crab & Shrimp) Cold Noodle w/ Peanut Sauce $8.35
 - Peanut Butter Pork Dumplings $7.99
+- Peanut Butter Shrimp Dumplings $7.99
 - Spicy Tofu $5.99
 - Curry Rice w/ Chicken $7.75
 - Jasmine White Rice $2.75
