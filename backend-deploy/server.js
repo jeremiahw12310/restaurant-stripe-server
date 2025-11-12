@@ -35,7 +35,8 @@ if (process.env.FIREBASE_AUTH_TYPE === 'adc') {
   try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
     admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
+      credential: admin.credential.cert(serviceAccount),
+      projectId: serviceAccount.project_id || 'dumplinghouseapp'
     });
     console.log('✅ Firebase Admin initialized with service account key (fallback)');
   } catch (error) {
@@ -68,6 +69,12 @@ app.post('/redeem-reward', (req, res) => {
 // Create or get referral code
 app.post('/referrals/create', async (req, res) => {
   try {
+    // Check if Firebase is initialized
+    if (!admin.apps.length) {
+      console.error('❌ Firebase not initialized');
+      return res.status(503).json({ error: 'Firebase not configured' });
+    }
+
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Unauthorized' });
