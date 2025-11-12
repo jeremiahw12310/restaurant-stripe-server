@@ -82,7 +82,8 @@ app.post('/referrals/create', async (req, res) => {
       await userRef.update({ referralCode });
     }
 
-    const shareUrl = `https://dumplinghouseapp.com/refer/${referralCode}`;
+    // Use custom URL scheme to avoid sandbox extension errors
+    const shareUrl = `restaurantdemo://referral?code=${referralCode}`;
 
     res.json({
       code: referralCode,
