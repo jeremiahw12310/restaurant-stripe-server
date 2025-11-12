@@ -1258,9 +1258,7 @@ DETAILED MENU INFORMATION:
 - Bubble Milk Tea w/ Tapioca $5.90
 - Fresh Milk Tea $5.90
 - Cookies n' Cream (Biscoff) $6.65
-- Cream Brulee Cake $7.50
 - Capped Thai Brown Sugar $6.90
-- Strawberry Cake $6.75
 - Strawberry Fresh $6.75
 - Peach Fresh $6.50
 - Pineapple Fresh $6.50
@@ -1271,16 +1269,14 @@ DETAILED MENU INFORMATION:
 
 🍹 FRUIT TEA:
 - Lychee Dragon Fruit $6.50
-- Lychee Dragon Slush $7.50
 - Grape Magic w/ Cheese Foam $6.90
 - Full of Mango w/ Cheese Foam $6.90
 - Peach Strawberry $6.75
 - Kiwi Booster $6.75
-- Tropical Passion Fruit Tea $6.75
+- Watermelon Code w/ Boba Jelly $6.50
 - Pineapple $6.90
 - Winter Melon Black $6.50
-- Osmanthus Oolong w/ Cheese Foam $6.25
-- Peach Oolong w/ Cheese Foam $6.25
+- Peach Oolong w/ Cheese Foam $6.50
 - Ice Green $5.00
 - Ice Black $5.00
 
@@ -1292,17 +1288,11 @@ DETAILED MENU INFORMATION:
 - Coffee Latte $5.50
 
 ✨ DRINK TOPPINGS (add to any drink):
-- Tapioca $0.75
-- Whipped Cream $1.50
-- Tiramisu Foam $1.25
-- Cheese Foam $1.25
 - Coffee Jelly $0.50
 - Boba Jelly $0.50
-- Lychee, Peach, Blue Lemon or Strawberry Popping Jelly $0.50
-- Pineapple Nata Jelly $0.50
-- Mango Star Jelly $0.50
+- Lychee Popping Jelly $0.50
 
-🍋 LEMONADE OR SODA:
+🍋 LEMONADE/SODA:
 - Pineapple $5.50
 - Lychee Mint $5.50
 - Peach Mint $5.50
