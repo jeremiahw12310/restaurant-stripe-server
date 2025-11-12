@@ -61,6 +61,189 @@ app.post('/redeem-reward', (req, res) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Referral System Endpoints
+// ---------------------------------------------------------------------------
+
+// Create or get referral code
+app.post('/referrals/create', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const idToken = authHeader.split('Bearer ')[1];
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const uid = decodedToken.uid;
+
+    const db = admin.firestore();
+    const userRef = db.collection('users').doc(uid);
+    const userDoc = await userRef.get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const userData = userDoc.data();
+    let referralCode = userData.referralCode;
+
+    // Generate code if doesn't exist
+    if (!referralCode) {
+      referralCode = generateReferralCode();
+      await userRef.update({ referralCode });
+    }
+
+    const shareUrl = `https://dumplinghouseapp.com/refer/${referralCode}`;
+
+    res.json({
+      code: referralCode,
+      shareUrl: shareUrl
+    });
+  } catch (error) {
+    console.error('Error creating referral code:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Accept referral code
+app.post('/referrals/accept', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const idToken = authHeader.split('Bearer ')[1];
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const uid = decodedToken.uid;
+
+    const { code } = req.body;
+    if (!code) {
+      return res.status(400).json({ error: 'Missing code' });
+    }
+
+    const db = admin.firestore();
+    const userRef = db.collection('users').doc(uid);
+    const userDoc = await userRef.get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const userData = userDoc.data();
+
+    // Check if user already used a referral
+    if (userData.referredBy) {
+      return res.status(400).json({ error: 'already_used_referral' });
+    }
+
+    // Find referrer by code
+    const referrerQuery = await db.collection('users').where('referralCode', '==', code.toUpperCase()).limit(1).get();
+    
+    if (referrerQuery.empty) {
+      return res.status(404).json({ error: 'invalid_code' });
+    }
+
+    const referrerDoc = referrerQuery.docs[0];
+    const referrerId = referrerDoc.id;
+
+    // Can't refer yourself
+    if (referrerId === uid) {
+      return res.status(400).json({ error: 'cannot_refer_self' });
+    }
+
+    // Create referral document
+    const referralRef = await db.collection('referrals').add({
+      referrerUserId: referrerId,
+      referredUserId: uid,
+      status: 'pending',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // Update user with referredBy
+    await userRef.update({
+      referredBy: referrerId,
+      referralId: referralRef.id
+    });
+
+    res.json({
+      success: true,
+      referrerUserId: referrerId,
+      referralId: referralRef.id
+    });
+  } catch (error) {
+    console.error('Error accepting referral:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get user's referral connections
+app.get('/referrals/mine', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const idToken = authHeader.split('Bearer ')[1];
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const uid = decodedToken.uid;
+
+    const db = admin.firestore();
+    
+    // Get outbound (people I referred)
+    const outboundSnap = await db.collection('referrals').where('referrerUserId', '==', uid).get();
+    const outbound = [];
+    
+    for (const doc of outboundSnap.docs) {
+      const data = doc.data();
+      const referredUserDoc = await db.collection('users').doc(data.referredUserId).get();
+      const referredUserData = referredUserDoc.data() || {};
+      
+      outbound.push({
+        referralId: doc.id,
+        referredName: referredUserData.firstName || 'Friend',
+        status: data.status || 'pending',
+        pointsTowards50: referredUserData.totalPoints || 0
+      });
+    }
+
+    // Get inbound (who referred me)
+    const inboundSnap = await db.collection('referrals').where('referredUserId', '==', uid).limit(1).get();
+    let inbound = null;
+    
+    if (!inboundSnap.empty) {
+      const doc = inboundSnap.docs[0];
+      const data = doc.data();
+      const referrerDoc = await db.collection('users').doc(data.referrerUserId).get();
+      const referrerData = referrerDoc.data() || {};
+      
+      inbound = {
+        referralId: doc.id,
+        referrerName: referrerData.firstName || 'Friend',
+        status: data.status || 'pending',
+        pointsTowards50: 0
+      };
+    }
+
+    res.json({
+      outbound,
+      inbound
+    });
+  } catch (error) {
+    console.error('Error fetching referrals:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Helper function to generate referral codes
+function generateReferralCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Removed ambiguous chars
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
 // Enhanced combo variety system to encourage exploration
 const comboInsights = []; // Track combo patterns for insights, not restrictions
 const MAX_INSIGHTS = 100;
