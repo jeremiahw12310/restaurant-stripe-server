@@ -5,6 +5,10 @@ const cors = require('cors');
 const fs = require('fs');
 const { OpenAI } = require('openai');
 
+// Disable ADC - force use of explicit credentials
+process.env.GOOGLE_APPLICATION_CREDENTIALS = '';
+process.env.GCLOUD_PROJECT = '';
+
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
 
