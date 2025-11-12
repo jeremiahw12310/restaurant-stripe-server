@@ -810,7 +810,119 @@ MOST POPULAR ITEMS (ACCURATE DATA):
 🍹 Most Popular Fruit Tea: Peach Strawberry - $6.75
 
 DETAILED MENU INFORMATION:
-🥟 Appetizers: Edamame $4.99, Asian Pickled Cucumbers $5.75, (Crab & Shrimp) Cold Noodle w/ Peanut Sauce $8.35, Peanut Butter Pork Dumplings $7.99, Spicy Tofu $5.99, Curry Rice w/ Chicken $7.75, Jasmine White Rice $2.75 | 🍲 Soup: Hot & Sour Soup $5.95, Pork Wonton Soup $6.95 | 🍕 Pizza Dumplings: Pork (6) $8.99, Curry Beef & Onion (6) $10.99 | 🍱 Lunch Special (6): No.9 Pork $7.50, No.2 Pork & Chive $8.50, No.4 Pork Shrimp $9.00, No.5 Pork & Cabbage $8.00, No.3 Spicy Pork $8.00, No.7 Curry Chicken $7.00, No.8 Chicken & Coriander $7.50, No.1 Chicken & Mushroom $8.00, No.10 Curry Beef & Onion $8.50, No.6 Veggie $7.50 (Available Monday-Friday only, ends at 4:00 PM) | 🥟 Dumplings (12): No.9 Pork $13.99, No.2 Pork & Chive $15.99, No.4 Pork Shrimp $16.99, No.5 Pork & Cabbage $14.99, No.3 Spicy Pork $14.99, No.7 Curry Chicken $12.99, No.8 Chicken & Coriander $13.99, No.1 Chicken & Mushroom $14.99, No.10 Curry Beef & Onion $15.99, No.6 Veggie $13.99, No.12 Half/Half $15.99 | 🍹 Fruit Tea: Lychee Dragon Fruit $6.50, Grape Magic w/ Cheese Foam $6.90, Full of Mango w/ Cheese Foam $6.90, Peach Strawberry $6.75, Kiwi Booster $6.75, Watermelon Code w/ Boba Jelly $6.50, Pineapple $6.90, Winter Melon Black $6.50, Peach Oolong w/ Cheese Foam $6.50, Ice Green $5.00, Ice Black $5.00 | ✨ Toppings: Coffee Jelly $0.50, Boba Jelly $0.50, Lychee Popping Jelly $0.50 | 🧋 Milk Tea: Bubble Milk Tea w/ Tapioca $5.90, Fresh Milk Tea $5.90, Cookies n' Cream (Biscoff) $6.65, Capped Thai Brown Sugar $6.90, Strawberry Fresh $6.75, Peach Fresh $6.50, Pineapple Fresh $6.50, Tiramisu Coco $6.85, Coconut Coffee w/ Coffee Jelly $6.90, Purple Yam Taro Fresh $6.85, Oreo Chocolate $6.75 | ☕ Coffee: Jasmine Latte w/ Sea Salt $6.25, Oreo Chocolate Latte $6.90, Coconut Coffee w/ Coffee Jelly $6.90, Matcha White Chocolate $6.90, Coffee Latte $5.50 | 🥣 Sauces: Secret Peanut Sauce $1.50, SPICY secret Peanut Sauce $1.50, Curry Sauce w/ Chicken $1.50 | 🍋 Lemonade/Soda: Pineapple $5.50, Lychee Mint $5.50, Peach Mint $5.50, Passion Fruit $5.25, Mango $5.50, Strawberry $5.50, Grape $5.25, Original Lemonade $5.50 | 🥤 Drink: Coke $2.25, Diet Coke $2.25, Sprite $2.25, Bottle Water $1.00, Cup Water $1.00
+ 
+🥟 APPETIZERS:
+- Edamame $4.99
+- Asian Pickled Cucumbers $5.75
+- (Crab & Shrimp) Cold Noodle w/ Peanut Sauce $8.35
+- Peanut Butter Pork Dumplings $7.99
+- Spicy Tofu $5.99
+- Curry Rice w/ Chicken $7.75
+- Jasmine White Rice $2.75
+
+🍲 SOUP:
+- Hot & Sour Soup $5.95
+- Pork Wonton Soup $6.95
+- Shrimp Wonton Soup $8.95
+
+🍕 PIZZA DUMPLINGS (6 pieces):
+- Pork $8.99
+- Curry Beef & Onion $10.99
+
+🍱 LUNCH SPECIAL (6 pieces - Monday-Friday only, ends at 4:00 PM):
+- No.9 Pork $7.50
+- No.2 Pork & Chive $8.50
+- No.4 Pork Shrimp $9.00
+- No.5 Pork & Cabbage $8.00
+- No.3 Spicy Pork $8.00
+- No.7 Curry Chicken $7.00
+- No.8 Chicken & Coriander $7.50
+- No.1 Chicken & Mushroom $8.00
+- No.10 Curry Beef & Onion $8.50
+- No.6 Veggie $7.50
+
+🥟 DUMPLINGS (12 pieces):
+- No.9 Pork $13.99
+- No.2 Pork & Chive $15.99
+- No.4 Pork Shrimp $16.99
+- No.5 Pork & Cabbage $14.99
+- No.3 Spicy Pork $14.99
+- No.7 Curry Chicken $12.99
+- No.8 Chicken & Coriander $13.99
+- No.1 Chicken & Mushroom $14.99
+- No.10 Curry Beef & Onion $15.99
+- No.6 Veggie $13.99
+- No.12 Half/Half $15.99
+
+🧋 MILK TEA:
+- Bubble Milk Tea w/ Tapioca $5.90
+- Fresh Milk Tea $5.90
+- Cookies n' Cream (Biscoff) $6.65
+- Cream Brulee Cake $7.50
+- Capped Thai Brown Sugar $6.90
+- Strawberry Cake $6.75
+- Strawberry Fresh $6.75
+- Peach Fresh $6.50
+- Pineapple Fresh $6.50
+- Tiramisu Coco $6.85
+- Coconut Coffee w/ Coffee Jelly $6.90
+- Purple Yam Taro Fresh $6.85
+- Oreo Chocolate $6.75
+
+🍹 FRUIT TEA:
+- Lychee Dragon Fruit $6.50
+- Lychee Dragon Slush $7.50
+- Grape Magic w/ Cheese Foam $6.90
+- Full of Mango w/ Cheese Foam $6.90
+- Peach Strawberry $6.75
+- Kiwi Booster $6.75
+- Tropical Passion Fruit Tea $6.75
+- Pineapple $6.90
+- Winter Melon Black $6.50
+- Osmanthus Oolong w/ Cheese Foam $6.25
+- Peach Oolong w/ Cheese Foam $6.25
+- Ice Green $5.00
+- Ice Black $5.00
+
+☕ COFFEE:
+- Jasmine Latte w/ Sea Salt $6.25
+- Oreo Chocolate Latte $6.90
+- Coconut Coffee w/ Coffee Jelly $6.90
+- Matcha White Chocolate $6.90
+- Coffee Latte $5.50
+
+✨ DRINK TOPPINGS (add to any drink):
+- Tapioca $0.75
+- Whipped Cream $1.50
+- Tiramisu Foam $1.25
+- Cheese Foam $1.25
+- Coffee Jelly $0.50
+- Boba Jelly $0.50
+- Lychee, Peach, Blue Lemon or Strawberry Popping Jelly $0.50
+- Pineapple Nata Jelly $0.50
+- Mango Star Jelly $0.50
+
+🍋 LEMONADE OR SODA:
+- Pineapple $5.50
+- Lychee Mint $5.50
+- Peach Mint $5.50
+- Passion Fruit $5.25
+- Mango $5.50
+- Strawberry $5.50
+- Grape $5.25
+- Original Lemonade $5.50
+
+🥣 SAUCES:
+- Secret Peanut Sauce $1.50
+- SPICY Secret Peanut Sauce $1.50
+- Curry Sauce w/ Chicken $1.50
+
+🥤 BEVERAGES:
+- Coke $2.25
+- Diet Coke $2.25
+- Sprite $2.25
+- Bottle Water $1.00
+- Cup Water $1.00
 
 SPECIAL DIETARY INFORMATION:
 - Veggie dumplings include: cabbage, carrots, onions, celery, shiitake mushrooms, glass noodles
