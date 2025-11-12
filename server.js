@@ -61,6 +61,189 @@ app.post('/redeem-reward', (req, res) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Referral System Endpoints
+// ---------------------------------------------------------------------------
+
+// Create or get referral code
+app.post('/referrals/create', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const idToken = authHeader.split('Bearer ')[1];
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const uid = decodedToken.uid;
+
+    const db = admin.firestore();
+    const userRef = db.collection('users').doc(uid);
+    const userDoc = await userRef.get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const userData = userDoc.data();
+    let referralCode = userData.referralCode;
+
+    // Generate code if doesn't exist
+    if (!referralCode) {
+      referralCode = generateReferralCode();
+      await userRef.update({ referralCode });
+    }
+
+    const shareUrl = `https://dumplinghouseapp.com/refer/${referralCode}`;
+
+    res.json({
+      code: referralCode,
+      shareUrl: shareUrl
+    });
+  } catch (error) {
+    console.error('Error creating referral code:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Accept referral code
+app.post('/referrals/accept', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const idToken = authHeader.split('Bearer ')[1];
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const uid = decodedToken.uid;
+
+    const { code } = req.body;
+    if (!code) {
+      return res.status(400).json({ error: 'Missing code' });
+    }
+
+    const db = admin.firestore();
+    const userRef = db.collection('users').doc(uid);
+    const userDoc = await userRef.get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const userData = userDoc.data();
+
+    // Check if user already used a referral
+    if (userData.referredBy) {
+      return res.status(400).json({ error: 'already_used_referral' });
+    }
+
+    // Find referrer by code
+    const referrerQuery = await db.collection('users').where('referralCode', '==', code.toUpperCase()).limit(1).get();
+    
+    if (referrerQuery.empty) {
+      return res.status(404).json({ error: 'invalid_code' });
+    }
+
+    const referrerDoc = referrerQuery.docs[0];
+    const referrerId = referrerDoc.id;
+
+    // Can't refer yourself
+    if (referrerId === uid) {
+      return res.status(400).json({ error: 'cannot_refer_self' });
+    }
+
+    // Create referral document
+    const referralRef = await db.collection('referrals').add({
+      referrerUserId: referrerId,
+      referredUserId: uid,
+      status: 'pending',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // Update user with referredBy
+    await userRef.update({
+      referredBy: referrerId,
+      referralId: referralRef.id
+    });
+
+    res.json({
+      success: true,
+      referrerUserId: referrerId,
+      referralId: referralRef.id
+    });
+  } catch (error) {
+    console.error('Error accepting referral:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get user's referral connections
+app.get('/referrals/mine', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const idToken = authHeader.split('Bearer ')[1];
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const uid = decodedToken.uid;
+
+    const db = admin.firestore();
+    
+    // Get outbound (people I referred)
+    const outboundSnap = await db.collection('referrals').where('referrerUserId', '==', uid).get();
+    const outbound = [];
+    
+    for (const doc of outboundSnap.docs) {
+      const data = doc.data();
+      const referredUserDoc = await db.collection('users').doc(data.referredUserId).get();
+      const referredUserData = referredUserDoc.data() || {};
+      
+      outbound.push({
+        referralId: doc.id,
+        referredName: referredUserData.firstName || 'Friend',
+        status: data.status || 'pending',
+        pointsTowards50: referredUserData.totalPoints || 0
+      });
+    }
+
+    // Get inbound (who referred me)
+    const inboundSnap = await db.collection('referrals').where('referredUserId', '==', uid).limit(1).get();
+    let inbound = null;
+    
+    if (!inboundSnap.empty) {
+      const doc = inboundSnap.docs[0];
+      const data = doc.data();
+      const referrerDoc = await db.collection('users').doc(data.referrerUserId).get();
+      const referrerData = referrerDoc.data() || {};
+      
+      inbound = {
+        referralId: doc.id,
+        referrerName: referrerData.firstName || 'Friend',
+        status: data.status || 'pending',
+        pointsTowards50: 0
+      };
+    }
+
+    res.json({
+      outbound,
+      inbound
+    });
+  } catch (error) {
+    console.error('Error fetching referrals:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Helper function to generate referral codes
+function generateReferralCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Removed ambiguous chars
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
 // Enhanced combo variety system to encourage exploration
 const comboInsights = []; // Track combo patterns for insights, not restrictions
 const MAX_INSIGHTS = 100;
@@ -1027,7 +1210,7 @@ MOST POPULAR ITEMS (ACCURATE DATA):
 🍹 Most Popular Fruit Tea: Peach Strawberry - $6.75
 
 DETAILED MENU INFORMATION:
-🥟 Appetizers: Edamame $4.99, Asian Pickled Cucumbers $5.75, (Crab & Shrimp) Cold Noodle w/ Peanut Sauce $8.35, Peanut Butter Pork Dumplings $7.99, Spicy Tofu $5.99, Curry Rice w/ Chicken $7.75, Jasmine White Rice $2.75 | 🍲 Soup: Hot & Sour Soup $5.95, Pork Wonton Soup $6.95 | 🍕 Pizza Dumplings: Pork (6) $8.99, Curry Beef & Onion (6) $10.99 | 🍱 Lunch Special (6): No.9 Pork $7.50, No.2 Pork & Chive $8.50, No.4 Pork Shrimp $9.00, No.5 Pork & Cabbage $8.00, No.3 Spicy Pork $8.00, No.7 Curry Chicken $7.00, No.8 Chicken & Coriander $7.50, No.1 Chicken & Mushroom $8.00, No.10 Curry Beef & Onion $8.50, No.6 Veggie $7.50 (Available Monday-Friday only, ends at 4:00 PM) | 🥟 Dumplings (12): No.9 Pork $13.99, No.2 Pork & Chive $15.99, No.4 Pork Shrimp $16.99, No.5 Pork & Cabbage $14.99, No.3 Spicy Pork $14.99, No.7 Curry Chicken $12.99, No.8 Chicken & Coriander $13.99, No.1 Chicken & Mushroom $14.99, No.10 Curry Beef & Onion $15.99, No.6 Veggie $13.99, No.12 Half/Half $15.99 | 🍹 Fruit Tea: Lychee Dragon Fruit $6.50, Grape Magic w/ Cheese Foam $6.90, Full of Mango w/ Cheese Foam $6.90, Peach Strawberry $6.75, Kiwi Booster $6.75, Watermelon Code w/ Boba Jelly $6.50, Pineapple $6.90, Winter Melon Black $6.50, Peach Oolong w/ Cheese Foam $6.50, Ice Green $5.00, Ice Black $5.00 | ✨ Toppings: Coffee Jelly $0.50, Boba Jelly $0.50, Lychee Popping Jelly $0.50 | 🧋 Milk Tea: Bubble Milk Tea w/ Tapioca $5.90, Fresh Milk Tea $5.90, Cookies n' Cream (Biscoff) $6.65, Capped Thai Brown Sugar $6.90, Strawberry Fresh $6.75, Peach Fresh $6.50, Pineapple Fresh $6.50, Tiramisu Coco $6.85, Coconut Coffee w/ Coffee Jelly $6.90, Purple Yam Taro Fresh $6.85, Oreo Chocolate $6.75 | ☕ Coffee: Jasmine Latte w/ Sea Salt $6.25, Oreo Chocolate Latte $6.90, Coconut Coffee w/ Coffee Jelly $6.90, Matcha White Chocolate $6.90, Coffee Latte $5.50 | 🥣 Sauces: Secret Peanut Sauce $1.50, SPICY secret Peanut Sauce $1.50, Curry Sauce w/ Chicken $1.50 | 🍋 Lemonade/Soda: Pineapple $5.50, Lychee Mint $5.50, Peach Mint $5.50, Passion Fruit $5.25, Mango $5.50, Strawberry $5.50, Grape $5.25, Original Lemonade $5.50 | 🥤 Drink: Coke $2.25, Diet Coke $2.25, Sprite $2.25, Bottle Water $1.00, Cup Water $1.00
+🥟 Appetizers: Edamame $4.99, Asian Pickled Cucumbers $5.75, (Crab & Shrimp) Cold Noodle w/ Peanut Sauce $8.35, Peanut Butter Pork Dumplings $7.99, Spicy Tofu $5.99, Curry Rice w/ Chicken $7.75, Jasmine White Rice $2.75 | 🍲 Soup: Hot & Sour Soup $5.95, Pork Wonton Soup $6.95, Shrimp Wonton Soup $8.95  | 🍕 Pizza Dumplings: Pork (6) $8.99, Curry Beef & Onion (6) $10.99 | 🍱 Lunch Special (6): No.9 Pork $7.50, No.2 Pork & Chive $8.50, No.4 Pork Shrimp $9.00, No.5 Pork & Cabbage $8.00, No.3 Spicy Pork $8.00, No.7 Curry Chicken $7.00, No.8 Chicken & Coriander $7.50, No.1 Chicken & Mushroom $8.00, No.10 Curry Beef & Onion $8.50, No.6 Veggie $7.50 (Available Monday-Friday only, ends at 4:00 PM) | 🥟 Dumplings (12): No.9 Pork $13.99, No.2 Pork & Chive $15.99, No.4 Pork Shrimp $16.99, No.5 Pork & Cabbage $14.99, No.3 Spicy Pork $14.99, No.7 Curry Chicken $12.99, No.8 Chicken & Coriander $13.99, No.1 Chicken & Mushroom $14.99, No.10 Curry Beef & Onion $15.99, No.6 Veggie $13.99, No.12 Half/Half $15.99 | 🍹 Fruit Tea: Lychee Dragon Fruit $6.50, Lychee Dragon Slush $7.50, Grape Magic w/ Cheese Foam $6.90, Full of Mango w/ Cheese Foam $6.90, Peach Strawberry $6.75, Kiwi Booster $6.75, Tropical Passion Fruit Tea $6.75, Pineapple $6.90, Winter Melon Black $6.50, Osmanthus Oolong w/ Cheese Foam $6.25, Peach Oolong w/ Cheese Foam $6.25, Ice Green $5.00, Ice Black $5.00 | ✨ Toppings: Tapioca $0.75, Whipped Cream $1.50, Tiramisu Foam $1.25, Cheese Foam $1.25, Coffee Jelly $0.50, Boba Jelly $0.50, *Lychee, Peach, Blue Lemon or Strawberry* Popping Jelly $0.50, Pineapple Nata Jelly $0.50, Mango Star Jelly $0.50  | 🧋 Milk Tea: Bubble Milk Tea w/ Tapioca $5.90, Fresh Milk Tea $5.90, Cookies n' Cream (Biscoff) $6.65, Cream Brulee Cake $7.50, Capped Thai Brown Sugar $6.90, Strawberry Cake $6.75, Strawberry Fresh $6.75, Peach Fresh $6.50, Pineapple Fresh $6.50, Tiramisu Coco $6.85, Coconut Coffee w/ Coffee Jelly $6.90, Purple Yam Taro Fresh $6.85, Oreo Chocolate $6.75 | ☕ Coffee: Jasmine Latte w/ Sea Salt $6.25, Oreo Chocolate Latte $6.90, Coconut Coffee w/ Coffee Jelly $6.90, Matcha White Chocolate $6.90, Coffee Latte $5.50 | 🥣 Sauces: Secret Peanut Sauce $1.50, SPICY secret Peanut Sauce $1.50, Curry Sauce w/ Chicken $1.50 | 🍋 Lemonade or Soda Options: Pineapple $5.50, Lychee Mint $5.50, Peach Mint $5.50, Passion Fruit $5.25, Mango $5.50, Strawberry $5.50, Grape $5.25, Original Lemonade $5.50 | 🥤 Drink: Coke $2.25, Diet Coke $2.25, Sprite $2.25, Bottle Water $1.00, Cup Water $1.00
 
 SPECIAL DIETARY INFORMATION:
 - Veggie dumplings include: cabbage, carrots, onions, celery, shiitake mushrooms, glass noodles
