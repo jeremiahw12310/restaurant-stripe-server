@@ -1542,16 +1542,37 @@ LOYALTY/REWARDS CONTEXT:
 - When a user asks about what they can redeem or what they are eligible for, ONLY mention rewards that are at or below their current point balance. Do NOT list rewards they cannot afford yet unless they specifically ask about higher tiers; in that case, clearly note the remaining points needed.
 - Keep responses concise and personalized. If you reference eligibility, compute it based on the provided points.`;
         
-        return res.json({
-          debugMode: true,
-          systemPrompt: systemPrompt,
-          conversationHistory: conversation_history || [],
-          userContext: {
-            userFirstName: userFirstName || null,
-            userPreferences: userPreferences || null,
-            userPoints: typeof userPoints === 'number' ? userPoints : null
-          }
-        });
+        // Format debug information as readable text
+        const debugResponse = {
+          response: `🔍 DEBUG MODE ACTIVATED
+
+=== SYSTEM PROMPT ===
+${systemPrompt}
+
+=== USER CONTEXT ===
+First Name: ${userFirstName || 'Not provided'}
+Points: ${typeof userPoints === 'number' ? userPoints : 'Not provided'}
+Preferences Completed: ${userPreferences?.hasCompletedPreferences || false}
+${userPreferences?.hasCompletedPreferences ? `
+Dietary Restrictions:
+- Likes Spicy: ${userPreferences.likesSpicyFood || false}
+- Dislikes Spicy: ${userPreferences.dislikesSpicyFood || false}
+- Peanut Allergy: ${userPreferences.hasPeanutAllergy || false}
+- Vegetarian: ${userPreferences.isVegetarian || false}
+- Lactose Intolerant: ${userPreferences.hasLactoseIntolerance || false}
+- Doesn't Eat Pork: ${userPreferences.doesntEatPork || false}
+${userPreferences.tastePreferences ? `- Taste Preferences: ${userPreferences.tastePreferences}` : ''}
+` : ''}
+
+=== CONVERSATION HISTORY ===
+${conversation_history && conversation_history.length > 0 
+  ? conversation_history.map((msg, i) => `[${i + 1}] ${msg.role.toUpperCase()}: ${msg.content.substring(0, 100)}${msg.content.length > 100 ? '...' : ''}`).join('\n')
+  : 'No conversation history'}
+
+Total Messages: ${conversation_history ? conversation_history.length : 0}`
+        };
+        
+        return res.json(debugResponse);
       }
       
       // Create the system prompt with restaurant information
