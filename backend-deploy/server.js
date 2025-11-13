@@ -33,6 +33,135 @@ const upload = multer({ dest: 'uploads/' });
 app.use(cors());
 app.use(express.json());
 
+// 🛡️ DIETARY RESTRICTION SAFETY VALIDATION SYSTEM
+// This function validates AI-generated combos against user dietary restrictions
+// and removes any items that violate those restrictions (Plan B safety net)
+function validateDietaryRestrictions(items, dietaryPreferences, allMenuItems) {
+  console.log('🛡️ Starting dietary validation for', items.length, 'items');
+  console.log('🔍 Dietary preferences:', JSON.stringify(dietaryPreferences));
+  
+  // Define trigger words for each restriction type
+  const restrictions = {
+    vegetarian: ['chicken', 'pork', 'beef', 'shrimp', 'crab', 'meat', 'wonton'],
+    lactose: ['milk', 'cheese', 'cream', 'dairy', 'biscoff', 'chocolate milk', 'tiramisu'],
+    lactoseSubstitutable: ['milk tea', 'latte', 'coffee'], // Items that can use milk substitutes
+    noPork: ['pork'],
+    peanutAllergy: ['peanut'],
+    noSpicy: ['spicy', 'hot', 'chili']
+  };
+  
+  const removedItems = [];
+  let milkSubstituteNeeded = false;
+  
+  // Filter items based on dietary restrictions
+  const validatedItems = items.filter(item => {
+    const itemNameLower = item.id.toLowerCase();
+    
+    // Check vegetarian restriction
+    if (dietaryPreferences.isVegetarian) {
+      for (const word of restrictions.vegetarian) {
+        if (itemNameLower.includes(word)) {
+          console.log(`🚫 REMOVED: "${item.id}" - contains "${word}" (vegetarian restriction)`);
+          removedItems.push(item);
+          return false;
+        }
+      }
+    }
+    
+    // Check lactose intolerance
+    if (dietaryPreferences.hasLactoseIntolerance) {
+      // Check if item can use milk substitutes
+      const canSubstitute = restrictions.lactoseSubstitutable.some(word => 
+        itemNameLower.includes(word)
+      );
+      
+      if (canSubstitute) {
+        // Item can use substitutes, keep it but flag for note
+        milkSubstituteNeeded = true;
+        console.log(`✅ KEPT: "${item.id}" - can use milk substitute (oat/almond/coconut milk)`);
+      } else {
+        // Check if item contains dairy that can't be substituted
+        for (const word of restrictions.lactose) {
+          if (itemNameLower.includes(word)) {
+            console.log(`🚫 REMOVED: "${item.id}" - contains "${word}" (lactose intolerance)`);
+            removedItems.push(item);
+            return false;
+          }
+        }
+      }
+    }
+    
+    // Check no pork preference
+    if (dietaryPreferences.doesntEatPork) {
+      for (const word of restrictions.noPork) {
+        if (itemNameLower.includes(word)) {
+          console.log(`🚫 REMOVED: "${item.id}" - contains "${word}" (doesn't eat pork)`);
+          removedItems.push(item);
+          return false;
+        }
+      }
+    }
+    
+    // Check peanut allergy
+    if (dietaryPreferences.hasPeanutAllergy) {
+      for (const word of restrictions.peanutAllergy) {
+        if (itemNameLower.includes(word)) {
+          console.log(`🚫 REMOVED: "${item.id}" - contains "${word}" (peanut allergy)`);
+          removedItems.push(item);
+          return false;
+        }
+      }
+    }
+    
+    // Check dislikes spicy food
+    if (dietaryPreferences.dislikesSpicyFood) {
+      for (const word of restrictions.noSpicy) {
+        if (itemNameLower.includes(word)) {
+          console.log(`🚫 REMOVED: "${item.id}" - contains "${word}" (dislikes spicy food)`);
+          removedItems.push(item);
+          return false;
+        }
+      }
+    }
+    
+    // Item passed all checks
+    return true;
+  });
+  
+  // Recalculate total price based on validated items
+  let totalPrice = 0;
+  for (const item of validatedItems) {
+    // Find the item in the menu to get accurate price
+    const menuItem = allMenuItems.find(mi => mi.id === item.id);
+    if (menuItem) {
+      totalPrice += parseFloat(menuItem.price) || 0;
+    }
+  }
+  
+  // Round to 2 decimal places
+  totalPrice = Math.round(totalPrice * 100) / 100;
+  
+  // Generate milk substitute note if needed
+  let milkSubstituteNote = '';
+  if (milkSubstituteNeeded && dietaryPreferences.hasLactoseIntolerance) {
+    milkSubstituteNote = '(We can make your drink with oat milk, almond milk, or coconut milk instead of regular milk!)';
+  }
+  
+  console.log(`✅ Validation complete: ${validatedItems.length}/${items.length} items passed`);
+  if (removedItems.length > 0) {
+    console.log(`⚠️ Safety system caught ${removedItems.length} dietary violation(s)`);
+  }
+  
+  return {
+    items: validatedItems,
+    totalPrice: totalPrice,
+    removedCount: removedItems.length,
+    removedItems: removedItems,
+    wasModified: removedItems.length > 0,
+    milkSubstituteNote: milkSubstituteNote
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Minimal always-on Redeem Reward endpoint
 // ---------------------------------------------------------------------------
@@ -83,11 +212,18 @@ app.post('/referrals/create', async (req, res) => {
     }
 
     // Use custom URL scheme to avoid sandbox extension errors
-    const shareUrl = `restaurantdemo://referral?code=${referralCode}`;
-
+    // For users who already have the app installed
+    const directUrl = `restaurantdemo://referral?code=${referralCode}`;
+    
+    // Web redirect URL for users who don't have the app yet
+    // Host this page on your domain or use a service like Firebase Hosting
+    const webUrl = `https://dumplinghouseapp.com/refer?code=${referralCode}`;
+    
     res.json({
       code: referralCode,
-      shareUrl: shareUrl
+      shareUrl: directUrl, // Use direct link for now (works for installed app)
+      webUrl: webUrl, // Optional: Use this for QR codes to support non-installed users
+      directUrl: directUrl // Direct deep link
     });
   } catch (error) {
     console.error('Error creating referral code:', error);
@@ -746,6 +882,29 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       
       console.log('✅ Successfully parsed and validated AI response');
       
+      // 🛡️ PLAN B: Dietary Restriction Safety Validation System
+      console.log('🛡️ Running dietary restriction safety validation...');
+      const validationResult = validateDietaryRestrictions(
+        parsedResponse.items, 
+        dietaryPreferences, 
+        allMenuItems
+      );
+      
+      // Update the combo with validated items
+      parsedResponse.items = validationResult.items;
+      parsedResponse.totalPrice = validationResult.totalPrice;
+      
+      // Add warning if items were removed
+      if (validationResult.wasModified) {
+        console.log(`⚠️ AI DIETARY VIOLATION CAUGHT: Removed ${validationResult.removedCount} item(s)`);
+        console.log(`   Removed items: ${validationResult.removedItems.map(item => item.id).join(', ')}`);
+      }
+      
+      // Add milk substitute note if applicable
+      if (validationResult.milkSubstituteNote) {
+        parsedResponse.aiResponse += ' ' + validationResult.milkSubstituteNote;
+      }
+      
       res.json({
         success: true,
         combo: parsedResponse,
@@ -754,6 +913,11 @@ Calculate the total price accurately. Keep the response warm and personal.`;
           guideline: varietyGuideline,
           factors: varietyFactors,
           sessionId: sessionId
+        },
+        safetyInfo: {
+          validationApplied: true,
+          itemsRemoved: validationResult.removedCount,
+          wasModified: validationResult.wasModified
         }
       });
       
