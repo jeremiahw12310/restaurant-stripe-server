@@ -1013,7 +1013,7 @@ VALIDATION RULES:
 13. CRITICAL: You MUST double-check all extracted information before returning it. Verify that the order number, total, and date are accurate and match what you see on the receipt. This is essential for preventing system abuse and maintaining data integrity.
 
 EXTRACTION RULES:
-- orderNumber: CRITICAL - Find the number directly underneath the word "Nashville" on the receipt. For dine-in orders, this is the BIGGER number in the black box with white text (ignore smaller numbers below). For pickup orders, this is the number directly under "Nashville". Must be 3 digits or less and cannot exceed 400. If no valid order number under 400 is found, return {"error": "No valid order number found - order numbers must be under 400"}
+- orderNumber: CRITICAL - Find the number INSIDE the black box with white text that is located directly underneath the word "Nashville" on the receipt. This black box is the ONLY valid source for the order number. If there is no such black box, or if there is no clear number inside it, do NOT guess another number from anywhere else on the receipt. Instead, return {"error": "No valid order number found in black box under Nashville"}.
 - orderTotal: The total amount paid (as a number, e.g. 23.45)
 - orderDate: The date in MM/DD format only (e.g. "12/25")
 - orderTime: The time in HH:MM format only (e.g. "14:30"). This is always located to the right of the date on the receipt.
@@ -1027,10 +1027,10 @@ VISIBILITY & TAMPERING FLAGS:
 - You MUST also return:
   - keyFieldsTampered: true if you see ANY evidence of scribbles, crossings-out, overwriting, white-out, or manual changes on the ORDER NUMBER, TOTAL, DATE, or TIME. Otherwise false.
   - tamperingReason: a short string explaining the tampering if keyFieldsTampered is true (for example: "date is scribbled over", "order number crossed out and rewritten", or "heavy marker drawn over total").
+  - orderNumberInBlackBox: true if and only if the orderNumber you returned was read from INSIDE the black box directly under "Nashville". If there is no black box or no number inside it, set this to false and return an error instead of guessing any other number.
 
 IMPORTANT: 
-- CRITICAL LOCATION: The order number is ALWAYS directly underneath the word "Nashville" on the receipt. Do not look for numbers further down on the receipt.
-- On dine-in receipts, there may be a smaller number below the black box - this is NOT the order number. The order number is the bigger number inside the black box with white text, located directly under "Nashville".
+- CRITICAL LOCATION: The only valid order number is the number inside the black box with white text directly underneath the word "Nashville" on the receipt. Do not use any other number anywhere else on the receipt as the order number.
 - TIME LOCATION: The time is ALWAYS located to the right of the date on the receipt and must be in HH:MM format.
 - If you cannot clearly read the numbers due to poor image quality, DO NOT GUESS. Return an error instead.
 - If the receipt is faded, blurry, or any numbers are unclear, DO NOT ATTEMPT TO READ THEM. Return an error immediately.
@@ -1040,7 +1040,7 @@ IMPORTANT:
 - SAFETY FIRST: It's better to reject a receipt and ask for a clearer photo than to guess and return incorrect information. If you are not highly confident about any of the key fields, treat the receipt as invalid and return an error message instead of guessing.
 
 Respond ONLY as a JSON object with this exact shape:
-{"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "...", "totalVisibleAndClear": true/false, "orderNumberVisibleAndClear": true/false, "dateVisibleAndClear": true/false, "timeVisibleAndClear": true/false, "keyFieldsTampered": true/false, "tamperingReason": "..."} 
+{"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "...", "totalVisibleAndClear": true/false, "orderNumberVisibleAndClear": true/false, "dateVisibleAndClear": true/false, "timeVisibleAndClear": true/false, "keyFieldsTampered": true/false, "tamperingReason": "...", "orderNumberInBlackBox": true/false} 
 or {"error": "error message"}.
 If a field is missing, use null.`;
 
@@ -1173,23 +1173,33 @@ If a field is missing, use null.`;
       const timeVisibleAndClear = data.timeVisibleAndClear;
       const keyFieldsTampered = data.keyFieldsTampered;
       const tamperingReason = data.tamperingReason;
+      const orderNumberInBlackBox = data.orderNumberInBlackBox;
 
-      // If any of the visibility flags are explicitly false, or keyFieldsTampered is true, reject the receipt
+      // If any of the visibility flags are explicitly false, keyFieldsTampered is true,
+      // or the order number did not come from the black box under "Nashville", reject the receipt
       if (
         totalVisibleAndClear === false ||
         orderNumberVisibleAndClear === false ||
         dateVisibleAndClear === false ||
         timeVisibleAndClear === false ||
-        keyFieldsTampered === true
+        keyFieldsTampered === true ||
+        orderNumberInBlackBox !== true
       ) {
-        console.log('❌ Receipt rejected due to obscured or tampered key fields', {
+        console.log('❌ Receipt rejected due to obscured/tampered key fields or invalid order number source', {
           totalVisibleAndClear,
           orderNumberVisibleAndClear,
           dateVisibleAndClear,
           timeVisibleAndClear,
           keyFieldsTampered,
-          tamperingReason
+          tamperingReason,
+          orderNumberInBlackBox
         });
+        // If the only issue is the order number source, surface a specific error
+        if (orderNumberInBlackBox !== true && keyFieldsTampered !== true) {
+          return res.status(400).json({
+            error: "No valid order number found in black box under Nashville"
+          });
+        }
         return res.status(400).json({
           error: tamperingReason && typeof tamperingReason === 'string' && tamperingReason.trim().length > 0
             ? `Receipt invalid - ${tamperingReason}`
@@ -1268,12 +1278,14 @@ If a field is missing, use null.`;
       const currentDate = new Date();
       const receiptDate = new Date(currentDate.getFullYear(), month - 1, day);
       
-      // Check if date is in the future (adjust year if needed)
-      if (receiptDate > currentDate) {
-        receiptDate.setFullYear(currentDate.getFullYear() - 1);
+      // Compute signed day difference (currentDate - receiptDate)
+      const daysDiff = (currentDate - receiptDate) / (1000 * 60 * 60 * 24);
+
+      // Hard block: receipts dated in the future are always invalid, even for admins/testing
+      if (daysDiff < 0) {
+        console.log('❌ Receipt date appears to be in the future:', data.orderDate, 'daysDiff:', daysDiff);
+        return res.status(400).json({ error: "Invalid receipt date - receipt appears to be dated in the future" });
       }
-      
-      const daysDiff = Math.abs((currentDate - receiptDate) / (1000 * 60 * 60 * 24));
 
       // Admin-only override for testing old receipts:
       // If the caller is an admin AND has explicitly enabled old-receipt testing on their user profile,
@@ -1312,14 +1324,17 @@ If a field is missing, use null.`;
         // Query Firestore for existing receipts with matching criteria
         const receiptsRef = db.collection('receipts');
         
-        // Check for duplicates: if ANY 2 of the 3 fields match (orderNumber, date, time)
+        // Check for duplicates: if ANY 2 of the 3 fields match (orderNumber, date, time),
+        // OR if date, time, and total ALL match (strong duplicate signal)
         const duplicateQueries = [
           // Same order number AND date
           receiptsRef.where('orderNumber', '==', data.orderNumber).where('orderDate', '==', data.orderDate),
           // Same order number AND time  
           receiptsRef.where('orderNumber', '==', data.orderNumber).where('orderTime', '==', data.orderTime),
           // Same date AND time
-          receiptsRef.where('orderDate', '==', data.orderDate).where('orderTime', '==', data.orderTime)
+          receiptsRef.where('orderDate', '==', data.orderDate).where('orderTime', '==', data.orderTime),
+          // Same date, time, AND total (even if order number differs)
+          receiptsRef.where('orderDate', '==', data.orderDate).where('orderTime', '==', data.orderTime).where('orderTotal', '==', orderTotal)
         ];
         
         let duplicateFound = false;
