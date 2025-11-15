@@ -993,13 +993,13 @@ if (!process.env.OPENAI_API_KEY) {
 
 VALIDATION RULES:
 1. If there are NO words stating "Dumpling House" at the top of the receipt, return {"error": "Invalid receipt - must be from Dumpling House"}
-2. If there is anything covering up numbers or text on the receipt, return {"error": "Invalid receipt - numbers are covered or obstructed"}
-3. TAMPERING DETECTION: Look for signs of obvious tampering or manipulation:
+2. If there is anything covering up numbers or text on the receipt, and it affects the ORDER NUMBER, TOTAL, DATE, or TIME, treat this as tampering and do NOT accept the receipt.
+3. TAMPERING DETECTION: Look for signs of obvious tampering or manipulation, especially on the ORDER NUMBER, TOTAL, DATE, or TIME:
    - If numbers appear to be digitally altered, edited, or photoshopped, return {"error": "Receipt appears to be tampered with - digital manipulation detected"}
    - If you can see evidence this is a photo of a screen/monitor (pixel patterns, screen glare, moiré effect), return {"error": "Invalid - please scan the original physical receipt, not a photo of a screen"}
    - If you can see this is a photo of another photo (edges of another photo visible, photo paper texture), return {"error": "Invalid - please scan the original receipt, not a photo of a photo"}
-   - If numbers appear to be written over, whited-out, or manually changed, return {"error": "Receipt appears to be tampered with - numbers have been altered"}
-   - IMPORTANT: Employee checkmarks, circles, or handwritten notes on items are NORMAL and ALLOWED - only flag if numbers (order number, total, date, time) appear altered
+   - If numbers appear to be written over, crossed out, scribbled on, whited-out, or manually changed on the ORDER NUMBER, TOTAL, DATE, or TIME, return {"error": "Receipt appears to be tampered with - numbers have been altered"}
+   - IMPORTANT: Employee checkmarks, circles, or handwritten notes on items are NORMAL and ALLOWED ONLY if they do NOT cover the digits of the ORDER NUMBER, TOTAL, DATE, or TIME. If any marking crosses through or obscures the digits of these key fields, treat it as tampering.
    - If the receipt looks artificially brightened or enhanced to hide alterations, return {"error": "Receipt appears to be digitally modified"}
 4. CRITICAL LOCATION: The order number is ALWAYS directly underneath the word "Nashville" on the receipt. Look for "Nashville" and find the number immediately below it.
 5. For DINE-IN orders: The order number is the BIGGER number inside the black box with white text, located directly under "Nashville". IGNORE any smaller numbers below the black box - those are NOT the order number.
@@ -1007,8 +1007,8 @@ VALIDATION RULES:
 7. The order number is NEVER found further down on the receipt - it's always in the top section under "Nashville"
 8. If the order number is more than 3 digits, it cannot be the order number - look for a smaller number
 9. Order numbers CANNOT be greater than 400 - if you see a number over 400, it's not the order number and should be ignored completely
-10. CRITICAL: If the receipt is faded, blurry, hard to read, or if ANY numbers are unclear or difficult to see, return {"error": "Receipt is too faded or unclear - please take a clearer photo"} - DO NOT attempt to guess or estimate any numbers
-11. If the image quality is poor and numbers are blurry, unclear, or hard to read, return {"error": "Poor image quality - please take a clearer photo"}
+10. CRITICAL: If the receipt is faded, blurry, hard to read, or if ANY numbers in the ORDER NUMBER, TOTAL, DATE, or TIME are unclear or difficult to see, return {"error": "Receipt is too faded or unclear - please take a clearer photo"} - DO NOT attempt to guess or estimate any numbers
+11. If the image quality is poor and numbers (especially the ORDER NUMBER, TOTAL, DATE, or TIME) are blurry, unclear, or hard to read, return {"error": "Poor image quality - please take a clearer photo"}
 12. ALWAYS return the date as MM/DD format only (no year, no other format)
 13. CRITICAL: You MUST double-check all extracted information before returning it. Verify that the order number, total, and date are accurate and match what you see on the receipt. This is essential for preventing system abuse and maintaining data integrity.
 
@@ -1018,6 +1018,16 @@ EXTRACTION RULES:
 - orderDate: The date in MM/DD format only (e.g. "12/25")
 - orderTime: The time in HH:MM format only (e.g. "14:30"). This is always located to the right of the date on the receipt.
 
+VISIBILITY & TAMPERING FLAGS:
+- You MUST also return the following boolean flags describing the visibility and tampering status of each key field:
+  - totalVisibleAndClear: true if the TOTAL digits are fully visible, unobscured, and clearly readable. false if any part of the total is blurred, cropped, covered, scribbled on, crossed out, or otherwise unclear.
+  - orderNumberVisibleAndClear: true if the ORDER NUMBER digits are fully visible, unobscured, and clearly readable. false if any part is blurred, cropped, covered, scribbled on, crossed out, or otherwise unclear.
+  - dateVisibleAndClear: true if the DATE digits are fully visible, unobscured, and clearly readable. false if any part is blurred, cropped, covered, scribbled on, crossed out, or otherwise unclear.
+  - timeVisibleAndClear: true if the TIME digits are fully visible, unobscured, and clearly readable. false if any part is blurred, cropped, covered, scribbled on, crossed out, or otherwise unclear.
+- You MUST also return:
+  - keyFieldsTampered: true if you see ANY evidence of scribbles, crossings-out, overwriting, white-out, or manual changes on the ORDER NUMBER, TOTAL, DATE, or TIME. Otherwise false.
+  - tamperingReason: a short string explaining the tampering if keyFieldsTampered is true (for example: "date is scribbled over", "order number crossed out and rewritten", or "heavy marker drawn over total").
+
 IMPORTANT: 
 - CRITICAL LOCATION: The order number is ALWAYS directly underneath the word "Nashville" on the receipt. Do not look for numbers further down on the receipt.
 - On dine-in receipts, there may be a smaller number below the black box - this is NOT the order number. The order number is the bigger number inside the black box with white text, located directly under "Nashville".
@@ -1026,10 +1036,12 @@ IMPORTANT:
 - If the receipt is faded, blurry, or any numbers are unclear, DO NOT ATTEMPT TO READ THEM. Return an error immediately.
 - Order numbers must be between 1-400. Any number over 400 is completely invalid and should not be returned at all.
 - If the only numbers you see are over 400, return {"error": "No valid order number found - order numbers must be under 400"}
-- DOUBLE-CHECK REQUIREMENT: Before returning any data, carefully review the extracted order number, total, date, and time to ensure they are accurate and match the receipt. This verification step is crucial for preventing fraud and maintaining system integrity.
-- SAFETY FIRST: It's better to reject a receipt and ask for a clearer photo than to guess and return incorrect information.
+- DOUBLE-CHECK REQUIREMENT: Before returning any data, carefully review the extracted order number, total, date, and time to ensure they are accurate and match the receipt. Also carefully review whether any part of these fields is obscured or tampered with, and set the visibility/tampering flags accordingly. This verification step is crucial for preventing fraud and maintaining system integrity.
+- SAFETY FIRST: It's better to reject a receipt and ask for a clearer photo than to guess and return incorrect information. If you are not highly confident about any of the key fields, treat the receipt as invalid and return an error message instead of guessing.
 
-Respond ONLY as a JSON object: {"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "..."} or {"error": "error message"}
+Respond ONLY as a JSON object with this exact shape:
+{"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "...", "totalVisibleAndClear": true/false, "orderNumberVisibleAndClear": true/false, "dateVisibleAndClear": true/false, "timeVisibleAndClear": true/false, "keyFieldsTampered": true/false, "tamperingReason": "..."} 
+or {"error": "error message"}.
 If a field is missing, use null.`;
 
       console.log('🤖 Sending request to OpenAI for FIRST validation...');
@@ -1152,6 +1164,37 @@ If a field is missing, use null.`;
       if (!data.orderNumber || !data.orderTotal || !data.orderDate || !data.orderTime) {
         console.log('❌ Missing required fields in receipt data');
         return res.status(400).json({ error: "Could not extract all required fields from receipt" });
+      }
+
+      // Validate visibility and tampering flags for key fields
+      const totalVisibleAndClear = data.totalVisibleAndClear;
+      const orderNumberVisibleAndClear = data.orderNumberVisibleAndClear;
+      const dateVisibleAndClear = data.dateVisibleAndClear;
+      const timeVisibleAndClear = data.timeVisibleAndClear;
+      const keyFieldsTampered = data.keyFieldsTampered;
+      const tamperingReason = data.tamperingReason;
+
+      // If any of the visibility flags are explicitly false, or keyFieldsTampered is true, reject the receipt
+      if (
+        totalVisibleAndClear === false ||
+        orderNumberVisibleAndClear === false ||
+        dateVisibleAndClear === false ||
+        timeVisibleAndClear === false ||
+        keyFieldsTampered === true
+      ) {
+        console.log('❌ Receipt rejected due to obscured or tampered key fields', {
+          totalVisibleAndClear,
+          orderNumberVisibleAndClear,
+          dateVisibleAndClear,
+          timeVisibleAndClear,
+          keyFieldsTampered,
+          tamperingReason
+        });
+        return res.status(400).json({
+          error: tamperingReason && typeof tamperingReason === 'string' && tamperingReason.trim().length > 0
+            ? `Receipt invalid - ${tamperingReason}`
+            : "Receipt invalid - key information is obscured or appears tampered with"
+        });
       }
       
       // Validate order number format (must be 3 digits or less and not exceed 200)
