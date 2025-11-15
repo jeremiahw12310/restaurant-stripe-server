@@ -999,6 +999,7 @@ if (!process.env.OPENAI_API_KEY) {
       
       const imagePath = req.file.path;
       const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
+      const db = admin.firestore();
 
       const prompt = `You are a receipt parser for Dumpling House. Follow these STRICT validation rules:
 
@@ -1370,8 +1371,11 @@ If a field is missing, use null.`;
         console.log('✅ No duplicates found - receipt is unique');
         
       } catch (duplicateError) {
-        console.log('⚠️ Error checking for duplicates:', duplicateError.message);
-        // Continue processing even if duplicate check fails
+        console.log('❌ Error checking for duplicates:', duplicateError.message);
+        // For safety, do NOT award points if we cannot verify duplicates
+        return res.status(500).json({
+          error: "Server error while verifying receipt uniqueness - please try again with a clear photo"
+        });
       }
       
       res.json(data);
