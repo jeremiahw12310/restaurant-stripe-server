@@ -1358,6 +1358,24 @@ If a field is missing, use null.`;
         }
         
         console.log('✅ No duplicates found - receipt is unique');
+
+        // Persist this validated receipt so future scans can be checked reliably
+        try {
+          await receiptsRef.add({
+            orderNumber: data.orderNumber,
+            orderDate: data.orderDate,
+            orderTime: data.orderTime,
+            orderTotal: orderTotal,
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+          console.log('💾 Saved receipt to receipts collection for future duplicate checks');
+        } catch (saveError) {
+          console.log('❌ Error saving receipt record:', saveError.message);
+          // For safety, do NOT award points if we cannot persist the receipt
+          return res.status(500).json({
+            error: "Server error while saving receipt - please try again with a clear photo"
+          });
+        }
         
       } catch (duplicateError) {
         console.log('❌ Error checking for duplicates:', duplicateError.message);
