@@ -85,25 +85,28 @@ exports.createCheckoutSession = onCall(async (data, context) => {
   //   );
   // }
 
-  const { lineItems, successUrl, cancelUrl } = data;
+  // Get the cart items and customer email from the data sent by the app
+  const lineItems = data.lineItems;
+  const customerEmail = data.customerEmail;
 
   try {
     // Create a Checkout Session
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
+      payment_method_types: ["card"],
       line_items: lineItems,
-      mode: 'payment',
-      success_url: successUrl || 'https://your-app.com/success',
-      cancel_url: cancelUrl || 'https://your-app.com/cancel',
-      automatic_tax: { enabled: true },
+      mode: "payment",
+      success_url: "https://example.com/success", // Replace with your success URL
+      cancel_url: "https://example.com/cancel", // Replace with your cancel URL
+      customer_email: customerEmail,
     });
 
+    // Return the session ID to the app
     return {
-      url: session.url,
       sessionId: session.id,
+      url: session.url,
     };
   } catch (error) {
-    console.error("Stripe Checkout Error:", error);
+    console.error("Stripe Error:", error);
     throw new functions.https.HttpsError("internal", "Unable to create checkout session");
   }
 });
@@ -235,4 +238,5 @@ exports.syncMenuItemsArray = onDocumentWritten(
 );
 
 exports.api = onRequest(app);
+
 

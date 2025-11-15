@@ -63,14 +63,24 @@ Failed to locate container app bundle record.
    - Changed share URL from `https://dumplinghouseapp.com/refer/${code}` 
    - To: `restaurantdemo://referral?code=${code}`
 
-## 🚀 Deployment Required
+## 🚀 Quick Fix (Do This Now!)
+
+### Step 1: Rebuild the App
+The app now uses a new cache key (`referral_cache_v2_`) that will ignore the old cached URLs with `https://` format.
+
+**Simply rebuild and run the app** - it will automatically:
+- Clear old cache on launch
+- Fetch new URL format from server
+- Cache the new `restaurantdemo://` URL
+
+### Step 2: Deploy Backend (For Production)
 
 The backend changes need to be deployed to production:
 
 ```bash
 # Deploy to Render
 git add .
-git commit -m "Fix referral URL sandbox extension error"
+git commit -m "Fix referral URL sandbox extension error and cache migration"
 git push origin main
 ```
 
@@ -78,6 +88,8 @@ Then in Render Dashboard:
 1. Go to your service: https://dashboard.render.com/
 2. Find `restaurant-stripe-server-1`
 3. Click "Manual Deploy" → "Deploy latest commit"
+
+**Note:** Until the backend is deployed, the app will fetch fresh data and the old cache will be cleared automatically.
 
 ## ✨ Benefits
 
@@ -118,7 +130,14 @@ struct CachedData {
 }
 ```
 
-Cache Key: `referral_cache_<userId>` (user-specific)
+**Cache Keys:**
+- Old (v1): `referral_cache_<userId>` - contains https:// URLs (deprecated)
+- New (v2): `referral_cache_v2_<userId>` - contains custom URL scheme
+
+**Cache Migration:**
+- App automatically clears v1 cache on launch
+- Forces fresh fetch from server with new URL format
+- Seamless migration for all users
 
 ## 🎯 Testing
 

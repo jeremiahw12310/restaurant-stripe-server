@@ -265,3 +265,6 @@ The "Lemonades or Sodas" category is now unified with the rest of the drinks sys
 
 **Next Step:** Set `isDrinks: true` in Firestore and add items to the category to activate the list view.
 
+
+
+
