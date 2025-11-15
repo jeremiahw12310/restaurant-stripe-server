@@ -1285,8 +1285,32 @@ If a field is missing, use null.`;
       }
       
       const daysDiff = Math.abs((currentDate - receiptDate) / (1000 * 60 * 60 * 24));
-      if (daysDiff > 2) {
-        console.log('❌ Receipt date too old:', data.orderDate);
+
+      // Admin-only override for testing old receipts:
+      // If the caller is an admin AND has explicitly enabled old-receipt testing on their user profile,
+      // we relax the 48-hour window check (for this user only) but still enforce all other validations.
+      let allowOldReceiptForAdmin = false;
+      try {
+        const authHeader = req.headers.authorization || '';
+        const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+        if (token) {
+          const decoded = await admin.auth().verifyIdToken(token);
+          const uid = decoded.uid;
+          const userDoc = await admin.firestore().collection('users').doc(uid).get();
+          if (userDoc.exists) {
+            const userData = userDoc.data() || {};
+            if (userData.isAdmin === true && userData.oldReceiptTestingEnabled === true) {
+              allowOldReceiptForAdmin = true;
+              console.log('⚠️ Admin old-receipt test mode active for user:', uid, 'daysDiff:', daysDiff);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('⚠️ Failed to evaluate admin old-receipt test override:', err.message || err);
+      }
+
+      if (daysDiff > 2 && !allowOldReceiptForAdmin) {
+        console.log('❌ Receipt date too old:', data.orderDate, 'daysDiff:', daysDiff);
         return res.status(400).json({ error: "Receipt expired - receipts must be scanned within 48 hours of purchase" });
       }
       
