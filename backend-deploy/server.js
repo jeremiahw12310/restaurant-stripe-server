@@ -2988,6 +2988,198 @@ IMPORTANT:
       });
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // Admin-only Receipts Management Endpoints
+  // ---------------------------------------------------------------------------
+
+  // Helper to verify Firebase Auth token and ensure the caller is an admin user
+  async function requireAdmin(req, res) {
+    try {
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+      if (!token) {
+        res.status(401).json({ error: 'Missing or invalid Authorization header' });
+        return null;
+      }
+
+      const decoded = await admin.auth().verifyIdToken(token);
+      const uid = decoded.uid;
+
+      const db = admin.firestore();
+      const userDoc = await db.collection('users').doc(uid).get();
+      if (!userDoc.exists) {
+        res.status(403).json({ error: 'User record not found for admin check' });
+        return null;
+      }
+
+      const userData = userDoc.data() || {};
+      if (userData.isAdmin !== true) {
+        res.status(403).json({ error: 'Admin privileges required' });
+        return null;
+      }
+
+      return { uid, userData };
+    } catch (err) {
+      console.error('❌ Admin auth check failed:', err);
+      res.status(401).json({ error: 'Failed to verify admin credentials' });
+      return null;
+    }
+  }
+
+  // List scanned receipts for Admin Office
+  app.get('/admin/receipts', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const db = admin.firestore();
+
+      // Basic pagination: limit + optional startAfter timestamp
+      const pageSize = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+      const startAfterTs = req.query.startAfter ? new Date(req.query.startAfter) : null;
+
+      let query = db.collection('usedReceipts')
+        .orderBy('timestamp', 'desc')
+        .limit(pageSize);
+
+      if (startAfterTs && !isNaN(startAfterTs.getTime())) {
+        query = query.startAfter(startAfterTs);
+      }
+
+      const snapshot = await query.get();
+
+      const receipts = [];
+      const userIds = new Set();
+
+      snapshot.forEach(doc => {
+        const data = doc.data() || {};
+        if (data.userId) {
+          userIds.add(data.userId);
+        }
+      });
+
+      // Fetch basic user info for all involved users
+      const usersMap = {};
+      if (userIds.size > 0) {
+        const userIdArray = Array.from(userIds);
+        const userPromises = userIdArray.map(async userId => {
+          try {
+            const userDoc = await db.collection('users').doc(userId).get();
+            if (userDoc.exists) {
+              usersMap[userId] = userDoc.data() || {};
+            }
+          } catch (err) {
+            console.warn('⚠️ Failed to load user for receipt list:', userId, err.message || err);
+          }
+        });
+        await Promise.all(userPromises);
+      }
+
+      snapshot.forEach(doc => {
+        const data = doc.data() || {};
+        const userInfo = data.userId ? (usersMap[data.userId] || {}) : {};
+
+        receipts.push({
+          id: doc.id,
+          orderNumber: data.orderNumber || null,
+          orderDate: data.orderDate || null,
+          timestamp: data.timestamp ? data.timestamp.toDate().toISOString() : null,
+          userId: data.userId || null,
+          userName: userInfo.firstName || userInfo.name || null,
+          userPhone: userInfo.phone || null
+        });
+      });
+
+      const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+      const nextPageToken = lastDoc && lastDoc.get('timestamp')
+        ? lastDoc.get('timestamp').toDate().toISOString()
+        : null;
+
+      res.json({
+        receipts,
+        nextPageToken
+      });
+    } catch (error) {
+      console.error('❌ Error listing admin receipts:', error);
+      res.status(500).json({ error: 'Failed to load receipts for admin' });
+    }
+  });
+
+  // Delete a scanned receipt so it can be rescanned
+  app.delete('/admin/receipts/:id', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const db = admin.firestore();
+      const receiptId = req.params.id;
+
+      const usedReceiptRef = db.collection('usedReceipts').doc(receiptId);
+      const usedReceiptDoc = await usedReceiptRef.get();
+
+      if (!usedReceiptDoc.exists) {
+        return res.status(404).json({ error: 'Receipt not found' });
+      }
+
+      const usedData = usedReceiptDoc.data() || {};
+      const { orderNumber, orderDate, userId } = usedData;
+
+      if (!orderNumber || !orderDate) {
+        console.warn('⚠️ Used receipt missing orderNumber or orderDate; deleting usedReceipts doc only');
+      }
+
+      const batch = db.batch();
+
+      // Always delete the usedReceipts entry
+      batch.delete(usedReceiptRef);
+
+      // Also delete any backend receipts that match this orderNumber + orderDate
+      if (orderNumber && orderDate) {
+        try {
+          const receiptsRef = db.collection('receipts');
+          const receiptsSnapshot = await receiptsRef
+            .where('orderNumber', '==', orderNumber)
+            .where('orderDate', '==', orderDate)
+            .get();
+
+          receiptsSnapshot.forEach(doc => {
+            batch.delete(doc.ref);
+          });
+        } catch (matchErr) {
+          console.warn('⚠️ Failed to query matching receipts for deletion:', matchErr.message || matchErr);
+        }
+      }
+
+      // Log admin action for audit
+      const actionRef = db.collection('adminActions').doc();
+      batch.set(actionRef, {
+        type: 'deleteReceipt',
+        performedBy: adminContext.uid,
+        receiptDocId: receiptId,
+        orderNumber: orderNumber || null,
+        orderDate: orderDate || null,
+        userId: userId || null,
+        reason: req.body && req.body.reason ? String(req.body.reason).slice(0, 500) : null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      await batch.commit();
+
+      console.log('🗑️ Admin deleted receipt and related records:', {
+        receiptId,
+        orderNumber,
+        orderDate,
+        userId,
+        adminId: adminContext.uid
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('❌ Error deleting admin receipt:', error);
+      res.status(500).json({ error: 'Failed to delete receipt for admin' });
+    }
+  });
 }
 
 // Force production environment
