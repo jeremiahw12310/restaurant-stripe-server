@@ -1017,15 +1017,22 @@ VALIDATION RULES:
 5. For DINE-IN orders: The order number is the BIGGER number inside the black box with white text, located directly under "Nashville". IGNORE any smaller numbers below the black box - those are NOT the order number.
 6. For PICKUP orders: The order number is found directly underneath the word "Nashville" and may not be in a black box.
 7. The order number is NEVER found further down on the receipt - it's always in the top section under "Nashville"
-8. If the order number is more than 3 digits, it cannot be the order number - look for a smaller number
-9. Order numbers CANNOT be greater than 400 - if you see a number over 400, it's not the order number and should be ignored completely
+8. PAID ONLINE RECEIPTS (NO BLACK BOX): On the rare chance that there is NO black box at all for the order number anywhere in the top section under "Nashville", look to see if you can find the words "paid online" on the ticket:
+   - If you do NOT see the words "paid online" anywhere on the receipt, you MUST NOT guess the order number from anywhere else. In this case, return {"error": "No valid order number found in black box under Nashville"}.
+   - If you DO see "paid online" on the receipt, the ONLY valid order number is the number in bold font that appears immediately next to the label "Order:" on the ticket. You MUST:
+     * Read the number that is in bold font right next to "Order:".
+     * Treat this as the order number ONLY if it is clearly readable, not tampered with, and within the valid range (see below).
+     * NOT use any other numbers anywhere else on the receipt as the order number.
+   - If "paid online" is present but there is no clear bold number right next to "Order:", or that number is unclear, obscured, or tampered with, you MUST return {"error": "No valid order number found next to 'Order:' for paid online receipt"} and NOT guess from anywhere else.
+9. If the order number is more than 3 digits, it cannot be the order number - look for a smaller number
+10. Order numbers CANNOT be greater than 400 - if you see a number over 400, it's not the order number and should be ignored completely
 10. CRITICAL: If the receipt is faded, blurry, hard to read, or if ANY numbers in the ORDER NUMBER, TOTAL, DATE, or TIME are unclear or difficult to see, return {"error": "Receipt is too faded or unclear - please take a clearer photo"} - DO NOT attempt to guess or estimate any numbers
 11. If the image quality is poor and numbers (especially the ORDER NUMBER, TOTAL, DATE, or TIME) are blurry, unclear, or hard to read, return {"error": "Poor image quality - please take a clearer photo"}
 12. ALWAYS return the date as MM/DD format only (no year, no other format)
 13. CRITICAL: You MUST double-check all extracted information before returning it. Verify that the order number, total, and date are accurate and match what you see on the receipt. This is essential for preventing system abuse and maintaining data integrity.
 
 EXTRACTION RULES:
-- orderNumber: CRITICAL - Find the number INSIDE the black box with white text that is located directly underneath the word "Nashville" on the receipt. This black box is the ONLY valid source for the order number. If there is no such black box, or if there is no clear number inside it, do NOT guess another number from anywhere else on the receipt. Instead, return {"error": "No valid order number found in black box under Nashville"}.
+- orderNumber: CRITICAL - Find the number INSIDE the black box with white text that is located directly underneath the word "Nashville" on the receipt. This black box is the ONLY valid source for the order number when a black box is present. On receipts where there is no such black box at all, you MUST follow the paid-online rules described above: only use the bold number immediately next to "Order:" on receipts that clearly say "paid online", and otherwise return an appropriate error without guessing from anywhere else on the receipt.
 - orderTotal: The total amount paid (as a number, e.g. 23.45)
 - orderDate: The date in MM/DD format only (e.g. "12/25")
 - orderTime: The time in HH:MM format only (e.g. "14:30"). This is always located to the right of the date on the receipt.
@@ -1039,7 +1046,9 @@ VISIBILITY & TAMPERING FLAGS:
 - You MUST also return:
   - keyFieldsTampered: true if you see ANY evidence of scribbles, crossings-out, overwriting, white-out, or manual changes on the ORDER NUMBER, TOTAL, DATE, or TIME. Otherwise false.
   - tamperingReason: a short string explaining the tampering if keyFieldsTampered is true (for example: "date is scribbled over", "order number crossed out and rewritten", or "heavy marker drawn over total").
-  - orderNumberInBlackBox: true if and only if the orderNumber you returned was read from INSIDE the black box directly under "Nashville". If there is no black box or no number inside it, set this to false and return an error instead of guessing any other number.
+  - orderNumberInBlackBox: true if and only if the orderNumber you returned was read from INSIDE the black box directly under "Nashville". If there is no black box or no number inside it, set this to false.
+  - paidOnlineReceipt: true if and only if the receipt clearly contains the words "paid online" and you are using the paid-online fallback path (bold number next to "Order:") described above. Otherwise false.
+  - orderNumberFromPaidOnlineSection: true if and only if the orderNumber you returned was read from the bold number immediately next to the label "Order:" on a paid-online receipt. Otherwise false.
 
 IMPORTANT: 
 - CRITICAL LOCATION: The only valid order number is the number inside the black box with white text directly underneath the word "Nashville" on the receipt. Do not use any other number anywhere else on the receipt as the order number.
@@ -1052,7 +1061,7 @@ IMPORTANT:
 - SAFETY FIRST: It's better to reject a receipt and ask for a clearer photo than to guess and return incorrect information. If you are not highly confident about any of the key fields, treat the receipt as invalid and return an error message instead of guessing.
 
 Respond ONLY as a JSON object with this exact shape:
-{"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "...", "totalVisibleAndClear": true/false, "orderNumberVisibleAndClear": true/false, "dateVisibleAndClear": true/false, "timeVisibleAndClear": true/false, "keyFieldsTampered": true/false, "tamperingReason": "...", "orderNumberInBlackBox": true/false} 
+{"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "...", "totalVisibleAndClear": true/false, "orderNumberVisibleAndClear": true/false, "dateVisibleAndClear": true/false, "timeVisibleAndClear": true/false, "keyFieldsTampered": true/false, "tamperingReason": "...", "orderNumberInBlackBox": true/false, "paidOnlineReceipt": true/false, "orderNumberFromPaidOnlineSection": true/false} 
 or {"error": "error message"}.
 If a field is missing, use null.`;
 
@@ -1186,16 +1195,25 @@ If a field is missing, use null.`;
       const keyFieldsTampered = data.keyFieldsTampered;
       const tamperingReason = data.tamperingReason;
       const orderNumberInBlackBox = data.orderNumberInBlackBox;
+      const paidOnlineReceipt = data.paidOnlineReceipt;
+      const orderNumberFromPaidOnlineSection = data.orderNumberFromPaidOnlineSection;
+
+      // Determine whether the order number came from a valid source:
+      //  - Either from the black box under "Nashville"
+      //  - Or, on a paid-online receipt with no black box, from the bold number next to "Order:"
+      const orderNumberSourceIsValid =
+        orderNumberInBlackBox === true ||
+        orderNumberFromPaidOnlineSection === true;
 
       // If any of the visibility flags are explicitly false, keyFieldsTampered is true,
-      // or the order number did not come from the black box under "Nashville", reject the receipt
+      // or the order number did not come from a valid, allowed source, reject the receipt
       if (
         totalVisibleAndClear === false ||
         orderNumberVisibleAndClear === false ||
         dateVisibleAndClear === false ||
         timeVisibleAndClear === false ||
         keyFieldsTampered === true ||
-        orderNumberInBlackBox !== true
+        !orderNumberSourceIsValid
       ) {
         console.log('❌ Receipt rejected due to obscured/tampered key fields or invalid order number source', {
           totalVisibleAndClear,
@@ -1204,14 +1222,24 @@ If a field is missing, use null.`;
           timeVisibleAndClear,
           keyFieldsTampered,
           tamperingReason,
-          orderNumberInBlackBox
+          orderNumberInBlackBox,
+          paidOnlineReceipt,
+          orderNumberFromPaidOnlineSection
         });
-        // If the only issue is the order number source, surface a specific error
-        if (orderNumberInBlackBox !== true && keyFieldsTampered !== true) {
+
+        // If the only issue is the order number source (no valid source used) and there is no tampering,
+        // surface a specific error depending on whether this was a paid-online receipt or not.
+        if (!orderNumberSourceIsValid && keyFieldsTampered !== true) {
+          if (paidOnlineReceipt === true) {
+            return res.status(400).json({
+              error: "No valid order number found next to 'Order:' for paid online receipt"
+            });
+          }
           return res.status(400).json({
             error: "No valid order number found in black box under Nashville"
           });
         }
+
         return res.status(400).json({
           error: tamperingReason && typeof tamperingReason === 'string' && tamperingReason.trim().length > 0
             ? `Receipt invalid - ${tamperingReason}`

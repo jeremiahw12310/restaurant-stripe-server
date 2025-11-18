@@ -240,3 +240,4 @@ exports.syncMenuItemsArray = onDocumentWritten(
 exports.api = onRequest(app);
 
 
+

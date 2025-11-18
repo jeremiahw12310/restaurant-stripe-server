@@ -143,3 +143,4 @@ private func interstitialDidFinish() {
 **Result**: The receipt scanning UI now has a clean, deterministic flow that only shows success when validation genuinely passes, eliminating the confusing flash of success before error messages.
 
 
+
