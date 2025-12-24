@@ -1294,7 +1294,7 @@ If a field is missing, use null.`;
         }
 
         const msg = tamperingReason && typeof tamperingReason === 'string' && tamperingReason.trim().length > 0
-          ? `Receipt invalid - ${tamperingReason}`
+            ? `Receipt invalid - ${tamperingReason}`
           : "Receipt invalid - key information is obscured or appears tampered with";
         return sendError(res, 400, "KEY_FIELDS_INVALID", msg, { tamperingReason: tamperingReason || null });
       }
@@ -1391,7 +1391,7 @@ If a field is missing, use null.`;
         } else {
           console.log('❌ Receipt date appears to be in the future:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiffThisYear);
           return sendError(res, 400, "FUTURE_DATE", "Invalid receipt date - receipt appears to be dated in the future");
-        }
+      }
       }
 
       // Keep daysDiff for existing logs (derived from hours for consistency)
