@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "TZ498BT5J7.test.Restaurant-Demo",
+        "paths": [ "/refer*", "/referral*" ]
+      }
+    ]
+  }
+}
+
+
+
+

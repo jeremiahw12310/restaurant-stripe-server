@@ -206,13 +206,27 @@ app.post('/generate-combo', async (req, res) => {
     
     const { userName, dietaryPreferences, menuItems, previousRecommendations } = req.body;
     
-    if (!userName || !dietaryPreferences) {
-      console.log('❌ Missing required fields. Received:', { userName: !!userName, dietaryPreferences: !!dietaryPreferences });
+    // userName is required; dietaryPreferences are optional (we'll normalize below)
+    if (!userName) {
+      console.log('❌ Missing required fields. Received:', { userName: !!userName });
       return res.status(400).json({ 
-        error: 'Missing required fields: userName, dietaryPreferences',
-        received: { userName: !!userName, dietaryPreferences: !!dietaryPreferences }
+        error: 'Missing required field: userName',
+        received: { userName: !!userName }
       });
     }
+
+    // Normalize dietary preferences so downstream logic always has a safe object
+    const normalizedDietaryPreferences = {
+      likesSpicyFood: false,
+      dislikesSpicyFood: false,
+      hasPeanutAllergy: false,
+      isVegetarian: false,
+      hasLactoseIntolerance: false,
+      doesntEatPork: false,
+      tastePreferences: '',
+      hasCompletedPreferences: false,
+      ...(dietaryPreferences || {})
+    };
     
     // Use the menu items from the request (which come from Firebase)
     let allMenuItems = menuItems || [];
@@ -420,20 +434,24 @@ app.post('/generate-combo', async (req, res) => {
     
     // Create dietary restrictions string
     const restrictions = [];
-    if (dietaryPreferences.hasPeanutAllergy) restrictions.push('peanut allergy');
-    if (dietaryPreferences.isVegetarian) restrictions.push('vegetarian');
-    if (dietaryPreferences.hasLactoseIntolerance) restrictions.push('lactose intolerant');
-    if (dietaryPreferences.doesntEatPork) restrictions.push('no pork');
-    if (dietaryPreferences.dislikesSpicyFood) restrictions.push('no spicy food');
+    if (normalizedDietaryPreferences.hasPeanutAllergy) restrictions.push('peanut allergy');
+    if (normalizedDietaryPreferences.isVegetarian) restrictions.push('vegetarian');
+    if (normalizedDietaryPreferences.hasLactoseIntolerance) restrictions.push('lactose intolerant');
+    if (normalizedDietaryPreferences.doesntEatPork) restrictions.push('no pork');
+    if (normalizedDietaryPreferences.dislikesSpicyFood) restrictions.push('no spicy food');
     
     const restrictionsText = restrictions.length > 0 ? 
       `Dietary restrictions: ${restrictions.join(', ')}. ` : '';
     
-    const spicePreference = dietaryPreferences.likesSpicyFood ? 
+    const spicePreference = normalizedDietaryPreferences.likesSpicyFood ? 
       'The customer enjoys spicy food. ' : '';
     
-    const tastePreference = dietaryPreferences.tastePreferences && dietaryPreferences.tastePreferences.trim() !== '' ? 
-      `TASTE PREFERENCES (HIGH PRIORITY): ${dietaryPreferences.tastePreferences}. ` : '';
+    const tastePreference = normalizedDietaryPreferences.tastePreferences && normalizedDietaryPreferences.tastePreferences.trim() !== '' ? 
+      `TASTE PREFERENCES (HIGH PRIORITY): ${normalizedDietaryPreferences.tastePreferences}. ` : '';
+
+    const preferencesStatusText = normalizedDietaryPreferences.hasCompletedPreferences
+      ? 'The customer has completed their dietary preferences. '
+      : 'The customer has not provided detailed dietary preferences yet, so do not assume allergy information. ';
     
     // Create menu items text for AI - organize by Firebase categories
     const menuByCategory = {};
@@ -580,7 +598,7 @@ IMPORTANT: Try not to use these past suggestions for better variety. Choose diff
 You are Dumpling Hero, a friendly AI assistant for a dumpling restaurant.
 
 Customer: ${userName}
-${restrictionsText}${spicePreference}${tastePreference}
+${preferencesStatusText}${restrictionsText}${spicePreference}${tastePreference}
 
 ${menuText}
 
@@ -697,7 +715,7 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       console.log('🛡️ Running dietary restriction safety validation...');
       const validationResult = validateDietaryRestrictions(
         parsedResponse.items, 
-        dietaryPreferences, 
+        normalizedDietaryPreferences, 
         allMenuItems
       );
       
@@ -1136,7 +1154,7 @@ Remember: You're not just an assistant—you love helping people discover the be
 
 LOYALTY/REWARDS CONTEXT:
 - The user currently has ${typeof userPoints === 'number' ? userPoints : 'an unknown number of'} points in their account.
-- REWARD TIERS (points required): 250 (Sauce or Coke), 450 (Fruit Tea/Milk Tea/Lemonade/Coffee), 500 (Small Appetizer), 650 (Larger Appetizer), 850 (Pizza Dumplings 6pc or Lunch Special 6pc), 1500 (12-Piece Dumplings), 2000 (Full Combo).
+- REWARD TIERS (points required): 250 (Sauce), 450 (Fruit Tea/Milk Tea/Lemonade/Coffee), 500 (Small Appetizer), 650 (Larger Appetizer), 850 (Pizza Dumplings 6pc or Lunch Special 6pc), 1500 (12-Piece Dumplings), 2000 (Full Combo).
 - When a user asks about what they can redeem or what they are eligible for, ONLY mention rewards that are at or below their current point balance. Do NOT list rewards they cannot afford yet unless they specifically ask about higher tiers; in that case, clearly note the remaining points needed.
 - Keep responses concise and personalized. If you reference eligibility, compute it based on the provided points.`;
 

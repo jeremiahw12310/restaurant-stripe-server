@@ -3,6 +3,25 @@
     "source": "functions",
     "runtime": "nodejs22"
   },
+  "hosting": {
+    "public": "public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "headers": [
+      {
+        "source": "/.well-known/apple-app-site-association",
+        "headers": [
+          { "key": "Content-Type", "value": "application/json" }
+        ]
+      }
+    ],
+    "rewrites": [
+      { "source": "/refer", "destination": "/refer.html" }
+    ]
+  },
   "firestore": {
     "rules": "firestore.rules"
   },

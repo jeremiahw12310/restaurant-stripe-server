@@ -228,7 +228,7 @@ app.post('/referrals/create', async (req, res) => {
     
     // Web redirect URL for users who don't have the app yet
     // Host this page on your domain or use a service like Firebase Hosting
-    const webUrl = `https://dumplinghouseapp.com/refer?code=${referralCode}`;
+    const webUrl = `https://dumplinghouseapp.web.app/refer?code=${referralCode}`;
     
     res.json({
       code: referralCode,
@@ -986,13 +986,18 @@ if (!process.env.OPENAI_API_KEY) {
 } else {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+  // Standardized error response helper for observability + consistent client UX
+  function sendError(res, httpStatus, errorCode, message, extra = {}) {
+    return res.status(httpStatus).json({ errorCode, error: message, ...extra });
+  }
+
   app.post('/analyze-receipt', upload.single('image'), async (req, res) => {
     try {
       console.log('📥 Received receipt analysis request');
       
       if (!req.file) {
         console.log('❌ No image file received');
-        return res.status(400).json({ error: 'No image file provided' });
+        return sendError(res, 400, "NO_IMAGE", "No image file provided");
       }
       
       console.log('📁 Image file received:', req.file.originalname, 'Size:', req.file.size);
@@ -1017,7 +1022,11 @@ VALIDATION RULES:
 5. For DINE-IN orders: The order number is the BIGGER number inside the black box with white text, located directly under "Nashville". IGNORE any smaller numbers below the black box - those are NOT the order number.
 6. For PICKUP orders: The order number is found directly underneath the word "Nashville" and may not be in a black box.
 7. The order number is NEVER found further down on the receipt - it's always in the top section under "Nashville"
-8. PAID ONLINE RECEIPTS (NO BLACK BOX): On the rare chance that there is NO black box at all for the order number anywhere in the top section under "Nashville", look to see if you can find the words "paid online" on the ticket:
+8. PAID ONLINE RECEIPTS (NO BLACK BOX): On the rare chance that there is NO black box at all for the order number anywhere in the top section under "Nashville", look to see if you can find that the receipt indicates it was paid online. This may appear as:
+   - "paid online"
+   - "customer paid online"
+   - "new customer paid online"
+   - or the words "paid" and "online" close together (even if split across lines).
    - If you do NOT see the words "paid online" anywhere on the receipt, you MUST NOT guess the order number from anywhere else. In this case, return {"error": "No valid order number found in black box under Nashville"}.
    - If you DO see "paid online" on the receipt, the ONLY valid order number is the number in bold font that appears immediately next to the label "Order:" on the ticket. You MUST:
      * Read the number that is in bold font right next to "Order:".
@@ -1028,7 +1037,7 @@ VALIDATION RULES:
 10. Order numbers CANNOT be greater than 400 - if you see a number over 400, it's not the order number and should be ignored completely
 10. CRITICAL: If the receipt is faded, blurry, hard to read, or if ANY numbers in the ORDER NUMBER, TOTAL, DATE, or TIME are unclear or difficult to see, return {"error": "Receipt is too faded or unclear - please take a clearer photo"} - DO NOT attempt to guess or estimate any numbers
 11. If the image quality is poor and numbers (especially the ORDER NUMBER, TOTAL, DATE, or TIME) are blurry, unclear, or hard to read, return {"error": "Poor image quality - please take a clearer photo"}
-12. ALWAYS return the date as MM/DD format only (no year, no other format)
+12. ALWAYS return the date as MM/DD format only (no year, no other format). If the receipt prints the date with a hyphen (MM-DD), convert it to MM/DD in your output.
 13. CRITICAL: You MUST double-check all extracted information before returning it. Verify that the order number, total, and date are accurate and match what you see on the receipt. This is essential for preventing system abuse and maintaining data integrity.
 
 EXTRACTION RULES:
@@ -1047,6 +1056,7 @@ VISIBILITY & TAMPERING FLAGS:
   - keyFieldsTampered: true if you see ANY evidence of scribbles, crossings-out, overwriting, white-out, or manual changes on the ORDER NUMBER, TOTAL, DATE, or TIME. Otherwise false.
   - tamperingReason: a short string explaining the tampering if keyFieldsTampered is true (for example: "date is scribbled over", "order number crossed out and rewritten", or "heavy marker drawn over total").
   - orderNumberInBlackBox: true if and only if the orderNumber you returned was read from INSIDE the black box directly under "Nashville". If there is no black box or no number inside it, set this to false.
+  - orderNumberDirectlyUnderNashville: true if and only if the orderNumber you returned was read from the number immediately under the word "Nashville" in the top section (pickup receipts may not show a black box). If you did NOT use that number, set this to false.
   - paidOnlineReceipt: true if and only if the receipt clearly contains the words "paid online" and you are using the paid-online fallback path (bold number next to "Order:") described above. Otherwise false.
   - orderNumberFromPaidOnlineSection: true if and only if the orderNumber you returned was read from the bold number immediately next to the label "Order:" on a paid-online receipt. Otherwise false.
 
@@ -1061,7 +1071,7 @@ IMPORTANT:
 - SAFETY FIRST: It's better to reject a receipt and ask for a clearer photo than to guess and return incorrect information. If you are not highly confident about any of the key fields, treat the receipt as invalid and return an error message instead of guessing.
 
 Respond ONLY as a JSON object with this exact shape:
-{"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "...", "totalVisibleAndClear": true/false, "orderNumberVisibleAndClear": true/false, "dateVisibleAndClear": true/false, "timeVisibleAndClear": true/false, "keyFieldsTampered": true/false, "tamperingReason": "...", "orderNumberInBlackBox": true/false, "paidOnlineReceipt": true/false, "orderNumberFromPaidOnlineSection": true/false} 
+{"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "...", "totalVisibleAndClear": true/false, "orderNumberVisibleAndClear": true/false, "dateVisibleAndClear": true/false, "timeVisibleAndClear": true/false, "keyFieldsTampered": true/false, "tamperingReason": "...", "orderNumberInBlackBox": true/false, "orderNumberDirectlyUnderNashville": true/false, "paidOnlineReceipt": true/false, "orderNumberFromPaidOnlineSection": true/false} 
 or {"error": "error message"}.
 If a field is missing, use null.`;
 
@@ -1119,7 +1129,7 @@ If a field is missing, use null.`;
       const jsonMatch1 = text1.match(/\{[\s\S]*\}/);
       if (!jsonMatch1) {
         console.log('❌ Could not extract JSON from first response');
-        return res.status(422).json({ error: "Could not extract JSON from first response", raw: text1 });
+        return sendError(res, 422, "AI_JSON_EXTRACT_FAILED", "Could not extract JSON from first response", { raw: text1 });
       }
       
       const data1 = JSON.parse(jsonMatch1[0]);
@@ -1132,7 +1142,7 @@ If a field is missing, use null.`;
       const jsonMatch2 = text2.match(/\{[\s\S]*\}/);
       if (!jsonMatch2) {
         console.log('❌ Could not extract JSON from second response');
-        return res.status(422).json({ error: "Could not extract JSON from second response", raw: text2 });
+        return sendError(res, 422, "AI_JSON_EXTRACT_FAILED", "Could not extract JSON from second response", { raw: text2 });
       }
       
       const data2 = JSON.parse(jsonMatch2[0]);
@@ -1141,50 +1151,94 @@ If a field is missing, use null.`;
       // Check if either response contains an error
       if (data1.error) {
         console.log('❌ First validation failed:', data1.error);
-        return res.status(400).json({ error: data1.error });
+        return sendError(res, 400, "AI_VALIDATION_FAILED", data1.error);
       }
       
       if (data2.error) {
         console.log('❌ Second validation failed:', data2.error);
-        return res.status(400).json({ error: data2.error });
+        return sendError(res, 400, "AI_VALIDATION_FAILED", data2.error);
       }
+
+      // Normalize both responses BEFORE comparing to reduce false mismatches
+      // (e.g., "12-21" vs "12/21", whitespace, numeric string formatting).
+      const normalizeOrderDate = (v) => {
+        if (typeof v !== 'string') return v;
+        const s = v.trim().replace(/-/g, '/');
+        // If it's MM/DD already, keep; otherwise return as-is (later validation will reject).
+        return s;
+      };
+      const normalizeOrderTime = (v) => (typeof v === 'string' ? v.trim() : v);
+      const normalizeOrderNumber = (v) => {
+        if (v === null || v === undefined) return v;
+        const s = String(v).trim();
+        // preserve string form but remove leading zeros consistently (e.g., "058" -> "58")
+        if (/^\d+$/.test(s)) return String(parseInt(s, 10));
+        return s;
+      };
+      const normalizeOrderTotal = (v) => {
+        if (v === null || v === undefined) return v;
+        const n = typeof v === 'number' ? v : parseFloat(String(v).trim());
+        if (Number.isNaN(n)) return v;
+        // Round to cents to avoid representation mismatch (e.g., 56.6 vs 56.60 vs 56.6000001)
+        return Math.round(n * 100) / 100;
+      };
+      const normalizeParsedReceipt = (d) => ({
+        // carry through the rest untouched
+        ...d,
+        // then override the canonical fields with normalized values
+        orderNumber: normalizeOrderNumber(d.orderNumber),
+        orderTotal: normalizeOrderTotal(d.orderTotal),
+        orderDate: normalizeOrderDate(d.orderDate),
+        orderTime: normalizeOrderTime(d.orderTime),
+      });
+
+      const norm1 = normalizeParsedReceipt(data1);
+      const norm2 = normalizeParsedReceipt(data2);
       
       // Compare the two responses
       console.log('🔍 COMPARING TWO VALIDATIONS:');
-      console.log('   Response 1 - Order Number:', data1.orderNumber, 'Total:', data1.orderTotal, 'Date:', data1.orderDate, 'Time:', data1.orderTime);
-      console.log('   Response 2 - Order Number:', data2.orderNumber, 'Total:', data2.orderTotal, 'Date:', data2.orderDate, 'Time:', data2.orderTime);
+      console.log('   Response 1 - Order Number:', norm1.orderNumber, 'Total:', norm1.orderTotal, 'Date:', norm1.orderDate, 'Time:', norm1.orderTime);
+      console.log('   Response 2 - Order Number:', norm2.orderNumber, 'Total:', norm2.orderTotal, 'Date:', norm2.orderDate, 'Time:', norm2.orderTime);
       
       // Check if responses match
       const responsesMatch = 
-        data1.orderNumber === data2.orderNumber &&
-        data1.orderTotal === data2.orderTotal &&
-        data1.orderDate === data2.orderDate &&
-        data1.orderTime === data2.orderTime;
+        norm1.orderNumber === norm2.orderNumber &&
+        norm1.orderTotal === norm2.orderTotal &&
+        norm1.orderDate === norm2.orderDate &&
+        norm1.orderTime === norm2.orderTime;
       
       console.log('🔍 COMPARISON DETAILS:');
-      console.log('   Order Number Match:', data1.orderNumber === data2.orderNumber, `(${data1.orderNumber} vs ${data2.orderNumber})`);
-      console.log('   Order Total Match:', data1.orderTotal === data2.orderTotal, `(${data1.orderTotal} vs ${data2.orderTotal})`);
-      console.log('   Order Date Match:', data1.orderDate === data2.orderDate, `(${data1.orderDate} vs ${data2.orderDate})`);
-      console.log('   Order Time Match:', data1.orderTime === data2.orderTime, `(${data1.orderTime} vs ${data2.orderTime})`);
+      console.log('   Order Number Match:', norm1.orderNumber === norm2.orderNumber, `(${norm1.orderNumber} vs ${norm2.orderNumber})`);
+      console.log('   Order Total Match:', norm1.orderTotal === norm2.orderTotal, `(${norm1.orderTotal} vs ${norm2.orderTotal})`);
+      console.log('   Order Date Match:', norm1.orderDate === norm2.orderDate, `(${norm1.orderDate} vs ${norm2.orderDate})`);
+      console.log('   Order Time Match:', norm1.orderTime === norm2.orderTime, `(${norm1.orderTime} vs ${norm2.orderTime})`);
       console.log('   Overall Match:', responsesMatch);
       
       if (!responsesMatch) {
         console.log('❌ VALIDATION MISMATCH - Responses do not match');
         console.log('   This indicates unclear or ambiguous receipt data');
-        return res.status(400).json({ 
-          error: "Receipt data is unclear - the two validations returned different results. Please take a clearer photo of the receipt." 
-        });
+        return sendError(
+          res,
+          400,
+          "DOUBLE_PARSE_MISMATCH",
+          "Receipt data is unclear - the two validations returned different results. Please take a clearer photo of the receipt."
+        );
       }
       
       console.log('✅ VALIDATION MATCH - Both responses are identical');
       
       // Use the validated data (both are the same)
-      const data = data1;
+      const data = norm1;
+
+      // Normalize date formatting to MM/DD (accept MM-DD from model/receipt)
+      if (typeof data.orderDate === 'string') {
+        data.orderDate = data.orderDate.trim().replace(/-/g, '/');
+      }
       
       // Validate that we have the required fields
       if (!data.orderNumber || !data.orderTotal || !data.orderDate || !data.orderTime) {
         console.log('❌ Missing required fields in receipt data');
-        return res.status(400).json({ error: "Could not extract all required fields from receipt" });
+        return sendError(res, 400, "MISSING_FIELDS", "Could not extract all required fields from receipt");
       }
 
       // Validate visibility and tampering flags for key fields
@@ -1195,14 +1249,17 @@ If a field is missing, use null.`;
       const keyFieldsTampered = data.keyFieldsTampered;
       const tamperingReason = data.tamperingReason;
       const orderNumberInBlackBox = data.orderNumberInBlackBox;
+      const orderNumberDirectlyUnderNashville = data.orderNumberDirectlyUnderNashville;
       const paidOnlineReceipt = data.paidOnlineReceipt;
       const orderNumberFromPaidOnlineSection = data.orderNumberFromPaidOnlineSection;
 
       // Determine whether the order number came from a valid source:
       //  - Either from the black box under "Nashville"
+      //  - Or, directly underneath "Nashville" on pickup receipts with no black box
       //  - Or, on a paid-online receipt with no black box, from the bold number next to "Order:"
       const orderNumberSourceIsValid =
         orderNumberInBlackBox === true ||
+        orderNumberDirectlyUnderNashville === true ||
         orderNumberFromPaidOnlineSection === true;
 
       // If any of the visibility flags are explicitly false, keyFieldsTampered is true,
@@ -1231,29 +1288,24 @@ If a field is missing, use null.`;
         // surface a specific error depending on whether this was a paid-online receipt or not.
         if (!orderNumberSourceIsValid && keyFieldsTampered !== true) {
           if (paidOnlineReceipt === true) {
-            return res.status(400).json({
-              error: "No valid order number found next to 'Order:' for paid online receipt"
-            });
+            return sendError(res, 400, "ORDER_NUMBER_SOURCE_INVALID", "No valid order number found next to 'Order:' for paid online receipt");
           }
-          return res.status(400).json({
-            error: "No valid order number found in black box under Nashville"
-          });
+          return sendError(res, 400, "ORDER_NUMBER_SOURCE_INVALID", "No valid order number found under Nashville");
         }
 
-        return res.status(400).json({
-          error: tamperingReason && typeof tamperingReason === 'string' && tamperingReason.trim().length > 0
-            ? `Receipt invalid - ${tamperingReason}`
-            : "Receipt invalid - key information is obscured or appears tampered with"
-        });
+        const msg = tamperingReason && typeof tamperingReason === 'string' && tamperingReason.trim().length > 0
+          ? `Receipt invalid - ${tamperingReason}`
+          : "Receipt invalid - key information is obscured or appears tampered with";
+        return sendError(res, 400, "KEY_FIELDS_INVALID", msg, { tamperingReason: tamperingReason || null });
       }
       
-      // Validate order number format (must be 3 digits or less and not exceed 200)
+      // Validate order number format (must be 3 digits or less and not exceed 400)
       const orderNumberStr = data.orderNumber.toString();
       console.log('🔍 Validating order number:', orderNumberStr);
       
       if (orderNumberStr.length > 3) {
         console.log('❌ Order number too long:', orderNumberStr);
-        return res.status(400).json({ error: "Invalid order number format - must be 3 digits or less" });
+        return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number format - must be 3 digits or less");
       }
       
       const orderNumber = parseInt(data.orderNumber);
@@ -1261,40 +1313,40 @@ If a field is missing, use null.`;
       
       if (isNaN(orderNumber)) {
         console.log('❌ Order number is not a valid number:', data.orderNumber);
-        return res.status(400).json({ error: "Invalid order number - must be a valid number" });
+        return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number - must be a valid number");
       }
       
       if (orderNumber < 1) {
         console.log('❌ Order number too small:', orderNumber);
-        return res.status(400).json({ error: "Invalid order number - must be at least 1" });
+        return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number - must be at least 1");
       }
       
-      if (orderNumber > 200) {
-        console.log('❌ Order number too large (over 200):', orderNumber);
-        return res.status(400).json({ error: "Invalid order number - must be 200 or less" });
+      if (orderNumber > 400) {
+        console.log('❌ Order number too large (over 400):', orderNumber);
+        return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number - must be 400 or less");
       }
       
       console.log('✅ Order number validation passed:', orderNumber);
       
-      // Validate date format (must be MM/DD)
+      // Validate date format (must be MM/DD; accept MM-DD but normalized above)
       const dateRegex = /^\d{2}\/\d{2}$/;
       if (!dateRegex.test(data.orderDate)) {
         console.log('❌ Invalid date format:', data.orderDate);
-        return res.status(400).json({ error: "Invalid date format - must be MM/DD" });
+        return sendError(res, 400, "DATE_FORMAT_INVALID", "Invalid date format - must be MM/DD (or MM-DD on receipt)");
       }
       
       // Validate time format (must be HH:MM)
       const timeRegex = /^\d{2}:\d{2}$/;
       if (!timeRegex.test(data.orderTime)) {
         console.log('❌ Invalid time format:', data.orderTime);
-        return res.status(400).json({ error: "Invalid time format - must be HH:MM" });
+        return sendError(res, 400, "TIME_FORMAT_INVALID", "Invalid time format - must be HH:MM");
       }
       
       // Validate time is reasonable (00:00 to 23:59)
       const [hours, minutes] = data.orderTime.split(':').map(Number);
       if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
         console.log('❌ Invalid time values:', data.orderTime);
-        return res.status(400).json({ error: "Invalid time - must be between 00:00 and 23:59" });
+        return sendError(res, 400, "TIME_FORMAT_INVALID", "Invalid time - must be between 00:00 and 23:59");
       }
       
       console.log('✅ Time validation passed:', data.orderTime);
@@ -1310,22 +1362,40 @@ If a field is missing, use null.`;
       const orderTotal = parseFloat(data.orderTotal);
       if (isNaN(orderTotal) || orderTotal < 1 || orderTotal > 500) {
         console.log('❌ Order total validation failed:', data.orderTotal);
-        return res.status(400).json({ error: "Invalid order total - must be a reasonable amount between $1 and $500" });
+        return sendError(res, 400, "TOTAL_INVALID", "Invalid order total - must be a reasonable amount between $1 and $500");
       }
       
       // Validate date is reasonable (cannot be in the future and not too far in the past)
       const [month, day] = data.orderDate.split('/').map(Number);
       const currentDate = new Date();
-      const receiptDate = new Date(currentDate.getFullYear(), month - 1, day);
+      const [h, m] = data.orderTime.split(':').map(Number);
 
-      // Compute signed day difference (currentDate - receiptDate)
-      const daysDiff = (currentDate - receiptDate) / (1000 * 60 * 60 * 24);
+      // Build a year-safe receipt DateTime:
+      // - First assume current year
+      // - If that looks "far future" but the previous year lands within ~48h, treat as year-boundary scan
+      const receiptDateThisYear = new Date(currentDate.getFullYear(), month - 1, day, h, m, 0, 0);
+      const receiptDatePrevYear = new Date(currentDate.getFullYear() - 1, month - 1, day, h, m, 0, 0);
 
-      // Hard block: receipts dated in the future are always invalid, even for admins/testing
-      if (daysDiff < 0) {
-        console.log('❌ Receipt date appears to be in the future:', data.orderDate, 'daysDiff:', daysDiff);
-        return res.status(400).json({ error: "Invalid receipt date - receipt appears to be dated in the future" });
+      const hoursDiffThisYear = (currentDate - receiptDateThisYear) / (1000 * 60 * 60);
+      const hoursDiffPrevYear = (currentDate - receiptDatePrevYear) / (1000 * 60 * 60);
+
+      // If the receipt appears to be in the future this year, allow only the special case
+      // where interpreting it as last year makes it within the 48h window (New Year boundary).
+      let receiptDate = receiptDateThisYear;
+      let hoursDiff = hoursDiffThisYear;
+      if (hoursDiffThisYear < 0) {
+        if (hoursDiffPrevYear >= 0 && hoursDiffPrevYear <= 48) {
+          receiptDate = receiptDatePrevYear;
+          hoursDiff = hoursDiffPrevYear;
+          console.log('🗓️ Year-boundary adjustment applied for receipt date:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
+        } else {
+          console.log('❌ Receipt date appears to be in the future:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiffThisYear);
+          return sendError(res, 400, "FUTURE_DATE", "Invalid receipt date - receipt appears to be dated in the future");
+        }
       }
+
+      // Keep daysDiff for existing logs (derived from hours for consistency)
+      const daysDiff = hoursDiff / 24;
 
       // Admin-only override for testing old receipts:
       // If the caller is an admin AND has explicitly enabled old-receipt testing on their user profile,
@@ -1350,9 +1420,9 @@ If a field is missing, use null.`;
         console.warn('⚠️ Failed to evaluate admin old-receipt test override:', err.message || err);
       }
 
-      if (daysDiff > 2 && !allowOldReceiptForAdmin) {
-        console.log('❌ Receipt date too old:', data.orderDate, 'daysDiff:', daysDiff);
-        return res.status(400).json({ error: "Receipt expired - receipts must be scanned within 48 hours of purchase" });
+      if (hoursDiff > 48 && !allowOldReceiptForAdmin) {
+        console.log('❌ Receipt date too old:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
+        return sendError(res, 400, "EXPIRED_48H", "Receipt expired - receipts must be scanned within 48 hours of purchase");
       }
       
       console.log('✅ All validations passed - data integrity confirmed');
@@ -1366,16 +1436,31 @@ If a field is missing, use null.`;
         
         // Check for duplicates: if ANY 2 of the 3 fields match (orderNumber, date, time),
         // OR if date, time, and total ALL match (strong duplicate signal)
+        //
+        // NOTE: Older data may have stored `orderNumber` as a number, while newer code uses a string.
+        // To avoid missing duplicates across that migration, we check both variants when possible.
+        const orderNumberStrForDup = String(data.orderNumber);
+        const orderNumberNumForDup = parseInt(orderNumberStrForDup, 10);
+        const orderNumberVariants = [orderNumberStrForDup];
+        if (!isNaN(orderNumberNumForDup)) orderNumberVariants.push(orderNumberNumForDup);
+
         const duplicateQueries = [
-          // Same order number AND date
-          receiptsRef.where('orderNumber', '==', data.orderNumber).where('orderDate', '==', data.orderDate),
-          // Same order number AND time  
-          receiptsRef.where('orderNumber', '==', data.orderNumber).where('orderTime', '==', data.orderTime),
           // Same date AND time
           receiptsRef.where('orderDate', '==', data.orderDate).where('orderTime', '==', data.orderTime),
           // Same date, time, AND total (even if order number differs)
           receiptsRef.where('orderDate', '==', data.orderDate).where('orderTime', '==', data.orderTime).where('orderTotal', '==', orderTotal)
         ];
+
+        for (const variant of orderNumberVariants) {
+          // Same order number AND date
+          duplicateQueries.push(
+            receiptsRef.where('orderNumber', '==', variant).where('orderDate', '==', data.orderDate)
+          );
+          // Same order number AND time
+          duplicateQueries.push(
+            receiptsRef.where('orderNumber', '==', variant).where('orderTime', '==', data.orderTime)
+          );
+        }
         
         let duplicateFound = false;
         
@@ -1390,10 +1475,13 @@ If a field is missing, use null.`;
         }
         
         if (duplicateFound) {
-          return res.status(409).json({ 
-            error: "Receipt already submitted - this receipt has already been processed and points will not be awarded",
-            duplicate: true
-          });
+          return sendError(
+            res,
+            409,
+            "DUPLICATE_RECEIPT",
+            "Receipt already submitted - this receipt has already been processed and points will not be awarded",
+            { duplicate: true }
+          );
         }
         
         console.log('✅ No duplicates found - receipt is unique');
@@ -1401,7 +1489,7 @@ If a field is missing, use null.`;
         // Persist this validated receipt so future scans can be checked reliably
         try {
           await receiptsRef.add({
-            orderNumber: data.orderNumber,
+            orderNumber: String(data.orderNumber),
             orderDate: data.orderDate,
             orderTime: data.orderTime,
             orderTotal: orderTotal,
@@ -1411,23 +1499,532 @@ If a field is missing, use null.`;
         } catch (saveError) {
           console.log('❌ Error saving receipt record:', saveError.message);
           // For safety, do NOT award points if we cannot persist the receipt
-          return res.status(500).json({
-            error: "Server error while saving receipt - please try again with a clear photo"
-          });
+          return sendError(res, 500, "SERVER_SAVE_FAILED", "Server error while saving receipt - please try again with a clear photo");
         }
         
       } catch (duplicateError) {
         console.log('❌ Error checking for duplicates:', duplicateError.message);
         // For safety, do NOT award points if we cannot verify duplicates
-        return res.status(500).json({
-          error: "Server error while verifying receipt uniqueness - please try again with a clear photo"
-        });
+        return sendError(res, 500, "SERVER_DUPLICATE_CHECK_FAILED", "Server error while verifying receipt uniqueness - please try again with a clear photo");
       }
       
       res.json(data);
     } catch (err) {
       console.error('❌ Error processing receipt:', err);
-      res.status(500).json({ error: err.message });
+      return sendError(res, 500, "SERVER_ERROR", err.message || "Server error");
+    }
+  });
+
+  // Receipt submit endpoint (server-authoritative points awarding)
+  // This endpoint validates the receipt and awards points atomically on the server.
+  // It does NOT rely on the client to update points, improving integrity.
+  app.post('/submit-receipt', upload.single('image'), async (req, res) => {
+    try {
+      console.log('📥 Received receipt SUBMISSION request');
+
+      // Require authenticated user
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+      if (!token) {
+        return sendError(res, 401, "UNAUTHENTICATED", "Missing or invalid Authorization header");
+      }
+      let uid;
+      try {
+        const decoded = await admin.auth().verifyIdToken(token);
+        uid = decoded.uid;
+      } catch (e) {
+        console.warn('❌ Invalid auth token for submit-receipt:', e.message || e);
+        return sendError(res, 401, "UNAUTHENTICATED", "Invalid auth token");
+      }
+
+      if (!req.file) {
+        console.log('❌ No image file received');
+        return sendError(res, 400, "NO_IMAGE", "No image file provided");
+      }
+
+      console.log('📁 Image file received:', req.file.originalname, 'Size:', req.file.size);
+
+      const imagePath = req.file.path;
+      const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
+      const db = admin.firestore();
+
+      // Reuse the same strict prompt as /analyze-receipt (kept in sync).
+      const prompt = `You are a receipt parser for Dumpling House. Follow these STRICT validation rules:
+
+VALIDATION RULES:
+1. If there are NO words stating "Dumpling House" at the top of the receipt, return {"error": "Invalid receipt - must be from Dumpling House"}
+2. If there is anything covering up numbers or text on the receipt, and it affects the ORDER NUMBER, TOTAL, DATE, or TIME, treat this as tampering and do NOT accept the receipt.
+3. TAMPERING DETECTION: Look for signs of obvious tampering or manipulation, especially on the ORDER NUMBER, TOTAL, DATE, or TIME:
+   - If numbers appear to be digitally altered, edited, or photoshopped, return {"error": "Receipt appears to be tampered with - digital manipulation detected"}
+   - If you can see evidence this is a photo of a screen/monitor (pixel patterns, screen glare, moiré effect), return {"error": "Invalid - please scan the original physical receipt, not a photo of a screen"}
+   - If you can see this is a photo of another photo (edges of another photo visible, photo paper texture), return {"error": "Invalid - please scan the original receipt, not a photo of a photo"}
+   - If numbers appear to be written over, crossed out, scribbled on, whited-out, or manually changed on the ORDER NUMBER, TOTAL, DATE, or TIME, return {"error": "Receipt appears to be tampered with - numbers have been altered"}
+   - IMPORTANT: Employee checkmarks, circles, or handwritten notes on items are NORMAL and ALLOWED ONLY if they do NOT cover the digits of the ORDER NUMBER, TOTAL, DATE, or TIME. If any marking crosses through or obscures the digits of these key fields, treat it as tampering.
+   - If the receipt looks artificially brightened or enhanced to hide alterations, return {"error": "Receipt appears to be digitally modified"}
+4. CRITICAL LOCATION: The order number is ALWAYS directly underneath the word "Nashville" on the receipt. Look for "Nashville" and find the number immediately below it.
+5. For DINE-IN orders: The order number is the BIGGER number inside the black box with white text, located directly under "Nashville". IGNORE any smaller numbers below the black box - those are NOT the order number.
+6. For PICKUP orders: The order number is found directly underneath the word "Nashville" and may not be in a black box.
+7. The order number is NEVER found further down on the receipt - it's always in the top section under "Nashville"
+8. PAID ONLINE RECEIPTS (NO BLACK BOX): On the rare chance that there is NO black box at all for the order number anywhere in the top section under "Nashville", look to see if you can find that the receipt indicates it was paid online. This may appear as:
+   - "paid online"
+   - "customer paid online"
+   - "new customer paid online"
+   - or the words "paid" and "online" close together (even if split across lines).
+   - If you do NOT see the words "paid online" anywhere on the receipt, you MUST NOT guess the order number from anywhere else. In this case, return {"error": "No valid order number found under Nashville"}.
+   - If you DO see "paid online" on the receipt, the ONLY valid order number is the number in bold font that appears immediately next to the label "Order:" on the ticket. You MUST:
+     * Read the number that is in bold font right next to "Order:".
+     * Treat this as the order number ONLY if it is clearly readable, not tampered with, and within the valid range (see below).
+     * NOT use any other numbers anywhere else on the receipt as the order number.
+   - If "paid online" is present but there is no clear bold number right next to "Order:", or that number is unclear, obscured, or tampered with, you MUST return {"error": "No valid order number found next to 'Order:' for paid online receipt"} and NOT guess from anywhere else on the receipt.
+9. If the order number is more than 3 digits, it cannot be the order number - look for a smaller number
+10. Order numbers CANNOT be greater than 400 - if you see a number over 400, it's not the order number and should be ignored completely
+10. CRITICAL: If the receipt is faded, blurry, hard to read, or if ANY numbers in the ORDER NUMBER, TOTAL, DATE, or TIME are unclear or difficult to see, return {"error": "Receipt is too faded or unclear - please take a clearer photo"} - DO NOT attempt to guess or estimate any numbers
+11. If the image quality is poor and numbers (especially the ORDER NUMBER, TOTAL, DATE, or TIME) are blurry, unclear, or hard to read, return {"error": "Poor image quality - please take a clearer photo"}
+12. ALWAYS return the date as MM/DD format only (no year, no other format). If the receipt prints the date with a hyphen (MM-DD), convert it to MM/DD in your output.
+13. CRITICAL: You MUST double-check all extracted information before returning it. Verify that the order number, total, and date are accurate and match what you see on the receipt. This is essential for preventing system abuse and maintaining data integrity.
+
+EXTRACTION RULES:
+- orderNumber: CRITICAL - Find the number INSIDE the black box with white text that is located directly underneath the word "Nashville" on the receipt. This black box is the ONLY valid source for the order number when a black box is present. On pickup receipts, the order number may be directly under "Nashville" without a black box. On receipts where there is no such black box at all, you MUST follow the paid-online rules described above: only use the bold number immediately next to "Order:" on receipts that clearly say "paid online", and otherwise return an appropriate error without guessing from anywhere else on the receipt.
+- orderTotal: The total amount paid (as a number, e.g. 23.45)
+- orderDate: The date in MM/DD format only (e.g. "12/25")
+- orderTime: The time in HH:MM format only (e.g. "14:30"). This is always located to the right of the date on the receipt.
+
+VISIBILITY & TAMPERING FLAGS:
+- You MUST also return the following boolean flags describing the visibility and tampering status of each key field:
+  - totalVisibleAndClear: true if the TOTAL digits are fully visible, unobscured, and clearly readable. false if any part of the total is blurred, cropped, covered, scribbled on, crossed out, or otherwise unclear.
+  - orderNumberVisibleAndClear: true if the ORDER NUMBER digits are fully visible, unobscured, and clearly readable. false if any part is blurred, cropped, covered, scribbled on, crossed out, or otherwise unclear.
+  - dateVisibleAndClear: true if the DATE digits are fully visible, unobscured, and clearly readable. false if any part is blurred, cropped, covered, scribbled on, crossed out, or otherwise unclear.
+  - timeVisibleAndClear: true if the TIME digits are fully visible, unobscured, and clearly readable. false if any part is blurred, cropped, covered, scribbled on, crossed out, or otherwise unclear.
+- You MUST also return:
+  - keyFieldsTampered: true if you see ANY evidence of scribbles, crossings-out, overwriting, white-out, or manual changes on the ORDER NUMBER, TOTAL, DATE, or TIME. Otherwise false.
+  - tamperingReason: a short string explaining the tampering if keyFieldsTampered is true (for example: "date is scribbled over", "order number crossed out and rewritten", or "heavy marker drawn over total").
+  - orderNumberInBlackBox: true if and only if the orderNumber you returned was read from INSIDE the black box directly under "Nashville". If there is no black box or no number inside it, set this to false.
+  - orderNumberDirectlyUnderNashville: true if and only if the orderNumber you returned was read from the number immediately under the word "Nashville" in the top section (pickup receipts may not show a black box). If you did NOT use that number, set this to false.
+  - paidOnlineReceipt: true if and only if the receipt clearly contains the words "paid online" and you are using the paid-online fallback path (bold number next to "Order:") described above. Otherwise false.
+  - orderNumberFromPaidOnlineSection: true if and only if the orderNumber you returned was read from the bold number immediately next to the label "Order:" on a paid-online receipt. Otherwise false.
+
+IMPORTANT: 
+- CRITICAL LOCATION: The only valid order number is the number inside the black box with white text directly underneath the word "Nashville" on the receipt, OR (for pickup) the number directly underneath "Nashville", OR (paid online fallback) the bold number next to "Order:".
+- TIME LOCATION: The time is ALWAYS located to the right of the date on the receipt and must be in HH:MM format.
+- If you cannot clearly read the numbers due to poor image quality, DO NOT GUESS. Return an error instead.
+- If the receipt is faded, blurry, or any numbers are unclear, DO NOT ATTEMPT TO READ THEM. Return an error immediately.
+- Order numbers must be between 1-400. Any number over 400 is completely invalid and should not be returned at all.
+- If the only numbers you see are over 400, return {"error": "No valid order number found - order numbers must be under 400"}
+- DOUBLE-CHECK REQUIREMENT: Before returning any data, carefully review the extracted order number, total, date, and time to ensure they are accurate and match the receipt. Also carefully review whether any part of these fields is obscured or tampered with, and set the visibility/tampering flags accordingly. This verification step is crucial for preventing fraud and maintaining system integrity.
+- SAFETY FIRST: It's better to reject a receipt and ask for a clearer photo than to guess and return incorrect information. If you are not highly confident about any of the key fields, treat the receipt as invalid and return an error message instead of guessing.
+
+Respond ONLY as a JSON object with this exact shape:
+{"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "...", "totalVisibleAndClear": true/false, "orderNumberVisibleAndClear": true/false, "dateVisibleAndClear": true/false, "timeVisibleAndClear": true/false, "keyFieldsTampered": true/false, "tamperingReason": "...", "orderNumberInBlackBox": true/false, "orderNumberDirectlyUnderNashville": true/false, "paidOnlineReceipt": true/false, "orderNumberFromPaidOnlineSection": true/false} 
+or {"error": "error message"}.
+If a field is missing, use null.`;
+
+      console.log('🤖 Sending request to OpenAI for FIRST validation (submit-receipt)...');
+      const response1 = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageData}` } }
+            ]
+          }
+        ],
+        max_tokens: 500,
+        temperature: 0.1
+      });
+
+      console.log('🤖 Sending request to OpenAI for SECOND validation (submit-receipt)...');
+      const response2 = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageData}` } }
+            ]
+          }
+        ],
+        max_tokens: 500,
+        temperature: 0.1
+      });
+
+      // Clean up the uploaded file
+      fs.unlinkSync(imagePath);
+
+      const extractJson = (text) => {
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) return null;
+        return JSON.parse(jsonMatch[0]);
+      };
+
+      const text1 = response1.choices[0].message.content;
+      const text2 = response2.choices[0].message.content;
+      const data1 = extractJson(text1);
+      const data2 = extractJson(text2);
+      if (!data1) return sendError(res, 422, "AI_JSON_EXTRACT_FAILED", "Could not extract JSON from first response", { raw: text1 });
+      if (!data2) return sendError(res, 422, "AI_JSON_EXTRACT_FAILED", "Could not extract JSON from second response", { raw: text2 });
+
+      if (data1.error) return sendError(res, 400, "AI_VALIDATION_FAILED", data1.error);
+      if (data2.error) return sendError(res, 400, "AI_VALIDATION_FAILED", data2.error);
+
+      // Normalize before comparing
+      const normalizeOrderDate = (v) => (typeof v === 'string' ? v.trim().replace(/-/g, '/') : v);
+      const normalizeOrderTime = (v) => (typeof v === 'string' ? v.trim() : v);
+      const normalizeOrderNumber = (v) => {
+        if (v === null || v === undefined) return v;
+        const s = String(v).trim();
+        if (/^\d+$/.test(s)) return String(parseInt(s, 10));
+        return s;
+      };
+      const normalizeOrderTotal = (v) => {
+        if (v === null || v === undefined) return v;
+        const n = typeof v === 'number' ? v : parseFloat(String(v).trim());
+        if (Number.isNaN(n)) return v;
+        return Math.round(n * 100) / 100;
+      };
+      const normalizeParsedReceipt = (d) => ({
+        ...d,
+        orderNumber: normalizeOrderNumber(d.orderNumber),
+        orderTotal: normalizeOrderTotal(d.orderTotal),
+        orderDate: normalizeOrderDate(d.orderDate),
+        orderTime: normalizeOrderTime(d.orderTime),
+      });
+      const norm1 = normalizeParsedReceipt(data1);
+      const norm2 = normalizeParsedReceipt(data2);
+
+      const responsesMatch =
+        norm1.orderNumber === norm2.orderNumber &&
+        norm1.orderTotal === norm2.orderTotal &&
+        norm1.orderDate === norm2.orderDate &&
+        norm1.orderTime === norm2.orderTime;
+
+      if (!responsesMatch) {
+        return sendError(
+          res,
+          400,
+          "DOUBLE_PARSE_MISMATCH",
+          "Receipt data is unclear - the two validations returned different results. Please take a clearer photo of the receipt."
+        );
+      }
+
+      const data = norm1;
+
+      // Validate required fields
+      if (!data.orderNumber || !data.orderTotal || !data.orderDate || !data.orderTime) {
+        return sendError(res, 400, "MISSING_FIELDS", "Could not extract all required fields from receipt");
+      }
+
+      // Normalize date formatting to MM/DD (accept MM-DD from model/receipt)
+      if (typeof data.orderDate === 'string') {
+        data.orderDate = data.orderDate.trim().replace(/-/g, '/');
+      }
+
+      // Validate visibility and tampering flags for key fields
+      const totalVisibleAndClear = data.totalVisibleAndClear;
+      const orderNumberVisibleAndClear = data.orderNumberVisibleAndClear;
+      const dateVisibleAndClear = data.dateVisibleAndClear;
+      const timeVisibleAndClear = data.timeVisibleAndClear;
+      const keyFieldsTampered = data.keyFieldsTampered;
+      const tamperingReason = data.tamperingReason;
+      const orderNumberInBlackBox = data.orderNumberInBlackBox;
+      const orderNumberDirectlyUnderNashville = data.orderNumberDirectlyUnderNashville;
+      const paidOnlineReceipt = data.paidOnlineReceipt;
+      const orderNumberFromPaidOnlineSection = data.orderNumberFromPaidOnlineSection;
+
+      const orderNumberSourceIsValid =
+        orderNumberInBlackBox === true ||
+        orderNumberDirectlyUnderNashville === true ||
+        orderNumberFromPaidOnlineSection === true;
+
+      if (
+        totalVisibleAndClear === false ||
+        orderNumberVisibleAndClear === false ||
+        dateVisibleAndClear === false ||
+        timeVisibleAndClear === false ||
+        keyFieldsTampered === true ||
+        !orderNumberSourceIsValid
+      ) {
+        if (!orderNumberSourceIsValid && keyFieldsTampered !== true) {
+          if (paidOnlineReceipt === true) {
+            return sendError(res, 400, "ORDER_NUMBER_SOURCE_INVALID", "No valid order number found next to 'Order:' for paid online receipt");
+          }
+          return sendError(res, 400, "ORDER_NUMBER_SOURCE_INVALID", "No valid order number found under Nashville");
+        }
+        const msg = tamperingReason && typeof tamperingReason === 'string' && tamperingReason.trim().length > 0
+          ? `Receipt invalid - ${tamperingReason}`
+          : "Receipt invalid - key information is obscured or appears tampered with";
+        return sendError(res, 400, "KEY_FIELDS_INVALID", msg, { tamperingReason: tamperingReason || null });
+      }
+
+      // Validate order number format (must be 3 digits or less and not exceed 400)
+      const orderNumberStr = data.orderNumber.toString();
+      if (orderNumberStr.length > 3) {
+        return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number format - must be 3 digits or less");
+      }
+      const orderNumber = parseInt(data.orderNumber);
+      if (isNaN(orderNumber)) return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number - must be a valid number");
+      if (orderNumber < 1) return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number - must be at least 1");
+      if (orderNumber > 400) return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number - must be 400 or less");
+
+      // Validate date/time formats
+      const dateRegex = /^\d{2}\/\d{2}$/;
+      if (!dateRegex.test(data.orderDate)) {
+        return sendError(res, 400, "DATE_FORMAT_INVALID", "Invalid date format - must be MM/DD (or MM-DD on receipt)");
+      }
+      const timeRegex = /^\d{2}:\d{2}$/;
+      if (!timeRegex.test(data.orderTime)) {
+        return sendError(res, 400, "TIME_FORMAT_INVALID", "Invalid time format - must be HH:MM");
+      }
+      const [hours, minutes] = data.orderTime.split(':').map(Number);
+      if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+        return sendError(res, 400, "TIME_FORMAT_INVALID", "Invalid time - must be between 00:00 and 23:59");
+      }
+
+      // Validate order total
+      const orderTotal = parseFloat(data.orderTotal);
+      if (isNaN(orderTotal) || orderTotal < 1 || orderTotal > 500) {
+        return sendError(res, 400, "TOTAL_INVALID", "Invalid order total - must be a reasonable amount between $1 and $500");
+      }
+
+      // 48-hour expiration logic (same as analyze endpoint, with admin override)
+      const [month, day] = data.orderDate.split('/').map(Number);
+      const currentDate = new Date();
+      const [h, m] = data.orderTime.split(':').map(Number);
+
+      const receiptDateThisYear = new Date(currentDate.getFullYear(), month - 1, day, h, m, 0, 0);
+      const receiptDatePrevYear = new Date(currentDate.getFullYear() - 1, month - 1, day, h, m, 0, 0);
+      const hoursDiffThisYear = (currentDate - receiptDateThisYear) / (1000 * 60 * 60);
+      const hoursDiffPrevYear = (currentDate - receiptDatePrevYear) / (1000 * 60 * 60);
+
+      let receiptDate = receiptDateThisYear;
+      let hoursDiff = hoursDiffThisYear;
+      if (hoursDiffThisYear < 0) {
+        if (hoursDiffPrevYear >= 0 && hoursDiffPrevYear <= 48) {
+          receiptDate = receiptDatePrevYear;
+          hoursDiff = hoursDiffPrevYear;
+          console.log('🗓️ Year-boundary adjustment applied (submit-receipt):', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
+        } else {
+          return sendError(res, 400, "FUTURE_DATE", "Invalid receipt date - receipt appears to be dated in the future");
+        }
+      }
+
+      const daysDiff = hoursDiff / 24;
+      let allowOldReceiptForAdmin = false;
+      try {
+        const userDoc = await db.collection('users').doc(uid).get();
+        if (userDoc.exists) {
+          const userData = userDoc.data() || {};
+          if (userData.isAdmin === true && userData.oldReceiptTestingEnabled === true) {
+            allowOldReceiptForAdmin = true;
+          }
+        }
+      } catch (err) {
+        console.warn('⚠️ Failed to evaluate admin old-receipt test override (submit-receipt):', err.message || err);
+      }
+      if (hoursDiff > 48 && !allowOldReceiptForAdmin) {
+        return sendError(res, 400, "EXPIRED_48H", "Receipt expired - receipts must be scanned within 48 hours of purchase");
+      }
+
+      // Award points atomically with server-side duplicate prevention
+      const pointsAwarded = Math.floor(orderTotal * 5);
+      const userRef = db.collection('users').doc(uid);
+      const receiptsRef = db.collection('receipts');
+      const pointsTxId = `receipt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      let newPointsBalance = null;
+      let newLifetimePoints = null;
+      let savedReceiptId = null;
+
+      try {
+        await db.runTransaction(async (tx) => {
+          // Duplicate detection (same logic as analyze endpoint)
+          // Support legacy orderNumber type (string vs number) for duplicate detection
+          const orderNumberStrForDup = String(data.orderNumber);
+          const orderNumberNumForDup = parseInt(orderNumberStrForDup, 10);
+          const orderNumberVariants = [orderNumberStrForDup];
+          if (!isNaN(orderNumberNumForDup)) orderNumberVariants.push(orderNumberNumForDup);
+
+          const duplicateQueries = [
+            receiptsRef.where('orderDate', '==', data.orderDate).where('orderTime', '==', data.orderTime),
+            receiptsRef.where('orderDate', '==', data.orderDate).where('orderTime', '==', data.orderTime).where('orderTotal', '==', orderTotal)
+          ];
+          for (const variant of orderNumberVariants) {
+            duplicateQueries.push(
+              receiptsRef.where('orderNumber', '==', variant).where('orderDate', '==', data.orderDate)
+            );
+            duplicateQueries.push(
+              receiptsRef.where('orderNumber', '==', variant).where('orderTime', '==', data.orderTime)
+            );
+          }
+          for (const q of duplicateQueries) {
+            const snap = await tx.get(q);
+            if (!snap.empty) {
+              const err = new Error("DUPLICATE_RECEIPT");
+              err.code = "DUPLICATE_RECEIPT";
+              throw err;
+            }
+          }
+
+          const userDoc = await tx.get(userRef);
+          if (!userDoc.exists) {
+            const err = new Error("USER_NOT_FOUND");
+            err.code = "USER_NOT_FOUND";
+            throw err;
+          }
+          const userData = userDoc.data() || {};
+          const currentPoints = userData.points || 0;
+          const currentLifetime = (typeof userData.lifetimePoints === 'number')
+            ? userData.lifetimePoints
+            : currentPoints;
+          newPointsBalance = currentPoints + pointsAwarded;
+          newLifetimePoints = currentLifetime + pointsAwarded;
+
+          // Update user points
+          tx.update(userRef, {
+            points: newPointsBalance,
+            lifetimePoints: newLifetimePoints
+          });
+
+          // Save receipt record (for future duplicate checks + auditing)
+          const receiptDocRef = receiptsRef.doc();
+          savedReceiptId = receiptDocRef.id;
+          tx.set(receiptDocRef, {
+            orderNumber: String(data.orderNumber),
+            orderDate: data.orderDate,
+            orderTime: data.orderTime,
+            orderTotal: orderTotal,
+            userId: uid,
+            pointsAwarded,
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+
+          // Save points transaction
+          tx.set(db.collection('pointsTransactions').doc(pointsTxId), {
+            userId: uid,
+            type: 'receipt_scan',
+            amount: pointsAwarded,
+            description: `Receipt Scan - $${orderTotal.toFixed(2)}`,
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            metadata: {
+              orderNumber: String(data.orderNumber),
+              orderDate: data.orderDate,
+              orderTime: data.orderTime,
+              orderTotal: orderTotal
+            }
+          });
+        });
+      } catch (e) {
+        if (e && e.code === "DUPLICATE_RECEIPT") {
+          return sendError(
+            res,
+            409,
+            "DUPLICATE_RECEIPT",
+            "Receipt already submitted - this receipt has already been processed and points will not be awarded",
+            { duplicate: true }
+          );
+        }
+        if (e && e.code === "USER_NOT_FOUND") {
+          return sendError(res, 404, "USER_NOT_FOUND", "User not found");
+        }
+        console.error('❌ submit-receipt transaction failed:', e);
+        return sendError(res, 500, "SERVER_AWARD_FAILED", "Server error while awarding points - please try again");
+      }
+
+      return res.json({
+        success: true,
+        receipt: {
+          orderNumber: String(data.orderNumber),
+          orderTotal: orderTotal,
+          orderDate: data.orderDate,
+          orderTime: data.orderTime,
+          receiptId: savedReceiptId
+        },
+        pointsAwarded,
+        newPointsBalance,
+        newLifetimePoints
+      });
+    } catch (err) {
+      console.error('❌ Error processing submit-receipt:', err);
+      return sendError(res, 500, "SERVER_ERROR", err.message || "Server error");
+    }
+  });
+
+  // Welcome points claim (server-authoritative)
+  // Prevents clients from directly incrementing their own points in Firestore.
+  app.post('/welcome/claim', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+      if (!token) return sendError(res, 401, "UNAUTHENTICATED", "Missing or invalid Authorization header");
+
+      let uid;
+      try {
+        const decoded = await admin.auth().verifyIdToken(token);
+        uid = decoded.uid;
+      } catch (e) {
+        return sendError(res, 401, "UNAUTHENTICATED", "Invalid auth token");
+      }
+
+      const db = admin.firestore();
+      const userRef = db.collection('users').doc(uid);
+      const txId = `welcome_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const welcomePoints = 5;
+
+      let newPointsBalance = null;
+      let newLifetimePoints = null;
+      let alreadyClaimed = false;
+
+      await db.runTransaction(async (tx) => {
+        const userDoc = await tx.get(userRef);
+        if (!userDoc.exists) {
+          const err = new Error("USER_NOT_FOUND");
+          err.code = "USER_NOT_FOUND";
+          throw err;
+        }
+        const userData = userDoc.data() || {};
+        if (userData.hasReceivedWelcomePoints === true) {
+          alreadyClaimed = true;
+          return;
+        }
+
+        const currentPoints = userData.points || 0;
+        const currentLifetime = (typeof userData.lifetimePoints === 'number') ? userData.lifetimePoints : currentPoints;
+        newPointsBalance = currentPoints + welcomePoints;
+        newLifetimePoints = currentLifetime + welcomePoints;
+
+        tx.update(userRef, {
+          points: newPointsBalance,
+          lifetimePoints: newLifetimePoints,
+          hasReceivedWelcomePoints: true,
+          isNewUser: false
+        });
+
+        tx.set(db.collection('pointsTransactions').doc(txId), {
+          userId: uid,
+          type: 'welcome',
+          amount: welcomePoints,
+          description: 'Welcome bonus points for new account',
+          timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+      });
+
+      if (alreadyClaimed) {
+        return res.status(200).json({ success: true, alreadyClaimed: true });
+      }
+
+      return res.json({
+        success: true,
+        alreadyClaimed: false,
+        pointsAwarded: welcomePoints,
+        newPointsBalance,
+        newLifetimePoints
+      });
+    } catch (err) {
+      if (err && err.code === "USER_NOT_FOUND") return sendError(res, 404, "USER_NOT_FOUND", "User not found");
+      console.error('❌ Error in /welcome/claim:', err);
+      return sendError(res, 500, "SERVER_ERROR", "Failed to claim welcome points");
     }
   });
 
@@ -1674,7 +2271,7 @@ Remember: You're not just an assistant—you love helping people discover the be
 
 LOYALTY/REWARDS CONTEXT:
 - User has ${typeof userPoints === 'number' ? userPoints : 'an unknown number of'} points. If points provided (${typeof userPoints === 'number' ? 'YES' : 'NO'}), personalize responses. If not provided, say "I don't see your points right now" and suggest opening Rewards tab or scanning receipt.
-- REWARD TIERS: 250 (Sauce/Coke), 450 (Tea/Lemonade/Coffee), 500 (Small Appetizer), 650 (Large Appetizer), 850 (Pizza Dumplings/Lunch Special 6pc), 1500 (12pc Dumplings), 2000 (Full Combo).
+- REWARD TIERS: 250 (Sauce), 450 (Tea/Lemonade/Coffee), 500 (Small Appetizer), 650 (Large Appetizer), 850 (Pizza Dumplings/Lunch Special 6pc), 1500 (12pc Dumplings), 2000 (Full Combo).
 - CRITICAL: If under 250 points, do NOT say they can redeem anything. Tell them they need 250+ points and how many more they need.
 - Only mention rewards at or below their point balance. Don't list unaffordable rewards unless specifically asked about higher tiers.`;
         
@@ -1937,7 +2534,7 @@ Remember: You're not just an assistant—you love helping people discover the be
 
 LOYALTY/REWARDS CONTEXT:
 - User has ${typeof userPoints === 'number' ? userPoints : 'an unknown number of'} points. If points provided (${typeof userPoints === 'number' ? 'YES' : 'NO'}), personalize responses. If not provided, say "I don't see your points right now" and suggest opening Rewards tab or scanning receipt.
-- REWARD TIERS: 250 (Sauce/Coke), 450 (Tea/Lemonade/Coffee), 500 (Small Appetizer), 650 (Large Appetizer), 850 (Pizza Dumplings/Lunch Special 6pc), 1500 (12pc Dumplings), 2000 (Full Combo).
+- REWARD TIERS: 250 (Sauce), 450 (Tea/Lemonade/Coffee), 500 (Small Appetizer), 650 (Large Appetizer), 850 (Pizza Dumplings/Lunch Special 6pc), 1500 (12pc Dumplings), 2000 (Full Combo).
 - CRITICAL: If under 250 points, do NOT say they can redeem anything. Tell them they need 250+ points and how many more they need.
 - Only mention rewards at or below their point balance. Don't list unaffordable rewards unless specifically asked about higher tiers.`;
 
