@@ -180,17 +180,6 @@ function validateDietaryRestrictions(items, dietaryPreferences, allMenuItems) {
 }
 
 // ---------------------------------------------------------------------------
-// Minimal always-on Redeem Reward endpoint
-// ---------------------------------------------------------------------------
-app.post('/redeem-reward', (req, res) => {
-  console.log('🎁 [Minimal] redeem-reward hit');
-  res.status(501).json({
-    error: 'Redeem reward logic temporarily unavailable on this instance',
-    message: 'Endpoint registered successfully; full implementation pending.'
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Referral System Endpoints
 // ---------------------------------------------------------------------------
 
