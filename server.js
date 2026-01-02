@@ -1374,33 +1374,6 @@ If a field is missing, use null.`;
       const currentDate = new Date();
       const [h, m] = data.orderTime.split(':').map(Number);
 
-      // Build a year-safe receipt DateTime:
-      // - First assume current year
-      // - If that looks "far future" but the previous year lands within ~48h, treat as year-boundary scan
-      const receiptDateThisYear = new Date(currentDate.getFullYear(), month - 1, day, h, m, 0, 0);
-      const receiptDatePrevYear = new Date(currentDate.getFullYear() - 1, month - 1, day, h, m, 0, 0);
-
-      const hoursDiffThisYear = (currentDate - receiptDateThisYear) / (1000 * 60 * 60);
-      const hoursDiffPrevYear = (currentDate - receiptDatePrevYear) / (1000 * 60 * 60);
-
-      // If the receipt appears to be in the future this year, allow only the special case
-      // where interpreting it as last year makes it within the 48h window (New Year boundary).
-      let receiptDate = receiptDateThisYear;
-      let hoursDiff = hoursDiffThisYear;
-      if (hoursDiffThisYear < 0) {
-        if (hoursDiffPrevYear >= 0 && hoursDiffPrevYear <= 48) {
-          receiptDate = receiptDatePrevYear;
-          hoursDiff = hoursDiffPrevYear;
-          console.log('🗓️ Year-boundary adjustment applied for receipt date:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
-        } else {
-          console.log('❌ Receipt date appears to be in the future:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiffThisYear);
-          return sendError(res, 400, "FUTURE_DATE", "Invalid receipt date - receipt appears to be dated in the future");
-      }
-      }
-
-      // Keep daysDiff for existing logs (derived from hours for consistency)
-      const daysDiff = hoursDiff / 24;
-
       // Admin-only override for testing old receipts:
       // If the caller has explicitly enabled old-receipt testing on their user profile,
       // we relax the 48-hour window check (for this user only) but still enforce all other validations.
@@ -1426,6 +1399,38 @@ If a field is missing, use null.`;
       } catch (err) {
         console.warn('⚠️ Failed to evaluate admin old-receipt test override:', err.message || err);
       }
+
+      // Build a year-safe receipt DateTime:
+      // - First assume current year
+      // - If that looks "far future" but the previous year lands within ~48h, treat as year-boundary scan
+      const receiptDateThisYear = new Date(currentDate.getFullYear(), month - 1, day, h, m, 0, 0);
+      const receiptDatePrevYear = new Date(currentDate.getFullYear() - 1, month - 1, day, h, m, 0, 0);
+
+      const hoursDiffThisYear = (currentDate - receiptDateThisYear) / (1000 * 60 * 60);
+      const hoursDiffPrevYear = (currentDate - receiptDatePrevYear) / (1000 * 60 * 60);
+
+      // If the receipt appears to be in the future this year:
+      // - If old-receipt testing is enabled, interpret it as last year (receipts omit year)
+      // - Else allow only the special-case where last year lands within 48h (New Year boundary)
+      let receiptDate = receiptDateThisYear;
+      let hoursDiff = hoursDiffThisYear;
+      if (hoursDiffThisYear < 0) {
+        if (allowOldReceiptForAdmin) {
+          receiptDate = receiptDatePrevYear;
+          hoursDiff = hoursDiffPrevYear;
+          console.log('⚠️ Old-receipt test mode: treating future-date receipt as previous year:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
+        } else if (hoursDiffPrevYear >= 0 && hoursDiffPrevYear <= 48) {
+          receiptDate = receiptDatePrevYear;
+          hoursDiff = hoursDiffPrevYear;
+          console.log('🗓️ Year-boundary adjustment applied for receipt date:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
+        } else {
+          console.log('❌ Receipt date appears to be in the future:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiffThisYear);
+          return sendError(res, 400, "FUTURE_DATE", "Invalid receipt date - receipt appears to be dated in the future");
+        }
+      }
+
+      // Keep daysDiff for existing logs (derived from hours for consistency)
+      const daysDiff = hoursDiff / 24;
 
       if (hoursDiff > 48 && !allowOldReceiptForAdmin) {
         console.log('❌ Receipt date too old:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);

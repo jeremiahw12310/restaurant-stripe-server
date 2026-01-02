@@ -1376,26 +1376,6 @@ If a field is missing, use null.`;
       const currentDate = new Date();
       const [h, m] = data.orderTime.split(':').map(Number);
 
-      const receiptDateThisYear = new Date(currentDate.getFullYear(), month - 1, day, h, m, 0, 0);
-      const receiptDatePrevYear = new Date(currentDate.getFullYear() - 1, month - 1, day, h, m, 0, 0);
-      const hoursDiffThisYear = (currentDate - receiptDateThisYear) / (1000 * 60 * 60);
-      const hoursDiffPrevYear = (currentDate - receiptDatePrevYear) / (1000 * 60 * 60);
-
-      let receiptDate = receiptDateThisYear;
-      let hoursDiff = hoursDiffThisYear;
-      if (hoursDiffThisYear < 0) {
-        if (hoursDiffPrevYear >= 0 && hoursDiffPrevYear <= 48) {
-          receiptDate = receiptDatePrevYear;
-          hoursDiff = hoursDiffPrevYear;
-          console.log('🗓️ Year-boundary adjustment applied for receipt date:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
-        } else {
-          console.log('❌ Receipt date appears to be in the future:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiffThisYear);
-          return sendError(res, 400, "FUTURE_DATE", "Invalid receipt date - receipt appears to be dated in the future");
-        }
-      }
-
-      const daysDiff = hoursDiff / 24;
-
       // Admin-only override for testing old receipts:
       // If the caller has explicitly enabled old-receipt testing on their user profile,
       // we relax the 48-hour window check (for this user only) but still enforce all other validations.
@@ -1413,12 +1393,41 @@ If a field is missing, use null.`;
             const userData = userDoc.data() || {};
             if (userData.oldReceiptTestingEnabled === true) {
               allowOldReceiptForAdmin = true;
-              console.log('⚠️ Old-receipt test mode active for user:', uid, 'daysDiff:', daysDiff, 'isAdmin:', userData.isAdmin === true);
+              console.log('⚠️ Old-receipt test mode active for user:', uid, 'isAdmin:', userData.isAdmin === true);
             }
           }
         }
       } catch (err) {
         console.warn('⚠️ Failed to evaluate admin old-receipt test override:', err.message || err);
+      }
+
+      const receiptDateThisYear = new Date(currentDate.getFullYear(), month - 1, day, h, m, 0, 0);
+      const receiptDatePrevYear = new Date(currentDate.getFullYear() - 1, month - 1, day, h, m, 0, 0);
+      const hoursDiffThisYear = (currentDate - receiptDateThisYear) / (1000 * 60 * 60);
+      const hoursDiffPrevYear = (currentDate - receiptDatePrevYear) / (1000 * 60 * 60);
+
+      let receiptDate = receiptDateThisYear;
+      let hoursDiff = hoursDiffThisYear;
+      if (hoursDiffThisYear < 0) {
+        // If old-receipt testing is enabled, interpret "future this year" as previous year
+        // instead of rejecting with FUTURE_DATE (receipts omit year).
+        if (allowOldReceiptForAdmin) {
+          receiptDate = receiptDatePrevYear;
+          hoursDiff = hoursDiffPrevYear;
+          console.log('⚠️ Old-receipt test mode: treating future-date receipt as previous year:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
+        } else if (hoursDiffPrevYear >= 0 && hoursDiffPrevYear <= 48) {
+          receiptDate = receiptDatePrevYear;
+          hoursDiff = hoursDiffPrevYear;
+          console.log('🗓️ Year-boundary adjustment applied for receipt date:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
+        } else {
+          console.log('❌ Receipt date appears to be in the future:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiffThisYear);
+          return sendError(res, 400, "FUTURE_DATE", "Invalid receipt date - receipt appears to be dated in the future");
+        }
+      }
+
+      const daysDiff = hoursDiff / 24;
+      if (allowOldReceiptForAdmin) {
+        console.log('⚠️ Old-receipt test mode daysDiff:', daysDiff);
       }
 
       if (hoursDiff > 48 && !allowOldReceiptForAdmin) {
@@ -1794,6 +1803,22 @@ If a field is missing, use null.`;
       const currentDate = new Date();
       const [h, m] = data.orderTime.split(':').map(Number);
 
+      // Read old-receipt test flag early so it can relax BOTH:
+      // - the 48-hour window check
+      // - the FUTURE_DATE guard (receipts omit year; common in early January when scanning December receipts)
+      let allowOldReceiptForAdmin = false;
+      try {
+        const userDoc = await db.collection('users').doc(uid).get();
+        if (userDoc.exists) {
+          const userData = userDoc.data() || {};
+          if (userData.oldReceiptTestingEnabled === true) {
+            allowOldReceiptForAdmin = true;
+          }
+        }
+      } catch (err) {
+        console.warn('⚠️ Failed to evaluate admin old-receipt test override (submit-receipt):', err.message || err);
+      }
+
       const receiptDateThisYear = new Date(currentDate.getFullYear(), month - 1, day, h, m, 0, 0);
       const receiptDatePrevYear = new Date(currentDate.getFullYear() - 1, month - 1, day, h, m, 0, 0);
       const hoursDiffThisYear = (currentDate - receiptDateThisYear) / (1000 * 60 * 60);
@@ -1802,7 +1827,11 @@ If a field is missing, use null.`;
       let receiptDate = receiptDateThisYear;
       let hoursDiff = hoursDiffThisYear;
       if (hoursDiffThisYear < 0) {
-        if (hoursDiffPrevYear >= 0 && hoursDiffPrevYear <= 48) {
+        if (allowOldReceiptForAdmin) {
+          receiptDate = receiptDatePrevYear;
+          hoursDiff = hoursDiffPrevYear;
+          console.log('⚠️ Old-receipt test mode: treating future-date receipt as previous year (submit-receipt):', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
+        } else if (hoursDiffPrevYear >= 0 && hoursDiffPrevYear <= 48) {
           receiptDate = receiptDatePrevYear;
           hoursDiff = hoursDiffPrevYear;
           console.log('🗓️ Year-boundary adjustment applied (submit-receipt):', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
@@ -1812,18 +1841,8 @@ If a field is missing, use null.`;
       }
 
       const daysDiff = hoursDiff / 24;
-      let allowOldReceiptForAdmin = false;
-      try {
-        const userDoc = await db.collection('users').doc(uid).get();
-        if (userDoc.exists) {
-          const userData = userDoc.data() || {};
-          if (userData.oldReceiptTestingEnabled === true) {
-            allowOldReceiptForAdmin = true;
-            console.log('⚠️ Old-receipt test mode active (submit-receipt):', uid, 'daysDiff:', daysDiff, 'isAdmin:', userData.isAdmin === true);
-          }
-        }
-      } catch (err) {
-        console.warn('⚠️ Failed to evaluate admin old-receipt test override (submit-receipt):', err.message || err);
+      if (allowOldReceiptForAdmin) {
+        console.log('⚠️ Old-receipt test mode active (submit-receipt):', uid, 'daysDiff:', daysDiff);
       }
       if (hoursDiff > 48 && !allowOldReceiptForAdmin) {
         return sendError(res, 400, "EXPIRED_48H", "Receipt expired - receipts must be scanned within 48 hours of purchase");
