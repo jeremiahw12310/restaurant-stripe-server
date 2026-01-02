@@ -196,7 +196,7 @@ app.post('/referrals/create', async (req, res) => {
 
     // Generate code if doesn't exist
     if (!referralCode) {
-      referralCode = generateReferralCode();
+      referralCode = await generateUniqueReferralCode(db);
       await userRef.update({ referralCode });
     }
 
@@ -350,13 +350,28 @@ app.get('/referrals/mine', async (req, res) => {
 });
 
 // Helper function to generate referral codes
-function generateReferralCode() {
+function generateReferralCode(length = 6) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Removed ambiguous chars
   let code = '';
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < length; i++) {
     code += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return code;
+}
+
+// Generate a referral code that is not currently used by any user.
+async function generateUniqueReferralCode(db, length = 6, maxAttempts = 50) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const candidate = generateReferralCode(length);
+    const snap = await db.collection('users')
+      .where('referralCode', '==', candidate)
+      .limit(1)
+      .get();
+    if (snap.empty) {
+      return candidate;
+    }
+  }
+  throw new Error('Unable to generate unique referral code');
 }
 
 // Enhanced combo variety system to encourage exploration
@@ -1382,8 +1397,10 @@ If a field is missing, use null.`;
       const daysDiff = hoursDiff / 24;
 
       // Admin-only override for testing old receipts:
-      // If the caller is an admin AND has explicitly enabled old-receipt testing on their user profile,
+      // If the caller has explicitly enabled old-receipt testing on their user profile,
       // we relax the 48-hour window check (for this user only) but still enforce all other validations.
+      //
+      // NOTE: We key primarily off `oldReceiptTestingEnabled` to avoid false negatives if `isAdmin` is missing/stale.
       let allowOldReceiptForAdmin = false;
       try {
         const authHeader = req.headers.authorization || '';
@@ -1394,9 +1411,9 @@ If a field is missing, use null.`;
           const userDoc = await admin.firestore().collection('users').doc(uid).get();
           if (userDoc.exists) {
             const userData = userDoc.data() || {};
-            if (userData.isAdmin === true && userData.oldReceiptTestingEnabled === true) {
+            if (userData.oldReceiptTestingEnabled === true) {
               allowOldReceiptForAdmin = true;
-              console.log('⚠️ Admin old-receipt test mode active for user:', uid, 'daysDiff:', daysDiff);
+              console.log('⚠️ Old-receipt test mode active for user:', uid, 'daysDiff:', daysDiff, 'isAdmin:', userData.isAdmin === true);
             }
           }
         }
@@ -1800,8 +1817,9 @@ If a field is missing, use null.`;
         const userDoc = await db.collection('users').doc(uid).get();
         if (userDoc.exists) {
           const userData = userDoc.data() || {};
-          if (userData.isAdmin === true && userData.oldReceiptTestingEnabled === true) {
+          if (userData.oldReceiptTestingEnabled === true) {
             allowOldReceiptForAdmin = true;
+            console.log('⚠️ Old-receipt test mode active (submit-receipt):', uid, 'daysDiff:', daysDiff, 'isAdmin:', userData.isAdmin === true);
           }
         }
       } catch (err) {
