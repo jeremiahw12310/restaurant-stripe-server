@@ -64,6 +64,18 @@ extension Config {
     }
 }
 
+// MARK: - More / Settings Links
+extension Config {
+    /// Support email used by the More screen. Set this to enable mailto: behavior.
+    static let supportEmail: String? = nil
+
+    /// Privacy Policy URL used by the More screen. Set this to enable in-app Safari viewing.
+    static var privacyPolicyURL: URL? { nil }
+
+    /// Terms of Service URL used by the More screen. Set this to enable in-app Safari viewing.
+    static var termsOfServiceURL: URL? { nil }
+}
+
 // MARK: - Setup Instructions
 
 /*

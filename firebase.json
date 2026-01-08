@@ -4,6 +4,7 @@
     "runtime": "nodejs22"
   },
   "hosting": {
+    "site": "dumplinghouseapp",
     "public": "public",
     "ignore": [
       "firebase.json",

@@ -3674,6 +3674,241 @@ IMPORTANT:
     }
   }
 
+  // Helper to verify Firebase Auth token and ensure the caller is an admin OR employee user
+  async function requireStaff(req, res) {
+    try {
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+      if (!token) {
+        res.status(401).json({ error: 'Missing or invalid Authorization header' });
+        return null;
+      }
+
+      const decoded = await admin.auth().verifyIdToken(token);
+      const uid = decoded.uid;
+
+      const db = admin.firestore();
+      const userDoc = await db.collection('users').doc(uid).get();
+      if (!userDoc.exists) {
+        res.status(403).json({ error: 'User record not found for staff check' });
+        return null;
+      }
+
+      const userData = userDoc.data() || {};
+      if (userData.isAdmin !== true && userData.isEmployee !== true) {
+        res.status(403).json({ error: 'Staff privileges required' });
+        return null;
+      }
+
+      return { uid, userData };
+    } catch (err) {
+      console.error('❌ Staff auth check failed:', err);
+      res.status(401).json({ error: 'Failed to verify staff credentials' });
+      return null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Admin-only Rewards Validation / Consumption (QR scanning)
+  // ---------------------------------------------------------------------------
+
+  function parseFirestoreDate(value) {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    if (typeof value.toDate === 'function') return value.toDate(); // Firestore Timestamp
+    return null;
+  }
+
+  function pickBestRedeemedRewardDoc(snapshot) {
+    if (!snapshot || snapshot.empty) return null;
+    // Prefer the newest redeemedAt when possible; otherwise just take the first.
+    let bestDoc = snapshot.docs[0];
+    let bestRedeemedAt = parseFirestoreDate(bestDoc.get('redeemedAt')) || new Date(0);
+    for (const doc of snapshot.docs) {
+      const redeemedAt = parseFirestoreDate(doc.get('redeemedAt')) || new Date(0);
+      if (redeemedAt > bestRedeemedAt) {
+        bestRedeemedAt = redeemedAt;
+        bestDoc = doc;
+      }
+    }
+    return bestDoc;
+  }
+
+  function rewardStatusFromData(data) {
+    const expiresAt = parseFirestoreDate(data.expiresAt);
+    const isExpired = data.isExpired === true || (expiresAt ? expiresAt <= new Date() : false);
+    const isUsed = data.isUsed === true;
+
+    if (isUsed) return 'already_used';
+    if (isExpired) return 'expired';
+    return 'ok';
+  }
+
+  // Validate a reward code (no mutation; used to show confirmation UI)
+  app.post('/admin/rewards/validate', async (req, res) => {
+    try {
+      const staffContext = await requireStaff(req, res);
+      if (!staffContext) return;
+
+      const redemptionCode = (req.body?.redemptionCode || '').toString().trim();
+      if (!/^\d{8}$/.test(redemptionCode)) {
+        return res.status(400).json({ error: 'Invalid redemptionCode. Expected 8 digits.' });
+      }
+
+      const db = admin.firestore();
+      const snapshot = await db
+        .collection('redeemedRewards')
+        .where('redemptionCode', '==', redemptionCode)
+        .limit(10)
+        .get();
+
+      const bestDoc = pickBestRedeemedRewardDoc(snapshot);
+      if (!bestDoc) {
+        return res.json({ status: 'not_found' });
+      }
+
+      const data = bestDoc.data() || {};
+      const expiresAt = parseFirestoreDate(data.expiresAt);
+      const redeemedAt = parseFirestoreDate(data.redeemedAt);
+
+      return res.json({
+        status: rewardStatusFromData(data),
+        reward: {
+          id: bestDoc.id,
+          userId: data.userId || null,
+          rewardTitle: data.rewardTitle || null,
+          rewardDescription: data.rewardDescription || null,
+          rewardCategory: data.rewardCategory || null,
+          pointsRequired: typeof data.pointsRequired === 'number' ? data.pointsRequired : null,
+          redemptionCode: data.redemptionCode || null,
+          redeemedAt: redeemedAt ? redeemedAt.toISOString() : null,
+          expiresAt: expiresAt ? expiresAt.toISOString() : null,
+          isUsed: data.isUsed === true,
+          isExpired: data.isExpired === true || (expiresAt ? expiresAt <= new Date() : false)
+        }
+      });
+    } catch (error) {
+      console.error('❌ Error validating reward code:', error);
+      return res.status(500).json({ error: 'Failed to validate reward code' });
+    }
+  });
+
+  // Consume a reward code (atomic: re-check + mark used)
+  app.post('/admin/rewards/consume', async (req, res) => {
+    try {
+      const staffContext = await requireStaff(req, res);
+      if (!staffContext) return;
+
+      const redemptionCode = (req.body?.redemptionCode || '').toString().trim();
+      if (!/^\d{8}$/.test(redemptionCode)) {
+        return res.status(400).json({ error: 'Invalid redemptionCode. Expected 8 digits.' });
+      }
+
+      const db = admin.firestore();
+      // Find candidate doc (outside transaction); transaction will re-check before mutation.
+      const snapshot = await db
+        .collection('redeemedRewards')
+        .where('redemptionCode', '==', redemptionCode)
+        .limit(10)
+        .get();
+
+      const bestDoc = pickBestRedeemedRewardDoc(snapshot);
+      if (!bestDoc) {
+        return res.json({ status: 'not_found' });
+      }
+
+      const rewardRef = bestDoc.ref;
+      const staffUid = staffContext.uid;
+      const staffEmail = staffContext.userData?.email || null;
+      const staffRole = staffContext.userData?.isAdmin === true ? 'admin' : 'employee';
+
+      const result = await db.runTransaction(async (tx) => {
+        const doc = await tx.get(rewardRef);
+        if (!doc.exists) {
+          return { status: 'not_found' };
+        }
+
+        const data = doc.data() || {};
+        const expiresAt = parseFirestoreDate(data.expiresAt);
+        const redeemedAt = parseFirestoreDate(data.redeemedAt);
+        const status = rewardStatusFromData(data);
+
+        if (status === 'already_used') {
+          return {
+            status,
+            reward: {
+              id: doc.id,
+              userId: data.userId || null,
+              rewardTitle: data.rewardTitle || null,
+              rewardCategory: data.rewardCategory || null,
+              pointsRequired: typeof data.pointsRequired === 'number' ? data.pointsRequired : null,
+              redemptionCode: data.redemptionCode || null,
+              redeemedAt: redeemedAt ? redeemedAt.toISOString() : null,
+              expiresAt: expiresAt ? expiresAt.toISOString() : null,
+              isUsed: true,
+              isExpired: data.isExpired === true || (expiresAt ? expiresAt <= new Date() : false)
+            }
+          };
+        }
+
+        if (status === 'expired') {
+          // Mark as expired so it won’t show up in future active queries.
+          tx.update(rewardRef, { isExpired: true });
+          return {
+            status,
+            reward: {
+              id: doc.id,
+              userId: data.userId || null,
+              rewardTitle: data.rewardTitle || null,
+              rewardCategory: data.rewardCategory || null,
+              pointsRequired: typeof data.pointsRequired === 'number' ? data.pointsRequired : null,
+              redemptionCode: data.redemptionCode || null,
+              redeemedAt: redeemedAt ? redeemedAt.toISOString() : null,
+              expiresAt: expiresAt ? expiresAt.toISOString() : null,
+              isUsed: false,
+              isExpired: true
+            }
+          };
+        }
+
+        // OK -> consume
+        tx.update(rewardRef, {
+          isUsed: true,
+          usedAt: admin.firestore.FieldValue.serverTimestamp(),
+          // Back-compat (old field names)
+          usedByAdminUid: staffUid,
+          ...(staffEmail ? { usedByAdminEmail: staffEmail } : {}),
+          // New, clearer fields
+          usedByStaffUid: staffUid,
+          usedByStaffRole: staffRole,
+          ...(staffEmail ? { usedByStaffEmail: staffEmail } : {})
+        });
+
+        return {
+          status: 'ok',
+          reward: {
+            id: doc.id,
+            userId: data.userId || null,
+            rewardTitle: data.rewardTitle || null,
+            rewardDescription: data.rewardDescription || null,
+            rewardCategory: data.rewardCategory || null,
+            pointsRequired: typeof data.pointsRequired === 'number' ? data.pointsRequired : null,
+            redemptionCode: data.redemptionCode || null,
+            redeemedAt: redeemedAt ? redeemedAt.toISOString() : null,
+            expiresAt: expiresAt ? expiresAt.toISOString() : null,
+            isUsed: true,
+            isExpired: false
+          }
+        };
+      });
+
+      return res.json(result);
+    } catch (error) {
+      console.error('❌ Error consuming reward code:', error);
+      return res.status(500).json({ error: 'Failed to consume reward code' });
+    }
+  });
+
   // List scanned receipts for Admin Office
   app.get('/admin/receipts', async (req, res) => {
     try {
