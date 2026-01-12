@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dumpling House Rewards — Invitation</title>
+    <style>
+      :root {
+        /* App-inspired tokens (mirrors `Theme.swift`) */
+        --bg: #fafafc; /* Theme.modernBackground */
+        --bg2: #f3f4f8; /* Theme.modernCardSecondary-ish */
+        --card: #ffffff; /* Theme.modernCard */
+        --text: #262640; /* Theme.modernPrimary-ish */
+        --muted: #666680; /* Theme.modernSecondary-ish */
+        --gold: #d8a53f; /* Theme.primaryGold-ish */
+        --gold2: #bf8c26; /* Theme.deepGold-ish */
+        --darkgold1: #b3801a; /* Theme.darkGoldGradient-ish */
+        --darkgold2: #8c5905; /* Theme.darkGoldGradient-ish */
+        --energy1: #ff9933; /* Theme.energyOrange-ish */
+        --energy2: #e64d4d; /* Theme.energyRed-ish */
+        --stroke: rgba(38, 38, 64, 0.10);
+        --shadow: rgba(0, 0, 0, 0.10);
+      }
+      body {
+        font-family: ui-rounded, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        background: radial-gradient(900px 600px at 20% 0%, rgba(216, 165, 63, 0.14), transparent 60%),
+          radial-gradient(900px 700px at 90% 20%, rgba(255, 153, 51, 0.10), transparent 60%),
+          linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%);
+        min-height: 100vh;
+        margin: 0;
+        padding: 22px 16px;
+        color: var(--text);
+      }
+      .container {
+        max-width: 460px;
+        width: 100%;
+        margin: 0 auto;
+      }
+      .brand {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        margin: 10px 0 16px;
+      }
+      .brand img {
+        width: 88px;
+        height: 88px;
+        object-fit: contain;
+        filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.14));
+      }
+      .brand-name {
+        font-weight: 950;
+        letter-spacing: -0.2px;
+        font-size: 22px;
+        line-height: 1.1;
+        text-align: center;
+        background: linear-gradient(135deg, var(--darkgold1), var(--darkgold2));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .message {
+        margin: 0;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.55;
+      }
+      .hero {
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.78));
+        border: 1px solid rgba(38, 38, 64, 0.08);
+        border-radius: 24px;
+        padding: 22px 18px;
+        box-shadow: 0 22px 60px rgba(0, 0, 0, 0.10);
+        overflow: hidden;
+        position: relative;
+      }
+      .hero:before {
+        content: "";
+        position: absolute;
+        inset: -40px -60px auto auto;
+        width: 220px;
+        height: 220px;
+        background: radial-gradient(circle at 30% 30%, rgba(216, 165, 63, 0.18), transparent 60%);
+        transform: rotate(20deg);
+        pointer-events: none;
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-size: 32px;
+        line-height: 1.1;
+        letter-spacing: -0.2px;
+        font-weight: 950;
+      }
+      .code {
+        margin: 16px 0 8px;
+        background: linear-gradient(135deg, rgba(216, 165, 63, 0.18), rgba(191, 140, 38, 0.12));
+        border: 1px solid rgba(216, 165, 63, 0.35);
+        color: var(--text);
+        padding: 16px 18px;
+        border-radius: 18px;
+        font-size: 36px;
+        font-weight: 950;
+        letter-spacing: 4px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        user-select: all;
+        box-shadow: 0 14px 28px rgba(216, 165, 63, 0.16);
+        text-align: center;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        justify-content: stretch;
+        flex-wrap: wrap;
+        margin-top: 14px;
+      }
+      .btn {
+        appearance: none;
+        border: 0;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 14px 16px;
+        border-radius: 18px;
+        font-weight: 900;
+        font-size: 15px;
+        text-decoration: none;
+        transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
+        flex: 1 1 170px;
+      }
+      .btn:active {
+        transform: translateY(1px);
+        opacity: 0.95;
+      }
+      .btn-primary {
+        background: linear-gradient(135deg, var(--energy1) 0%, var(--energy2) 100%);
+        color: #fff;
+        box-shadow: 0 14px 30px rgba(230, 77, 77, 0.18);
+      }
+      .btn-secondary {
+        background: rgba(38, 38, 64, 0.05);
+        color: var(--text);
+        border: 1px solid rgba(38, 38, 64, 0.06);
+      }
+      .btn-disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+        box-shadow: none !important;
+        transform: none !important;
+        filter: grayscale(0.25);
+      }
+      .btn-disabled:active {
+        transform: none;
+        opacity: 0.55;
+      }
+      .steps {
+        margin-top: 16px;
+        background: rgba(38, 38, 64, 0.04);
+        border: 1px solid rgba(38, 38, 64, 0.06);
+        border-radius: 18px;
+        padding: 14px;
+        text-align: left;
+      }
+      .steps h2 {
+        margin: 0 0 8px;
+        font-size: 14px;
+        color: var(--text);
+        letter-spacing: 0.2px;
+        font-weight: 900;
+      }
+      .steps ol {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.55;
+      }
+      .steps li {
+        margin: 6px 0;
+      }
+      .codehint {
+        margin-top: 6px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .toast {
+        position: fixed;
+        bottom: 18px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.85);
+        color: #fff;
+        padding: 10px 12px;
+        border-radius: 12px;
+        font-size: 13px;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.18s ease;
+      }
+      .toast.show {
+        opacity: 1;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .btn {
+          transition: none;
+        }
+        .toast {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="brand" aria-label="Dumpling House Rewards">
+        <img src="/dumpaward.png" alt="Dumpling House Rewards" />
+        <div class="brand-name">Dumpling House Rewards</div>
+      </div>
+
+      <div class="hero">
+        <h1>You’ve been invited</h1>
+        <p class="message">
+          Open <strong>Dumpling House Rewards</strong> and enter this code during sign up to connect your
+          referral.
+        </p>
+
+        <div class="code" id="referralCode" role="button" tabindex="0" aria-label="Copy referral code">
+          WELCOME
+        </div>
+        <div class="codehint" id="codeHint">Tap the code to copy</div>
+
+        <div class="row">
+          <button class="btn btn-secondary" id="copyBtn" type="button">Copy code</button>
+          <a class="btn btn-primary" id="openAppBtn" href="#">Open Dumpling House Rewards</a>
+        </div>
+
+        <div class="row" style="margin-top: 10px">
+          <a class="btn btn-secondary btn-disabled" id="appStoreBtn" href="#" aria-disabled="true">
+            App Store (coming soon)
+          </a>
+        </div>
+
+        <div class="steps" aria-label="How it works">
+          <h2>How it works</h2>
+          <ol>
+            <li>Tap <strong>Open Dumpling House Rewards</strong>.</li>
+            <li>Create your account.</li>
+            <li>Enter the code during sign up (or paste it) to connect the referral.</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast">Copied</div>
+
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const codeRaw = (params.get("code") || "WELCOME").trim();
+      const code = codeRaw.toUpperCase();
+
+      const referralCodeEl = document.getElementById("referralCode");
+      referralCodeEl.textContent = code;
+
+      // App Store link (enable after submission by filling this in)
+      // Example: "https://apps.apple.com/app/id1234567890"
+      const APP_STORE_URL = "";
+
+      // Deep link fallback (if the app is installed but Universal Links isn't set up yet)
+      const deepLink = `restaurantdemo://referral?code=${encodeURIComponent(code)}`;
+      const openAppBtn = document.getElementById("openAppBtn");
+      openAppBtn.href = deepLink;
+
+      // Copy button
+      const toast = document.getElementById("toast");
+      function showToast(text) {
+        toast.textContent = text;
+        toast.classList.add("show");
+        setTimeout(() => toast.classList.remove("show"), 1200);
+      }
+
+      async function copyCode() {
+        try {
+          await navigator.clipboard.writeText(code);
+          showToast("Copied code");
+          const hint = document.getElementById("codeHint");
+          if (hint) hint.textContent = "Copied";
+          setTimeout(() => {
+            const h = document.getElementById("codeHint");
+            if (h) h.textContent = "Tap the code to copy";
+          }, 1200);
+        } catch (e) {
+          // Fallback for older browsers
+          const ta = document.createElement("textarea");
+          ta.value = code;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+          showToast("Copied code");
+        }
+      }
+
+      // App Store button (disabled by default until APP_STORE_URL is set)
+      const appStoreBtn = document.getElementById("appStoreBtn");
+      if (APP_STORE_URL && /^https?:\/\//i.test(APP_STORE_URL)) {
+        appStoreBtn.classList.remove("btn-disabled");
+        appStoreBtn.setAttribute("aria-disabled", "false");
+        appStoreBtn.textContent = "Download on the App Store";
+        appStoreBtn.href = APP_STORE_URL;
+      } else {
+        appStoreBtn.addEventListener("click", (e) => {
+          e.preventDefault();
+          showToast("App Store link coming soon");
+        });
+      }
+
+      document.getElementById("copyBtn").addEventListener("click", async () => {
+        await copyCode();
+      });
+
+      // Tap-to-copy on the code pill (plus keyboard accessibility)
+      referralCodeEl.addEventListener("click", copyCode);
+      referralCodeEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          copyCode();
+        }
+      });
+
+      // Optional debug view (?debug=1)
+      const debug = (params.get("debug") || "").trim();
+      if (debug === "1") {
+        console.log(`Referral: ${code}`);
+      }
+    </script>
+  </body>
+</html>
+
+
+
+
+

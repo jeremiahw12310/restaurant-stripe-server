@@ -47,10 +47,15 @@ if (process.env.FIREBASE_AUTH_TYPE === 'adc') {
   console.warn('⚠️ No Firebase authentication method found - Firebase features will not work');
 }
 
+const path = require('path');
+
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 app.use(cors());
 app.use(express.json());
+
+// Serve static files from public folder (privacy policy, terms, etc.)
+app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // Enhanced combo variety system to encourage exploration
 const comboInsights = []; // Track combo patterns for insights, not restrictions

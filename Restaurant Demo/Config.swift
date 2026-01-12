@@ -46,6 +46,8 @@ struct Config {
     // Individual backend URLs
     static let localBackendURL = "http://192.168.1.100:3001" // Update with your computer's IP
     static let localNetworkBackendURL = "http://192.168.1.100:3001" // Update with your computer's IP
+    // NOTE: This host was originally named for Stripe; the app no longer uses Stripe.
+    // Keep the backend base here (chat, rewards, receipt analysis, referral, etc.).
     static let productionBackendURL = "https://restaurant-stripe-server-1.onrender.com"
     
     // Firebase configuration
@@ -67,13 +69,13 @@ extension Config {
 // MARK: - More / Settings Links
 extension Config {
     /// Support email used by the More screen. Set this to enable mailto: behavior.
-    static let supportEmail: String? = nil
+    static let supportEmail: String? = "support@bytequack.com"
 
     /// Privacy Policy URL used by the More screen. Set this to enable in-app Safari viewing.
-    static var privacyPolicyURL: URL? { nil }
+    static var privacyPolicyURL: URL? { URL(string: "\(backendURL)/privacy.html") }
 
     /// Terms of Service URL used by the More screen. Set this to enable in-app Safari viewing.
-    static var termsOfServiceURL: URL? { nil }
+    static var termsOfServiceURL: URL? { URL(string: "\(backendURL)/terms.html") }
 }
 
 // MARK: - Setup Instructions

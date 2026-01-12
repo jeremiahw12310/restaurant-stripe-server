@@ -28,10 +28,15 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
   console.warn('⚠️ No Firebase authentication method found - Firebase features will not work');
 }
 
+const path = require('path');
+
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 app.use(cors());
 app.use(express.json());
+
+// Serve static files from public folder (privacy policy, terms, etc.)
+app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // 🛡️ DIETARY RESTRICTION SAFETY VALIDATION SYSTEM
 // This function validates AI-generated combos against user dietary restrictions
