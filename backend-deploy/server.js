@@ -3583,6 +3583,48 @@ IMPORTANT:
     }
   });
 
+  // Fetch eligible items for a reward tier by tier ID
+  app.get('/reward-tier-items/by-id/:tierId', async (req, res) => {
+    try {
+      const { tierId } = req.params;
+      if (!tierId) {
+        return res.status(400).json({ error: 'tierId is required' });
+      }
+      
+      console.log(`🎁 Fetching eligible items for tier ${tierId}`);
+      
+      const db = admin.firestore();
+      const tierDoc = await db.collection('rewardTierItems').doc(tierId).get();
+      
+      if (!tierDoc.exists) {
+        console.log(`📭 No configured items for tier ${tierId}`);
+        return res.json({
+          tierId,
+          pointsRequired: null,
+          tierName: null,
+          eligibleItems: []
+        });
+      }
+      
+      const tierData = tierDoc.data();
+      console.log(`✅ Found ${(tierData.eligibleItems || []).length} eligible items for tier`);
+      
+      res.json({
+        tierId,
+        pointsRequired: tierData.pointsRequired || null,
+        tierName: tierData.tierName || null,
+        eligibleItems: tierData.eligibleItems || []
+      });
+      
+    } catch (error) {
+      console.error('❌ Error fetching reward tier items by ID:', error);
+      res.status(500).json({ 
+        error: 'Failed to fetch reward tier items',
+        details: error.message 
+      });
+    }
+  });
+
   // Redeem reward endpoint
   app.post('/redeem-reward', async (req, res) => {
     try {
@@ -4099,16 +4141,16 @@ IMPORTANT:
   });
 
   // Add a single item to a reward tier
-  app.post('/admin/reward-tiers/:pointsRequired/add-item', async (req, res) => {
+  app.post('/admin/reward-tiers/:tierId/add-item', async (req, res) => {
     try {
       const adminContext = await requireAdmin(req, res);
       if (!adminContext) return;
 
-      const pointsRequired = parseInt(req.params.pointsRequired, 10);
-      const { itemId, itemName, categoryId, imageURL } = req.body;
+      const { tierId } = req.params;
+      const { tierName, pointsRequired, itemId, itemName, categoryId, imageURL } = req.body;
 
-      if (isNaN(pointsRequired) || pointsRequired <= 0) {
-        return res.status(400).json({ error: 'Invalid pointsRequired parameter' });
+      if (!tierId) {
+        return res.status(400).json({ error: 'tierId is required' });
       }
 
       if (!itemId || !itemName) {
@@ -4117,12 +4159,6 @@ IMPORTANT:
 
       const db = admin.firestore();
 
-      // Find or create the tier
-      const existingSnapshot = await db.collection('rewardTierItems')
-        .where('pointsRequired', '==', pointsRequired)
-        .limit(1)
-        .get();
-
       const newItem = {
         itemId,
         itemName,
@@ -4130,21 +4166,25 @@ IMPORTANT:
         imageURL: imageURL || null
       };
 
-      if (existingSnapshot.empty) {
+      const tierRef = db.collection('rewardTierItems').doc(tierId);
+      const tierDoc = await tierRef.get();
+
+      if (!tierDoc.exists) {
+        if (!pointsRequired || typeof pointsRequired !== 'number' || pointsRequired <= 0) {
+          return res.status(400).json({ error: 'pointsRequired is required to create a new tier' });
+        }
         // Create new tier with this item
-        const docId = `tier_${pointsRequired}`;
-        await db.collection('rewardTierItems').doc(docId).set({
+        await tierRef.set({
           pointsRequired,
-          tierName: `${pointsRequired} Points Tier`,
+          tierName: tierName || `${pointsRequired} Points Tier`,
           eligibleItems: [newItem],
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedBy: adminContext.uid
         });
-        console.log(`➕ Created tier ${pointsRequired} with item: ${itemName}`);
+        console.log(`➕ Created tier ${tierId} with item: ${itemName}`);
       } else {
         // Add to existing tier (avoid duplicates)
-        const tierDoc = existingSnapshot.docs[0];
         const tierData = tierDoc.data();
         const existingItems = tierData.eligibleItems || [];
         
@@ -4153,17 +4193,18 @@ IMPORTANT:
           return res.status(400).json({ error: 'Item already exists in this tier' });
         }
 
-        await tierDoc.ref.update({
+        await tierRef.update({
           eligibleItems: admin.firestore.FieldValue.arrayUnion(newItem),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedBy: adminContext.uid
         });
-        console.log(`➕ Added item ${itemName} to tier ${pointsRequired}`);
+        console.log(`➕ Added item ${itemName} to tier ${tierId}`);
       }
 
       res.json({
         success: true,
-        pointsRequired,
+        tierId,
+        pointsRequired: pointsRequired || null,
         itemAdded: itemName,
         message: 'Item added to reward tier'
       });
@@ -4175,17 +4216,12 @@ IMPORTANT:
   });
 
   // Remove an item from a reward tier
-  app.delete('/admin/reward-tiers/:pointsRequired/remove-item/:itemId', async (req, res) => {
+  app.delete('/admin/reward-tiers/:tierId/remove-item/:itemId', async (req, res) => {
     try {
       const adminContext = await requireAdmin(req, res);
       if (!adminContext) return;
 
-      const pointsRequired = parseInt(req.params.pointsRequired, 10);
-      const { itemId } = req.params;
-
-      if (isNaN(pointsRequired) || pointsRequired <= 0) {
-        return res.status(400).json({ error: 'Invalid pointsRequired parameter' });
-      }
+      const { tierId, itemId } = req.params;
 
       if (!itemId) {
         return res.status(400).json({ error: 'itemId is required' });
@@ -4193,16 +4229,13 @@ IMPORTANT:
 
       const db = admin.firestore();
 
-      const snapshot = await db.collection('rewardTierItems')
-        .where('pointsRequired', '==', pointsRequired)
-        .limit(1)
-        .get();
+      const tierRef = db.collection('rewardTierItems').doc(tierId);
+      const tierDoc = await tierRef.get();
 
-      if (snapshot.empty) {
+      if (!tierDoc.exists) {
         return res.status(404).json({ error: 'Reward tier not found' });
       }
 
-      const tierDoc = snapshot.docs[0];
       const tierData = tierDoc.data();
       const existingItems = tierData.eligibleItems || [];
       
@@ -4211,17 +4244,17 @@ IMPORTANT:
         return res.status(404).json({ error: 'Item not found in this tier' });
       }
 
-      await tierDoc.ref.update({
+      await tierRef.update({
         eligibleItems: admin.firestore.FieldValue.arrayRemove(itemToRemove),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedBy: adminContext.uid
       });
 
-      console.log(`🗑️ Removed item ${itemId} from tier ${pointsRequired}`);
+      console.log(`🗑️ Removed item ${itemId} from tier ${tierId}`);
 
       res.json({
         success: true,
-        pointsRequired,
+        tierId,
         itemRemoved: itemId,
         message: 'Item removed from reward tier'
       });
