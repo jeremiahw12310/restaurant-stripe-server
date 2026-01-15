@@ -3517,13 +3517,72 @@ IMPORTANT:
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // Reward Tier Items - Fetch eligible items for a reward tier
+  // ---------------------------------------------------------------------------
+  
+  app.get('/reward-tier-items/:pointsRequired', async (req, res) => {
+    try {
+      const pointsRequired = parseInt(req.params.pointsRequired, 10);
+      
+      if (isNaN(pointsRequired) || pointsRequired <= 0) {
+        return res.status(400).json({ error: 'Invalid pointsRequired parameter' });
+      }
+      
+      console.log(`🎁 Fetching eligible items for ${pointsRequired} point tier`);
+      
+      const db = admin.firestore();
+      
+      // Query rewardTierItems collection for this points tier
+      const snapshot = await db.collection('rewardTierItems')
+        .where('pointsRequired', '==', pointsRequired)
+        .limit(1)
+        .get();
+      
+      if (snapshot.empty) {
+        console.log(`📭 No configured items for ${pointsRequired} point tier`);
+        return res.json({
+          pointsRequired,
+          tierName: null,
+          eligibleItems: []
+        });
+      }
+      
+      const tierDoc = snapshot.docs[0];
+      const tierData = tierDoc.data();
+      
+      console.log(`✅ Found ${(tierData.eligibleItems || []).length} eligible items for tier`);
+      
+      res.json({
+        pointsRequired: tierData.pointsRequired,
+        tierName: tierData.tierName || null,
+        eligibleItems: tierData.eligibleItems || []
+      });
+      
+    } catch (error) {
+      console.error('❌ Error fetching reward tier items:', error);
+      res.status(500).json({ 
+        error: 'Failed to fetch reward tier items',
+        details: error.message 
+      });
+    }
+  });
+
   // Redeem reward endpoint
   app.post('/redeem-reward', async (req, res) => {
     try {
       console.log('🎁 Received reward redemption request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
       
-      const { userId, rewardTitle, rewardDescription, pointsRequired, rewardCategory } = req.body;
+      const { 
+        userId, 
+        rewardTitle, 
+        rewardDescription, 
+        pointsRequired, 
+        rewardCategory,
+        selectedItemId,      // NEW: Optional selected item ID
+        selectedItemName     // NEW: Optional selected item name
+      } = req.body;
       
       if (!userId || !rewardTitle || !pointsRequired) {
         console.log('❌ Missing required fields for reward redemption');
@@ -3567,7 +3626,7 @@ IMPORTANT:
       // Calculate new points balance
       const newPointsBalance = currentPoints - pointsRequired;
       
-      // Create redeemed reward document
+      // Create redeemed reward document with optional selected item info
       const redeemedReward = {
         id: `reward_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         userId: userId,
@@ -3579,7 +3638,10 @@ IMPORTANT:
         redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
         expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes from now
         isExpired: false,
-        isUsed: false
+        isUsed: false,
+        // NEW: Store selected item info if provided
+        ...(selectedItemId && { selectedItemId }),
+        ...(selectedItemName && { selectedItemName })
       };
       
       // Create points transaction for deduction
@@ -3588,11 +3650,14 @@ IMPORTANT:
         userId: userId,
         type: 'reward_redemption',
         amount: -pointsRequired, // Negative amount for deduction
-        description: `Redeemed: ${rewardTitle}`,
+        description: selectedItemName 
+          ? `Redeemed: ${selectedItemName}` 
+          : `Redeemed: ${rewardTitle}`,
         timestamp: admin.firestore.FieldValue.serverTimestamp(),
         isEarned: false,
         redemptionCode: redemptionCode,
-        rewardTitle: rewardTitle
+        rewardTitle: rewardTitle,
+        ...(selectedItemName && { selectedItemName })
       };
       
       // Perform database operations in a batch
@@ -3616,6 +3681,9 @@ IMPORTANT:
       console.log(`💰 Points deducted: ${pointsRequired}`);
       console.log(`💳 New balance: ${newPointsBalance}`);
       console.log(`🔢 Redemption code: ${redemptionCode}`);
+      if (selectedItemName) {
+        console.log(`🍽️ Selected item: ${selectedItemName}`);
+      }
       
       res.json({
         success: true,
@@ -3623,6 +3691,7 @@ IMPORTANT:
         newPointsBalance: newPointsBalance,
         pointsDeducted: pointsRequired,
         rewardTitle: rewardTitle,
+        selectedItemName: selectedItemName || null,  // NEW: Include in response
         expiresAt: redeemedReward.expiresAt,
         message: 'Reward redeemed successfully! Show the code to your cashier.'
       });
@@ -3784,7 +3853,9 @@ IMPORTANT:
           redeemedAt: redeemedAt ? redeemedAt.toISOString() : null,
           expiresAt: expiresAt ? expiresAt.toISOString() : null,
           isUsed: data.isUsed === true,
-          isExpired: data.isExpired === true || (expiresAt ? expiresAt <= new Date() : false)
+          isExpired: data.isExpired === true || (expiresAt ? expiresAt <= new Date() : false),
+          selectedItemId: data.selectedItemId || null,      // NEW
+          selectedItemName: data.selectedItemName || null   // NEW
         }
       });
     } catch (error) {
@@ -3846,7 +3917,9 @@ IMPORTANT:
               redeemedAt: redeemedAt ? redeemedAt.toISOString() : null,
               expiresAt: expiresAt ? expiresAt.toISOString() : null,
               isUsed: true,
-              isExpired: data.isExpired === true || (expiresAt ? expiresAt <= new Date() : false)
+              isExpired: data.isExpired === true || (expiresAt ? expiresAt <= new Date() : false),
+              selectedItemId: data.selectedItemId || null,
+              selectedItemName: data.selectedItemName || null
             }
           };
         }
@@ -3866,7 +3939,9 @@ IMPORTANT:
               redeemedAt: redeemedAt ? redeemedAt.toISOString() : null,
               expiresAt: expiresAt ? expiresAt.toISOString() : null,
               isUsed: false,
-              isExpired: true
+              isExpired: true,
+              selectedItemId: data.selectedItemId || null,
+              selectedItemName: data.selectedItemName || null
             }
           };
         }
@@ -3897,7 +3972,9 @@ IMPORTANT:
             redeemedAt: redeemedAt ? redeemedAt.toISOString() : null,
             expiresAt: expiresAt ? expiresAt.toISOString() : null,
             isUsed: true,
-            isExpired: false
+            isExpired: false,
+            selectedItemId: data.selectedItemId || null,      // NEW
+            selectedItemName: data.selectedItemName || null   // NEW
           }
         };
       });
@@ -3906,6 +3983,241 @@ IMPORTANT:
     } catch (error) {
       console.error('❌ Error consuming reward code:', error);
       return res.status(500).json({ error: 'Failed to consume reward code' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Admin Reward Tier Item Management
+  // ---------------------------------------------------------------------------
+
+  // Get all reward tiers with their eligible items
+  app.get('/admin/reward-tiers', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const db = admin.firestore();
+      const snapshot = await db.collection('rewardTierItems')
+        .orderBy('pointsRequired', 'asc')
+        .get();
+
+      const tiers = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      console.log(`📋 Fetched ${tiers.length} reward tiers`);
+      res.json({ tiers });
+
+    } catch (error) {
+      console.error('❌ Error fetching reward tiers:', error);
+      res.status(500).json({ error: 'Failed to fetch reward tiers' });
+    }
+  });
+
+  // Create or update a reward tier with eligible items
+  app.post('/admin/reward-tiers/items', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const { pointsRequired, tierName, eligibleItems } = req.body;
+
+      if (!pointsRequired || typeof pointsRequired !== 'number' || pointsRequired <= 0) {
+        return res.status(400).json({ error: 'Invalid pointsRequired. Must be a positive number.' });
+      }
+
+      if (!Array.isArray(eligibleItems)) {
+        return res.status(400).json({ error: 'eligibleItems must be an array.' });
+      }
+
+      // Validate eligible items structure
+      for (const item of eligibleItems) {
+        if (!item.itemId || !item.itemName) {
+          return res.status(400).json({ error: 'Each eligible item must have itemId and itemName.' });
+        }
+      }
+
+      const db = admin.firestore();
+
+      // Check if tier already exists
+      const existingSnapshot = await db.collection('rewardTierItems')
+        .where('pointsRequired', '==', pointsRequired)
+        .limit(1)
+        .get();
+
+      const tierData = {
+        pointsRequired,
+        tierName: tierName || `${pointsRequired} Points Tier`,
+        eligibleItems: eligibleItems.map(item => ({
+          itemId: item.itemId,
+          itemName: item.itemName,
+          categoryId: item.categoryId || null,
+          imageURL: item.imageURL || null
+        })),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedBy: adminContext.uid
+      };
+
+      let docId;
+      if (!existingSnapshot.empty) {
+        // Update existing tier
+        docId = existingSnapshot.docs[0].id;
+        await db.collection('rewardTierItems').doc(docId).update(tierData);
+        console.log(`✏️ Updated reward tier ${pointsRequired} with ${eligibleItems.length} items`);
+      } else {
+        // Create new tier
+        docId = `tier_${pointsRequired}`;
+        tierData.createdAt = admin.firestore.FieldValue.serverTimestamp();
+        await db.collection('rewardTierItems').doc(docId).set(tierData);
+        console.log(`➕ Created reward tier ${pointsRequired} with ${eligibleItems.length} items`);
+      }
+
+      res.json({
+        success: true,
+        tierId: docId,
+        pointsRequired,
+        itemCount: eligibleItems.length,
+        message: existingSnapshot.empty ? 'Reward tier created' : 'Reward tier updated'
+      });
+
+    } catch (error) {
+      console.error('❌ Error saving reward tier items:', error);
+      res.status(500).json({ error: 'Failed to save reward tier items' });
+    }
+  });
+
+  // Add a single item to a reward tier
+  app.post('/admin/reward-tiers/:pointsRequired/add-item', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const pointsRequired = parseInt(req.params.pointsRequired, 10);
+      const { itemId, itemName, categoryId, imageURL } = req.body;
+
+      if (isNaN(pointsRequired) || pointsRequired <= 0) {
+        return res.status(400).json({ error: 'Invalid pointsRequired parameter' });
+      }
+
+      if (!itemId || !itemName) {
+        return res.status(400).json({ error: 'itemId and itemName are required' });
+      }
+
+      const db = admin.firestore();
+
+      // Find or create the tier
+      const existingSnapshot = await db.collection('rewardTierItems')
+        .where('pointsRequired', '==', pointsRequired)
+        .limit(1)
+        .get();
+
+      const newItem = {
+        itemId,
+        itemName,
+        categoryId: categoryId || null,
+        imageURL: imageURL || null
+      };
+
+      if (existingSnapshot.empty) {
+        // Create new tier with this item
+        const docId = `tier_${pointsRequired}`;
+        await db.collection('rewardTierItems').doc(docId).set({
+          pointsRequired,
+          tierName: `${pointsRequired} Points Tier`,
+          eligibleItems: [newItem],
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedBy: adminContext.uid
+        });
+        console.log(`➕ Created tier ${pointsRequired} with item: ${itemName}`);
+      } else {
+        // Add to existing tier (avoid duplicates)
+        const tierDoc = existingSnapshot.docs[0];
+        const tierData = tierDoc.data();
+        const existingItems = tierData.eligibleItems || [];
+        
+        // Check if item already exists
+        if (existingItems.some(item => item.itemId === itemId)) {
+          return res.status(400).json({ error: 'Item already exists in this tier' });
+        }
+
+        await tierDoc.ref.update({
+          eligibleItems: admin.firestore.FieldValue.arrayUnion(newItem),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedBy: adminContext.uid
+        });
+        console.log(`➕ Added item ${itemName} to tier ${pointsRequired}`);
+      }
+
+      res.json({
+        success: true,
+        pointsRequired,
+        itemAdded: itemName,
+        message: 'Item added to reward tier'
+      });
+
+    } catch (error) {
+      console.error('❌ Error adding item to reward tier:', error);
+      res.status(500).json({ error: 'Failed to add item to reward tier' });
+    }
+  });
+
+  // Remove an item from a reward tier
+  app.delete('/admin/reward-tiers/:pointsRequired/remove-item/:itemId', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const pointsRequired = parseInt(req.params.pointsRequired, 10);
+      const { itemId } = req.params;
+
+      if (isNaN(pointsRequired) || pointsRequired <= 0) {
+        return res.status(400).json({ error: 'Invalid pointsRequired parameter' });
+      }
+
+      if (!itemId) {
+        return res.status(400).json({ error: 'itemId is required' });
+      }
+
+      const db = admin.firestore();
+
+      const snapshot = await db.collection('rewardTierItems')
+        .where('pointsRequired', '==', pointsRequired)
+        .limit(1)
+        .get();
+
+      if (snapshot.empty) {
+        return res.status(404).json({ error: 'Reward tier not found' });
+      }
+
+      const tierDoc = snapshot.docs[0];
+      const tierData = tierDoc.data();
+      const existingItems = tierData.eligibleItems || [];
+      
+      const itemToRemove = existingItems.find(item => item.itemId === itemId);
+      if (!itemToRemove) {
+        return res.status(404).json({ error: 'Item not found in this tier' });
+      }
+
+      await tierDoc.ref.update({
+        eligibleItems: admin.firestore.FieldValue.arrayRemove(itemToRemove),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedBy: adminContext.uid
+      });
+
+      console.log(`🗑️ Removed item ${itemId} from tier ${pointsRequired}`);
+
+      res.json({
+        success: true,
+        pointsRequired,
+        itemRemoved: itemId,
+        message: 'Item removed from reward tier'
+      });
+
+    } catch (error) {
+      console.error('❌ Error removing item from reward tier:', error);
+      res.status(500).json({ error: 'Failed to remove item from reward tier' });
     }
   });
 
@@ -4060,6 +4372,279 @@ IMPORTANT:
     } catch (error) {
       console.error('❌ Error deleting admin receipt:', error);
       res.status(500).json({ error: 'Failed to delete receipt for admin' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Admin Notifications - Send Push & In-App Notifications to Customers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * POST /admin/notifications/send
+   * 
+   * Send push notifications to all customers or specific users.
+   * 
+   * Request body:
+   * {
+   *   title: string (required) - Notification title
+   *   body: string (required) - Notification message body
+   *   targetType: 'all' | 'individual' (required) - Target audience
+   *   userIds: string[] (required if targetType is 'individual') - Specific user IDs
+   * }
+   * 
+   * Response:
+   * {
+   *   success: true,
+   *   successCount: number,
+   *   failureCount: number,
+   *   notificationId: string
+   * }
+   */
+  app.post('/admin/notifications/send', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const { title, body, targetType, userIds } = req.body;
+
+      // Validate required fields
+      if (!title || typeof title !== 'string' || title.trim().length === 0) {
+        return res.status(400).json({ error: 'Notification title is required' });
+      }
+
+      if (!body || typeof body !== 'string' || body.trim().length === 0) {
+        return res.status(400).json({ error: 'Notification body is required' });
+      }
+
+      if (!targetType || !['all', 'individual'].includes(targetType)) {
+        return res.status(400).json({ error: 'targetType must be "all" or "individual"' });
+      }
+
+      if (targetType === 'individual') {
+        if (!Array.isArray(userIds) || userIds.length === 0) {
+          return res.status(400).json({ error: 'userIds array is required for individual targeting' });
+        }
+      }
+
+      const db = admin.firestore();
+      const trimmedTitle = title.trim();
+      const trimmedBody = body.trim();
+
+      console.log(`📨 Admin ${adminContext.uid} sending notification: "${trimmedTitle}" to ${targetType === 'all' ? 'all users' : `${userIds.length} users`}`);
+
+      // Fetch FCM tokens based on target type
+      let usersSnapshot;
+      if (targetType === 'all') {
+        // Get all users with FCM tokens (excluding admins)
+        const pageSize = 500;
+        let lastDoc = null;
+        const allDocs = [];
+
+        while (true) {
+          let query = db.collection('users')
+            .where('hasFcmToken', '==', true)
+            .orderBy(admin.firestore.FieldPath.documentId())
+            .limit(pageSize);
+
+          if (lastDoc) {
+            query = query.startAfter(lastDoc);
+          }
+
+          const pageSnapshot = await query.get();
+          if (pageSnapshot.empty) {
+            break;
+          }
+
+          allDocs.push(...pageSnapshot.docs);
+          lastDoc = pageSnapshot.docs[pageSnapshot.docs.length - 1];
+
+          if (pageSnapshot.docs.length < pageSize) {
+            break;
+          }
+        }
+
+        usersSnapshot = { docs: allDocs, empty: allDocs.length === 0 };
+      } else {
+        // Get specific users
+        // Firestore 'in' queries are limited to 30 items, so we batch if needed
+        const batchSize = 30;
+        const userBatches = [];
+        for (let i = 0; i < userIds.length; i += batchSize) {
+          userBatches.push(userIds.slice(i, i + batchSize));
+        }
+
+        const allDocs = [];
+        for (const batch of userBatches) {
+          const batchSnapshot = await db.collection('users')
+            .where(admin.firestore.FieldPath.documentId(), 'in', batch)
+            .get();
+          allDocs.push(...batchSnapshot.docs);
+        }
+        usersSnapshot = { docs: allDocs, empty: allDocs.length === 0 };
+      }
+
+      // Filter to users with valid FCM tokens (and exclude admins for broadcast)
+      const tokensToSend = [];
+      const targetUserIdsForLog = [];
+
+      for (const doc of usersSnapshot.docs) {
+        const userData = doc.data() || {};
+        
+        // Skip admin users for broadcast (they shouldn't receive customer notifications)
+        if (targetType === 'all' && userData.isAdmin === true) {
+          continue;
+        }
+
+        const fcmToken = userData.fcmToken;
+        if (fcmToken && typeof fcmToken === 'string' && fcmToken.length > 0) {
+          tokensToSend.push(fcmToken);
+          targetUserIdsForLog.push(doc.id);
+        }
+      }
+
+      if (tokensToSend.length === 0) {
+        console.log('⚠️ No valid FCM tokens found for notification');
+        return res.status(400).json({ 
+          error: 'No users with push notifications enabled found',
+          successCount: 0,
+          failureCount: 0
+        });
+      }
+
+      console.log(`📱 Sending to ${tokensToSend.length} devices...`);
+
+      // Send push notifications via FCM
+      let successCount = 0;
+      let failureCount = 0;
+
+      // FCM sendEachForMulticast is limited to 500 tokens per call
+      const fcmBatchSize = 500;
+      for (let i = 0; i < tokensToSend.length; i += fcmBatchSize) {
+        const batchTokens = tokensToSend.slice(i, i + fcmBatchSize);
+        
+        const message = {
+          notification: {
+            title: trimmedTitle,
+            body: trimmedBody
+          },
+          data: {
+            type: targetType === 'all' ? 'admin_broadcast' : 'admin_individual',
+            timestamp: new Date().toISOString()
+          },
+          tokens: batchTokens
+        };
+
+        try {
+          const response = await admin.messaging().sendEachForMulticast(message);
+          successCount += response.successCount;
+          failureCount += response.failureCount;
+
+          // Log any failures for debugging
+          if (response.failureCount > 0) {
+            response.responses.forEach((resp, idx) => {
+              if (!resp.success) {
+                console.warn(`❌ FCM send failed for token ${idx}: ${resp.error?.code || 'unknown'}`);
+              }
+            });
+          }
+        } catch (fcmError) {
+          console.error('❌ FCM batch send error:', fcmError);
+          failureCount += batchTokens.length;
+        }
+      }
+
+      // Log the sent notification for admin audit
+      const sentNotifRef = db.collection('sentNotifications').doc();
+      await sentNotifRef.set({
+        title: trimmedTitle,
+        body: trimmedBody,
+        targetType,
+        targetUserIds: targetType === 'individual' ? userIds : null,
+        sentBy: adminContext.uid,
+        sentAt: admin.firestore.FieldValue.serverTimestamp(),
+        successCount,
+        failureCount,
+        totalTargeted: tokensToSend.length
+      });
+
+      // Create in-app notifications for each target user (batch in chunks)
+      const notificationType = targetType === 'all' ? 'admin_broadcast' : 'admin_individual';
+      const batchSize = 450;
+
+      for (let i = 0; i < targetUserIdsForLog.length; i += batchSize) {
+        const batch = db.batch();
+        const batchIds = targetUserIdsForLog.slice(i, i + batchSize);
+
+        for (const userId of batchIds) {
+          const notifRef = db.collection('notifications').doc();
+          batch.set(notifRef, {
+            userId,
+            title: trimmedTitle,
+            body: trimmedBody,
+            type: notificationType,
+            read: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+        }
+
+        await batch.commit();
+      }
+
+      console.log(`✅ Notification sent: ${successCount} success, ${failureCount} failed`);
+
+      res.json({
+        success: true,
+        successCount,
+        failureCount,
+        notificationId: sentNotifRef.id,
+        totalTargeted: tokensToSend.length
+      });
+
+    } catch (error) {
+      console.error('❌ Error sending admin notification:', error);
+      res.status(500).json({ error: 'Failed to send notification' });
+    }
+  });
+
+  /**
+   * GET /admin/notifications/history
+   * 
+   * Get history of sent notifications (for admin audit).
+   */
+  app.get('/admin/notifications/history', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const db = admin.firestore();
+      const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+
+      const snapshot = await db.collection('sentNotifications')
+        .orderBy('sentAt', 'desc')
+        .limit(limit)
+        .get();
+
+      const notifications = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          title: data.title,
+          body: data.body,
+          targetType: data.targetType,
+          targetUserIds: data.targetUserIds,
+          sentBy: data.sentBy,
+          sentAt: data.sentAt?.toDate()?.toISOString() || null,
+          successCount: data.successCount || 0,
+          failureCount: data.failureCount || 0,
+          totalTargeted: data.totalTargeted || 0
+        };
+      });
+
+      res.json({ notifications });
+
+    } catch (error) {
+      console.error('❌ Error fetching notification history:', error);
+      res.status(500).json({ error: 'Failed to fetch notification history' });
     }
   });
 }
