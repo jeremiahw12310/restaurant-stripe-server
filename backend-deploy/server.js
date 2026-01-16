@@ -3835,6 +3835,128 @@ IMPORTANT:
   }
 
   // ---------------------------------------------------------------------------
+  // Admin-only Users Listing (server-side paging + search)
+  // ---------------------------------------------------------------------------
+  /**
+   * GET /admin/users
+   *
+   * Query params:
+   * - limit: number (default 50, max 200)
+   * - cursor: string (doc id to start after)
+   * - q: string (search query across firstName/email/phone; server-side scan)
+   *
+   * NOTE: Do NOT return fcmToken to clients.
+   */
+  app.get('/admin/users', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const db = admin.firestore();
+      const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+      const cursor = (req.query.cursor || '').toString().trim();
+      const q = (req.query.q || '').toString().trim().toLowerCase();
+
+      const mapUser = (doc) => {
+        const data = doc.data() || {};
+        const created = data.accountCreatedDate;
+        const createdDate = created && typeof created.toDate === 'function' ? created.toDate() : null;
+
+        return {
+          id: doc.id,
+          firstName: data.firstName || 'Unknown',
+          email: data.email || 'No email',
+          phone: data.phone || '',
+          points: typeof data.points === 'number' ? data.points : 0,
+          lifetimePoints: typeof data.lifetimePoints === 'number' ? data.lifetimePoints : 0,
+          avatarEmoji: data.avatarEmoji || '👤',
+          avatarColor: data.avatarColor || data.avatarColorName || null,
+          profilePhotoURL: data.profilePhotoURL || null,
+          isVerified: data.isVerified === true,
+          isAdmin: data.isAdmin === true,
+          isEmployee: data.isEmployee === true,
+          accountCreatedDate: createdDate ? createdDate.toISOString() : null,
+          hasFcmToken: data.hasFcmToken === true
+        };
+      };
+
+      // Fast path: no search query -> simple pagination
+      if (!q) {
+        let query = db.collection('users')
+          .orderBy(admin.firestore.FieldPath.documentId())
+          .limit(limit);
+
+        if (cursor) {
+          query = query.startAfter(cursor);
+        }
+
+        const snap = await query.get();
+        const docs = snap.docs || [];
+        const users = docs.map(mapUser);
+        const nextCursor = docs.length > 0 ? docs[docs.length - 1].id : null;
+
+        return res.json({
+          users,
+          nextCursor,
+          hasMore: docs.length === limit
+        });
+      }
+
+      // Search path: scan in pages, filter server-side, return matches (up to limit)
+      const scanPageSize = 500;
+      const matches = [];
+      let scanCursor = cursor || null;
+      let reachedEnd = false;
+      let lastScannedId = null;
+
+      while (matches.length < limit && !reachedEnd) {
+        let query = db.collection('users')
+          .orderBy(admin.firestore.FieldPath.documentId())
+          .limit(scanPageSize);
+
+        if (scanCursor) {
+          query = query.startAfter(scanCursor);
+        }
+
+        const page = await query.get();
+        if (!page || page.empty) {
+          reachedEnd = true;
+          break;
+        }
+
+        for (const doc of page.docs) {
+          lastScannedId = doc.id;
+          const data = doc.data() || {};
+
+          const firstName = (data.firstName || '').toString().toLowerCase();
+          const email = (data.email || '').toString().toLowerCase();
+          const phone = (data.phone || '').toString().toLowerCase();
+
+          if (firstName.includes(q) || email.includes(q) || phone.includes(q)) {
+            matches.push(mapUser(doc));
+            if (matches.length >= limit) break;
+          }
+        }
+
+        // Prepare for next scan page
+        scanCursor = lastScannedId;
+        if (page.docs.length < scanPageSize) {
+          reachedEnd = true;
+        }
+      }
+
+      return res.json({
+        users: matches,
+        nextCursor: lastScannedId,
+        hasMore: !reachedEnd
+      });
+    } catch (error) {
+      console.error('❌ Error listing admin users:', error);
+      res.status(500).json({ error: 'Failed to list users' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
   // Staff-only Rewards Validation / Consumption (QR scanning)
   // ---------------------------------------------------------------------------
 
