@@ -4937,30 +4937,47 @@ IMPORTANT:
         };
 
         try {
-          // Try sending to each token individually for better error isolation
+          // Try sending via direct HTTP to FCM API (bypassing SDK)
+          const axios = require('axios');
+          const credential = admin.app().options.credential;
+          const tokenResult = await credential.getAccessToken();
+          const accessToken = tokenResult.access_token;
+          
+          console.log('🔑 Got access token for FCM, length:', accessToken.length);
+          
           for (let j = 0; j < batchTokens.length; j++) {
-            const singleMessage = {
-              notification: {
-                title: trimmedTitle,
-                body: trimmedBody
-              },
-              data: {
-                type: targetType === 'all' ? 'admin_broadcast' : 'admin_individual',
-                timestamp: new Date().toISOString()
-              },
-              token: batchTokens[j]
+            const fcmPayload = {
+              message: {
+                token: batchTokens[j],
+                notification: {
+                  title: trimmedTitle,
+                  body: trimmedBody
+                },
+                data: {
+                  type: targetType === 'all' ? 'admin_broadcast' : 'admin_individual',
+                  timestamp: new Date().toISOString()
+                }
+              }
             };
             
             try {
-              const messageId = await admin.messaging().send(singleMessage);
-              console.log(`✅ FCM sent successfully to token ${j}, messageId:`, messageId);
+              const response = await axios.post(
+                `https://fcm.googleapis.com/v1/projects/dumplinghouseapp/messages:send`,
+                fcmPayload,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json'
+                  }
+                }
+              );
+              console.log(`✅ FCM sent successfully to token ${j}, response:`, response.data);
               successCount += 1;
-            } catch (singleError) {
-              console.warn(`❌ FCM send failed for token ${j}:`);
-              console.warn(`   - Error code: ${singleError.code || 'unknown'}`);
-              console.warn(`   - Error message: ${singleError.message || 'no message'}`);
+            } catch (httpError) {
+              console.warn(`❌ FCM HTTP send failed for token ${j}:`);
+              console.warn(`   - Status: ${httpError.response?.status}`);
+              console.warn(`   - Error: ${JSON.stringify(httpError.response?.data || httpError.message)}`);
               console.warn(`   - Token prefix: ${batchTokens[j]?.substring(0, 30)}...`);
-              console.warn(`   - Full error:`, JSON.stringify(singleError, null, 2));
               failureCount += 1;
             }
           }
