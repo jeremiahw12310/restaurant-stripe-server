@@ -4980,6 +4980,23 @@ IMPORTANT:
                 data: {
                   type: targetType === 'all' ? 'admin_broadcast' : 'admin_individual',
                   timestamp: new Date().toISOString()
+                },
+                // Add explicit APNs configuration for iOS
+                apns: {
+                  headers: {
+                    'apns-priority': '10',
+                    'apns-topic': 'test.Restaurant-Demo' // Must match iOS bundle ID
+                  },
+                  payload: {
+                    aps: {
+                      alert: {
+                        title: trimmedTitle,
+                        body: trimmedBody
+                      },
+                      sound: 'default',
+                      badge: 1
+                    }
+                  }
                 }
               }
             };
