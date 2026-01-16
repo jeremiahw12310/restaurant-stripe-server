@@ -4598,7 +4598,6 @@ IMPORTANT:
         while (true) {
           let query = db.collection('users')
             .where('hasFcmToken', '==', true)
-            .orderBy(admin.firestore.FieldPath.documentId())
             .limit(pageSize);
 
           if (lastDoc) {
