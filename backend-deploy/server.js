@@ -4939,11 +4939,22 @@ IMPORTANT:
         try {
           // Try sending via direct HTTP to FCM API (bypassing SDK)
           const axios = require('axios');
-          const credential = admin.app().options.credential;
-          const tokenResult = await credential.getAccessToken();
-          const accessToken = tokenResult.access_token;
+          const { GoogleAuth } = require('google-auth-library');
           
-          console.log('🔑 Got access token for FCM, length:', accessToken.length);
+          // Get service account from environment
+          const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+          
+          // Create auth client with explicit FCM scope
+          const auth = new GoogleAuth({
+            credentials: serviceAccount,
+            scopes: ['https://www.googleapis.com/auth/firebase.messaging']
+          });
+          
+          const client = await auth.getClient();
+          const tokenResponse = await client.getAccessToken();
+          const accessToken = tokenResponse.token;
+          
+          console.log('🔑 Got access token for FCM with explicit scope, length:', accessToken?.length || 0);
           
           for (let j = 0; j < batchTokens.length; j++) {
             const fcmPayload = {
