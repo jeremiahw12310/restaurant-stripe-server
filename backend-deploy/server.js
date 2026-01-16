@@ -3834,9 +3834,201 @@ IMPORTANT:
     }
   }
 
+  // Helper to verify Firebase Auth token for any signed-in user
+  async function requireUser(req, res) {
+    try {
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+      if (!token) {
+        res.status(401).json({ error: 'Missing or invalid Authorization header' });
+        return null;
+      }
+
+      const decoded = await admin.auth().verifyIdToken(token);
+      return { uid: decoded.uid, decoded };
+    } catch (err) {
+      console.error('❌ User auth check failed:', err);
+      res.status(401).json({ error: 'Failed to verify credentials' });
+      return null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Authenticated User Endpoints
+  // ---------------------------------------------------------------------------
+  /**
+   * POST /me/fcmToken
+   *
+   * Authenticated user endpoint. Stores (or clears) the caller's FCM token
+   * server-side using Admin SDK (bypasses client Firestore issues).
+   *
+   * Body:
+   * - { fcmToken: string } to set token
+   * - { fcmToken: null } to clear token
+   */
+  app.post('/me/fcmToken', async (req, res) => {
+    try {
+      const userContext = await requireUser(req, res);
+      if (!userContext) return;
+
+      const { fcmToken } = req.body || {};
+      const db = admin.firestore();
+      const userRef = db.collection('users').doc(userContext.uid);
+
+      const userDoc = await userRef.get();
+      if (!userDoc.exists) {
+        return res.status(404).json({ error: 'User record not found' });
+      }
+
+      if (fcmToken === null) {
+        await userRef.set({
+          hasFcmToken: false,
+          fcmToken: admin.firestore.FieldValue.delete(),
+          fcmTokenUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        return res.json({ ok: true, hasFcmToken: false });
+      }
+
+      if (typeof fcmToken !== 'string' || fcmToken.trim().length === 0) {
+        return res.status(400).json({ error: 'fcmToken must be a non-empty string or null' });
+      }
+
+      const trimmedToken = fcmToken.trim();
+      await userRef.set({
+        hasFcmToken: true,
+        fcmToken: trimmedToken,
+        fcmTokenUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      return res.json({ ok: true, hasFcmToken: true });
+    } catch (error) {
+      console.error('❌ Error in /me/fcmToken:', error);
+      return res.status(500).json({ error: 'Failed to store FCM token' });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // Admin-only Users Listing (server-side paging + search)
   // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Admin-only Debug Endpoints (Firebase wiring + push targeting visibility)
+  // ---------------------------------------------------------------------------
+  /**
+   * GET /admin/debug/firebase
+   *
+   * Admin-only. Returns non-secret information about which Firebase project
+   * this server instance is connected to.
+   */
+  app.get('/admin/debug/firebase', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const appInstance = admin.app();
+      const options = appInstance?.options || {};
+
+      // Best-effort project id derivation without exposing secrets.
+      let derivedProjectId = options.projectId || process.env.GOOGLE_CLOUD_PROJECT || null;
+      if (!derivedProjectId && process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+        try {
+          const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+          if (sa && typeof sa.project_id === 'string') derivedProjectId = sa.project_id;
+        } catch (_) {
+          // ignore parse errors
+        }
+      }
+
+      return res.json({
+        ok: true,
+        firebase: {
+          appName: appInstance?.name || null,
+          optionsProjectId: options.projectId || null,
+          derivedProjectId
+        },
+        env: {
+          FIREBASE_AUTH_TYPE: process.env.FIREBASE_AUTH_TYPE || null,
+          GOOGLE_CLOUD_PROJECT: process.env.GOOGLE_CLOUD_PROJECT || null,
+          NODE_ENV: process.env.NODE_ENV || null
+        }
+      });
+    } catch (error) {
+      console.error('❌ Error in /admin/debug/firebase:', error);
+      return res.status(500).json({ error: 'Failed to fetch Firebase debug info' });
+    }
+  });
+
+  /**
+   * GET /admin/debug/pushTargets
+   *
+   * Admin-only. Summarizes how many users are marked as having FCM tokens,
+   * and samples a few documents to confirm fields exist (never returns tokens).
+   */
+  app.get('/admin/debug/pushTargets', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const db = admin.firestore();
+      const pageSize = 500;
+      const sampleSize = Math.min(parseInt(req.query.sampleSize, 10) || 10, 25);
+
+      let lastDoc = null;
+      let hasFcmTokenTrueCount = 0;
+      let excludedAdminCount = 0;
+      let missingFcmTokenCount = 0;
+      const samples = [];
+
+      while (true) {
+        let query = db.collection('users')
+          .where('hasFcmToken', '==', true)
+          .limit(pageSize);
+
+        if (lastDoc) query = query.startAfter(lastDoc);
+
+        const page = await query.get();
+        if (!page || page.empty) break;
+
+        for (const doc of page.docs) {
+          hasFcmTokenTrueCount += 1;
+          const data = doc.data() || {};
+
+          if (data.isAdmin === true) excludedAdminCount += 1;
+
+          const fcmToken = data.fcmToken;
+          const isValidToken = (typeof fcmToken === 'string' && fcmToken.length > 0);
+          if (!isValidToken) missingFcmTokenCount += 1;
+
+          if (samples.length < sampleSize) {
+            samples.push({
+              id: doc.id,
+              isAdmin: data.isAdmin === true,
+              hasFcmToken: data.hasFcmToken === true,
+              fcmTokenLength: isValidToken ? fcmToken.length : 0,
+              hasFcmTokenUpdatedAt: !!data.fcmTokenUpdatedAt
+            });
+          }
+        }
+
+        lastDoc = page.docs[page.docs.length - 1];
+        if (page.docs.length < pageSize) break;
+      }
+
+      return res.json({
+        ok: true,
+        counts: {
+          hasFcmTokenTrueCount,
+          excludedAdminCount,
+          missingFcmTokenCount
+        },
+        samples
+      });
+    } catch (error) {
+      console.error('❌ Error in /admin/debug/pushTargets:', error);
+      return res.status(500).json({ error: 'Failed to fetch push target debug info' });
+    }
+  });
+
   /**
    * GET /admin/users
    *
@@ -4651,12 +4843,15 @@ IMPORTANT:
       // Filter to users with valid FCM tokens (and exclude admins for broadcast)
       const tokensToSend = [];
       const targetUserIdsForLog = [];
+      let excludedAdminCount = 0;
+      let missingFcmTokenCount = 0;
 
       for (const doc of usersSnapshot.docs) {
         const userData = doc.data() || {};
         
         // Skip admin users for broadcast (they shouldn't receive customer notifications)
         if (targetType === 'all' && userData.isAdmin === true) {
+          excludedAdminCount += 1;
           continue;
         }
 
@@ -4664,15 +4859,37 @@ IMPORTANT:
         if (fcmToken && typeof fcmToken === 'string' && fcmToken.length > 0) {
           tokensToSend.push(fcmToken);
           targetUserIdsForLog.push(doc.id);
+        } else {
+          missingFcmTokenCount += 1;
         }
       }
 
       if (tokensToSend.length === 0) {
         console.log('⚠️ No valid FCM tokens found for notification');
-        return res.status(400).json({ 
+        const diagnostics = (targetType === 'all')
+          ? {
+              targetType,
+              matchedHasFcmTokenCount: usersSnapshot.docs.length,
+              excludedAdminCount,
+              missingFcmTokenCount
+            }
+          : {
+              targetType,
+              requestedCount: Array.isArray(userIds) ? userIds.length : 0,
+              foundUserDocsCount: usersSnapshot.docs.length,
+              missingFcmTokenCount
+            };
+
+        const hint = (targetType === 'all' && usersSnapshot.docs.length === 0)
+          ? 'No users matched hasFcmToken==true. Ensure devices store tokens (e.g. POST /me/fcmToken) and that the backend and client are using the same Firebase project.'
+          : 'Ensure targeted users have a non-empty fcmToken stored on their user document.';
+
+        return res.status(400).json({
           error: 'No users with push notifications enabled found',
           successCount: 0,
-          failureCount: 0
+          failureCount: 0,
+          diagnostics,
+          hint
         });
       }
 
