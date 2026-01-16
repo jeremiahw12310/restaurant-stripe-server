@@ -12,6 +12,16 @@ const admin = require('firebase-admin');
 if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
   try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    
+    // Debug: Log service account details (without exposing the full private key)
+    console.log('🔍 Service Account Debug:');
+    console.log('   - project_id:', serviceAccount.project_id);
+    console.log('   - client_email:', serviceAccount.client_email);
+    console.log('   - private_key exists:', !!serviceAccount.private_key);
+    console.log('   - private_key length:', serviceAccount.private_key?.length || 0);
+    console.log('   - private_key has newlines:', serviceAccount.private_key?.includes('\n') || false);
+    console.log('   - private_key starts with:', serviceAccount.private_key?.substring(0, 30) + '...');
+    
     admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     console.log('✅ Firebase Admin initialized with service account key');
   } catch (error) {
@@ -4921,11 +4931,17 @@ IMPORTANT:
           successCount += response.successCount;
           failureCount += response.failureCount;
 
-          // Log any failures for debugging
+          // Log any failures for debugging with full error details
           if (response.failureCount > 0) {
             response.responses.forEach((resp, idx) => {
               if (!resp.success) {
-                console.warn(`❌ FCM send failed for token ${idx}: ${resp.error?.code || 'unknown'}`);
+                console.warn(`❌ FCM send failed for token ${idx}:`);
+                console.warn(`   - Error code: ${resp.error?.code || 'unknown'}`);
+                console.warn(`   - Error message: ${resp.error?.message || 'no message'}`);
+                console.warn(`   - Token prefix: ${batchTokens[idx]?.substring(0, 30)}...`);
+                if (resp.error?.stack) {
+                  console.warn(`   - Stack: ${resp.error.stack.split('\n')[0]}`);
+                }
               }
             });
           }
