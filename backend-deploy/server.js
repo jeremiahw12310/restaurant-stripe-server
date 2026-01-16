@@ -22,8 +22,18 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
     console.log('   - private_key has newlines:', serviceAccount.private_key?.includes('\n') || false);
     console.log('   - private_key starts with:', serviceAccount.private_key?.substring(0, 30) + '...');
     
-    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    const credential = admin.credential.cert(serviceAccount);
+    admin.initializeApp({ credential });
     console.log('✅ Firebase Admin initialized with service account key');
+    
+    // Test if credential can generate access token
+    credential.getAccessToken().then(token => {
+      console.log('✅ Service account can generate access tokens');
+      console.log('   - Token type:', token.access_token ? 'Bearer token received' : 'No token');
+      console.log('   - Expires in:', token.expires_in, 'seconds');
+    }).catch(err => {
+      console.error('❌ Service account CANNOT generate access tokens:', err.message);
+    });
   } catch (error) {
     console.error('❌ Error initializing Firebase Admin with service account key:', error);
   }
