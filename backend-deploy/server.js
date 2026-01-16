@@ -4937,23 +4937,32 @@ IMPORTANT:
         };
 
         try {
-          const response = await admin.messaging().sendEachForMulticast(message);
-          successCount += response.successCount;
-          failureCount += response.failureCount;
-
-          // Log any failures for debugging with full error details
-          if (response.failureCount > 0) {
-            response.responses.forEach((resp, idx) => {
-              if (!resp.success) {
-                console.warn(`❌ FCM send failed for token ${idx}:`);
-                console.warn(`   - Error code: ${resp.error?.code || 'unknown'}`);
-                console.warn(`   - Error message: ${resp.error?.message || 'no message'}`);
-                console.warn(`   - Token prefix: ${batchTokens[idx]?.substring(0, 30)}...`);
-                if (resp.error?.stack) {
-                  console.warn(`   - Stack: ${resp.error.stack.split('\n')[0]}`);
-                }
-              }
-            });
+          // Try sending to each token individually for better error isolation
+          for (let j = 0; j < batchTokens.length; j++) {
+            const singleMessage = {
+              notification: {
+                title: trimmedTitle,
+                body: trimmedBody
+              },
+              data: {
+                type: targetType === 'all' ? 'admin_broadcast' : 'admin_individual',
+                timestamp: new Date().toISOString()
+              },
+              token: batchTokens[j]
+            };
+            
+            try {
+              const messageId = await admin.messaging().send(singleMessage);
+              console.log(`✅ FCM sent successfully to token ${j}, messageId:`, messageId);
+              successCount += 1;
+            } catch (singleError) {
+              console.warn(`❌ FCM send failed for token ${j}:`);
+              console.warn(`   - Error code: ${singleError.code || 'unknown'}`);
+              console.warn(`   - Error message: ${singleError.message || 'no message'}`);
+              console.warn(`   - Token prefix: ${batchTokens[j]?.substring(0, 30)}...`);
+              console.warn(`   - Full error:`, JSON.stringify(singleError, null, 2));
+              failureCount += 1;
+            }
           }
         } catch (fcmError) {
           console.error('❌ FCM batch send error:', fcmError);
