@@ -3,7 +3,7 @@
     "apps": [],
     "details": [
       {
-        "appID": "TZ498BT5J7.test.Restaurant-Demo",
+        "appID": "TZ498BT5J7.bytequack.dumplinghouse",
         "paths": [ "/refer*", "/referral*" ]
       }
     ]

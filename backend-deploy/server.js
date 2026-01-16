@@ -4985,7 +4985,7 @@ IMPORTANT:
                 apns: {
                   headers: {
                     'apns-priority': '10',
-                    'apns-topic': 'test.Restaurant-Demo' // Must match iOS bundle ID
+                    'apns-topic': 'bytequack.dumplinghouse' // Must match iOS bundle ID
                   },
                   payload: {
                     aps: {
