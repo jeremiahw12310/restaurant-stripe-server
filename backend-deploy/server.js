@@ -4944,17 +4944,30 @@ IMPORTANT:
           // Get service account from environment
           const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
           
-          // Create auth client with explicit FCM scope
+          // Create auth client with broad cloud-platform scope
           const auth = new GoogleAuth({
             credentials: serviceAccount,
-            scopes: ['https://www.googleapis.com/auth/firebase.messaging']
+            scopes: ['https://www.googleapis.com/auth/cloud-platform']
           });
           
           const client = await auth.getClient();
           const tokenResponse = await client.getAccessToken();
           const accessToken = tokenResponse.token;
           
-          console.log('🔑 Got access token for FCM with explicit scope, length:', accessToken?.length || 0);
+          console.log('🔑 Got access token with cloud-platform scope');
+          console.log('   - Token length:', accessToken?.length || 0);
+          console.log('   - Token starts with:', accessToken?.substring(0, 20) + '...');
+          
+          // Test the token by calling a simple Google API first
+          try {
+            const testResponse = await axios.get(
+              `https://cloudresourcemanager.googleapis.com/v1/projects/dumplinghouseapp`,
+              { headers: { 'Authorization': `Bearer ${accessToken}` } }
+            );
+            console.log('✅ Token validation test PASSED - can access project:', testResponse.data?.projectId);
+          } catch (testErr) {
+            console.log('❌ Token validation test FAILED:', testErr.response?.status, testErr.response?.data?.error?.message || testErr.message);
+          }
           
           for (let j = 0; j < batchTokens.length; j++) {
             const fcmPayload = {
