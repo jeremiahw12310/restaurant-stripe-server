@@ -374,6 +374,188 @@ app.get('/referrals/mine', async (req, res) => {
   }
 });
 
+// Check and award referral bonus when referred user reaches 50 points
+app.post('/referrals/award-check', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const idToken = authHeader.split('Bearer ')[1];
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const uid = decodedToken.uid;
+
+    console.log(`🎯 Referral award-check for user: ${uid}`);
+
+    const db = admin.firestore();
+    const REFERRAL_BONUS = 50;
+
+    // Find referral where this user is the referred person
+    const referralSnap = await db.collection('referrals')
+      .where('referredUserId', '==', uid)
+      .limit(1)
+      .get();
+
+    if (referralSnap.empty) {
+      return res.json({ status: 'not_eligible', reason: 'no_referral' });
+    }
+
+    const referralDoc = referralSnap.docs[0];
+    const referralId = referralDoc.id;
+    const referralData = referralDoc.data();
+    const referrerId = referralData.referrerUserId;
+
+    if (referralData.status === 'awarded') {
+      return res.json({ status: 'already_awarded', referralId });
+    }
+
+    // Check referred user's points
+    const referredUserRef = db.collection('users').doc(uid);
+    const referredUserDoc = await referredUserRef.get();
+    if (!referredUserDoc.exists) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const referredUserData = referredUserDoc.data();
+    if ((referredUserData.points || 0) < 50) {
+      return res.json({ status: 'not_eligible', reason: 'threshold_not_met', currentPoints: referredUserData.points || 0 });
+    }
+
+    const referrerUserRef = db.collection('users').doc(referrerId);
+    const referrerUserDoc = await referrerUserRef.get();
+
+    let referrerNewPoints = null, referredNewPoints = null;
+    let referrerFcmToken = null, referredFcmToken = null;
+    let referrerName = 'Friend', referredName = 'Friend';
+
+    await db.runTransaction(async (tx) => {
+      const txReferralDoc = await tx.get(db.collection('referrals').doc(referralId));
+      if (txReferralDoc.data().status === 'awarded') throw new Error('ALREADY_AWARDED');
+
+      // Award referred user
+      const txReferredDoc = await tx.get(referredUserRef);
+      const txReferredData = txReferredDoc.data() || {};
+      referredFcmToken = txReferredData.fcmToken || null;
+      referredName = txReferredData.firstName || 'Friend';
+      const referredPts = txReferredData.points || 0;
+      const referredLife = typeof txReferredData.lifetimePoints === 'number' ? txReferredData.lifetimePoints : referredPts;
+      referredNewPoints = referredPts + REFERRAL_BONUS;
+
+      tx.update(referredUserRef, { points: referredNewPoints, lifetimePoints: referredLife + REFERRAL_BONUS });
+      tx.set(db.collection('pointsTransactions').doc(`referral_referred_${Date.now()}_${Math.random().toString(36).substr(2,9)}`), {
+        userId: uid, type: 'referral', amount: REFERRAL_BONUS,
+        description: 'Referral bonus - reached 50 points!',
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        metadata: { referralId, role: 'referred' }
+      });
+
+      // Award referrer if exists
+      if (referrerUserDoc.exists) {
+        const txReferrerDoc = await tx.get(referrerUserRef);
+        const txReferrerData = txReferrerDoc.data() || {};
+        referrerFcmToken = txReferrerData.fcmToken || null;
+        referrerName = txReferrerData.firstName || 'Friend';
+        const referrerPts = txReferrerData.points || 0;
+        const referrerLife = typeof txReferrerData.lifetimePoints === 'number' ? txReferrerData.lifetimePoints : referrerPts;
+        referrerNewPoints = referrerPts + REFERRAL_BONUS;
+
+        tx.update(referrerUserRef, { points: referrerNewPoints, lifetimePoints: referrerLife + REFERRAL_BONUS });
+        tx.set(db.collection('pointsTransactions').doc(`referral_referrer_${Date.now()}_${Math.random().toString(36).substr(2,9)}`), {
+          userId: referrerId, type: 'referral', amount: REFERRAL_BONUS,
+          description: `Referral bonus - ${referredName} reached 50 points!`,
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          metadata: { referralId, role: 'referrer', referredUserId: uid }
+        });
+      }
+
+      tx.update(db.collection('referrals').doc(referralId), {
+        status: 'awarded',
+        awardedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+
+    console.log(`🎉 Referral ${referralId} awarded!`);
+
+    // Send push notifications (fire-and-forget)
+    if (referrerFcmToken) {
+      sendPushNotificationToToken(referrerFcmToken, 'Referral Bonus Awarded! 🎉',
+        `${referredName} reached 50 points! You earned +${REFERRAL_BONUS} bonus points.`,
+        { type: 'referral_awarded', role: 'referrer', referralId }
+      ).then(r => console.log('📱 Referrer push:', r));
+    }
+    if (referredFcmToken) {
+      sendPushNotificationToToken(referredFcmToken, 'Referral Bonus Awarded! 🎉',
+        `You reached 50 points! You and ${referrerName} each earned +${REFERRAL_BONUS} bonus points.`,
+        { type: 'referral_awarded', role: 'referred', referralId }
+      ).then(r => console.log('📱 Referred push:', r));
+    }
+
+    return res.json({ status: 'awarded', referralId, referrerBonus: referrerNewPoints !== null ? REFERRAL_BONUS : 0, referredBonus: REFERRAL_BONUS });
+  } catch (error) {
+    if (error.message === 'ALREADY_AWARDED') return res.json({ status: 'already_awarded' });
+    console.error('❌ Error in /referrals/award-check:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Referral Award System - Push Notification Helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Send a push notification to a single FCM token.
+ * Returns { success: boolean, error?: string }
+ */
+async function sendPushNotificationToToken(fcmToken, title, body, data = {}) {
+  if (!fcmToken || typeof fcmToken !== 'string' || fcmToken.length === 0) {
+    return { success: false, error: 'Invalid or missing FCM token' };
+  }
+
+  try {
+    const axios = require('axios');
+    const { GoogleAuth } = require('google-auth-library');
+    
+    if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+      console.warn('⚠️ FIREBASE_SERVICE_ACCOUNT_KEY not set, cannot send push notification');
+      return { success: false, error: 'Service account not configured' };
+    }
+    
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    const auth = new GoogleAuth({
+      credentials: serviceAccount,
+      scopes: ['https://www.googleapis.com/auth/cloud-platform']
+    });
+    
+    const client = await auth.getClient();
+    const tokenResponse = await client.getAccessToken();
+    const accessToken = tokenResponse.token;
+    
+    const fcmPayload = {
+      message: {
+        token: fcmToken,
+        notification: { title, body },
+        data: { ...data, timestamp: new Date().toISOString() },
+        apns: {
+          headers: { 'apns-priority': '10', 'apns-topic': 'bytequack.dumplinghouse' },
+          payload: { aps: { alert: { title, body }, sound: 'default', badge: 1 } }
+        }
+      }
+    };
+    
+    const response = await axios.post(
+      'https://fcm.googleapis.com/v1/projects/dumplinghouseapp/messages:send',
+      fcmPayload,
+      { headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
+    );
+    
+    console.log('✅ FCM push sent:', response.data);
+    return { success: true };
+  } catch (error) {
+    console.warn('❌ FCM push failed:', error.response?.data || error.message);
+    return { success: false, error: error.response?.data?.error?.message || error.message };
+  }
+}
+
 // Helper function to generate referral codes
 function generateReferralCode(length = 6) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Removed ambiguous chars
