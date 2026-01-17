@@ -383,16 +383,30 @@ app.post('/referrals/award-check', async (req, res) => {
     }
     const idToken = authHeader.split('Bearer ')[1];
     const decodedToken = await admin.auth().verifyIdToken(idToken);
-    const uid = decodedToken.uid;
-
-    console.log(`🎯 Referral award-check for user: ${uid}`);
+    const callerUid = decodedToken.uid;
 
     const db = admin.firestore();
     const REFERRAL_BONUS = 50;
 
-    // Find referral where this user is the referred person
+    // Allow admins to specify a target user (for admin panel point adjustments)
+    const { targetUserId } = req.body || {};
+    let checkUserId = callerUid; // default: check for calling user
+
+    if (targetUserId && targetUserId !== callerUid) {
+      // Verify caller is an admin before allowing check for another user
+      const callerDoc = await db.collection('users').doc(callerUid).get();
+      if (!callerDoc.exists || !callerDoc.data().isAdmin) {
+        return res.status(403).json({ error: 'Admin required to check other users' });
+      }
+      checkUserId = targetUserId;
+      console.log(`🎯 Admin ${callerUid} triggering referral award-check for user: ${checkUserId}`);
+    } else {
+      console.log(`🎯 Referral award-check for user: ${checkUserId}`);
+    }
+
+    // Find referral where target user is the referred person
     const referralSnap = await db.collection('referrals')
-      .where('referredUserId', '==', uid)
+      .where('referredUserId', '==', checkUserId)
       .limit(1)
       .get();
 
@@ -410,7 +424,7 @@ app.post('/referrals/award-check', async (req, res) => {
     }
 
     // Check referred user's points
-    const referredUserRef = db.collection('users').doc(uid);
+    const referredUserRef = db.collection('users').doc(checkUserId);
     const referredUserDoc = await referredUserRef.get();
     if (!referredUserDoc.exists) {
       return res.status(404).json({ error: 'User not found' });
@@ -443,7 +457,7 @@ app.post('/referrals/award-check', async (req, res) => {
 
       tx.update(referredUserRef, { points: referredNewPoints, lifetimePoints: referredLife + REFERRAL_BONUS });
       tx.set(db.collection('pointsTransactions').doc(`referral_referred_${Date.now()}_${Math.random().toString(36).substr(2,9)}`), {
-        userId: uid, type: 'referral', amount: REFERRAL_BONUS,
+        userId: checkUserId, type: 'referral', amount: REFERRAL_BONUS,
         description: 'Referral bonus - reached 50 points!',
         timestamp: admin.firestore.FieldValue.serverTimestamp(),
         metadata: { referralId, role: 'referred' }
@@ -464,7 +478,7 @@ app.post('/referrals/award-check', async (req, res) => {
           userId: referrerId, type: 'referral', amount: REFERRAL_BONUS,
           description: `Referral bonus - ${referredName} reached 50 points!`,
           timestamp: admin.firestore.FieldValue.serverTimestamp(),
-          metadata: { referralId, role: 'referrer', referredUserId: uid }
+          metadata: { referralId, role: 'referrer', referredUserId: checkUserId }
         });
       }
 
