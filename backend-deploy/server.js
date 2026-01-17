@@ -4097,13 +4097,41 @@ IMPORTANT:
       }
 
       const trimmedToken = fcmToken.trim();
+
+      // DEDUPLICATION: Remove this token from any OTHER user who has it
+      // This prevents notifications from going to the wrong device after account switches
+      const existingTokenQuery = await db.collection('users')
+        .where('fcmToken', '==', trimmedToken)
+        .get();
+
+      let cleanedCount = 0;
+      if (!existingTokenQuery.empty) {
+        const batch = db.batch();
+        for (const doc of existingTokenQuery.docs) {
+          if (doc.id !== userContext.uid) {
+            batch.update(doc.ref, {
+              fcmToken: admin.firestore.FieldValue.delete(),
+              hasFcmToken: false,
+              fcmTokenUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+            cleanedCount++;
+          }
+        }
+
+        if (cleanedCount > 0) {
+          await batch.commit();
+          console.log(`🧹 Cleaned FCM token from ${cleanedCount} other user(s) for uid ${userContext.uid}`);
+        }
+      }
+
+      // Now store the token for the current user
       await userRef.set({
         hasFcmToken: true,
         fcmToken: trimmedToken,
         fcmTokenUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
 
-      return res.json({ ok: true, hasFcmToken: true });
+      return res.json({ ok: true, hasFcmToken: true, cleanedFromOtherUsers: cleanedCount });
     } catch (error) {
       console.error('❌ Error in /me/fcmToken:', error);
       return res.status(500).json({ error: 'Failed to store FCM token' });
