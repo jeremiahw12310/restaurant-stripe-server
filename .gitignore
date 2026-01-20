@@ -129,7 +129,10 @@ xcodebuild.log
 xcodebuild_verbose.log
 
 # Package manager
-Package.resolved
+# Note: Xcode Cloud requires Package.resolved to be committed
+# Allow Package.resolved inside xcodeproj (needed for Xcode Cloud)
+# But ignore root-level Package.resolved if it exists
+/Package.resolved
 
 # Node modules (should never be tracked)
 node_modules/
