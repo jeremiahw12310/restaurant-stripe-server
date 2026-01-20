@@ -1,0 +1,488 @@
+import SwiftUI
+import FirebaseFirestore
+import FirebaseAuth
+
+/// View model powering the per‑user admin detail screen.
+/// Loads user profile basics, points history, dietary preferences, and referral info.
+class AdminUserDetailViewModel: ObservableObject {
+    // MARK: - Input
+    let userId: String
+
+    // We keep a lightweight summary for header display (name, email, points, lifetimePoints, etc.)
+    @Published var userSummary: UserAccount
+
+    // MARK: - Points / Rewards
+    @Published var transactions: [PointsTransaction] = []
+    @Published var summary: PointsHistorySummary?
+
+    // Editable admin controls
+    @Published var editablePoints: String = ""
+    @Published var editablePhoneNumber: String = ""
+    @Published var editableIsAdmin: Bool = false
+    @Published var editableIsVerified: Bool = false
+
+    // MARK: - Dietary Preferences
+    @Published var likesSpicyFood: Bool = false
+    @Published var dislikesSpicyFood: Bool = false
+    @Published var hasPeanutAllergy: Bool = false
+    @Published var isVegetarian: Bool = false
+    @Published var hasLactoseIntolerance: Bool = false
+    @Published var doesntEatPork: Bool = false
+    @Published var tastePreferences: String = ""
+    @Published var hasCompletedPreferences: Bool = false
+
+    // MARK: - Referral Info
+    struct ReferralConnection: Identifiable {
+        let id: String
+        let name: String
+        let relation: String // "Referred by" or "You referred"
+        let status: String   // "Pending" | "Awarded"
+        let pointsTowards50: Int
+    }
+
+    @Published var referralCode: String?
+    @Published var outboundReferrals: [ReferralConnection] = []
+    @Published var inboundReferral: ReferralConnection?
+
+    // MARK: - Loading / Error
+    @Published var isLoading: Bool = false
+    @Published var errorMessage: String = ""
+
+    private let db = Firestore.firestore()
+
+    init(user: UserAccount) {
+        self.userId = user.id
+        self.userSummary = user
+        syncEditableFieldsFromSummary()
+    }
+
+    // MARK: - Public API
+
+    func loadAll() {
+        isLoading = true
+        errorMessage = ""
+
+        let group = DispatchGroup()
+        var firstError: String?
+
+        group.enter()
+        loadUserDocument { error in
+            if let error = error, firstError == nil { firstError = error }
+            group.leave()
+        }
+
+        group.enter()
+        loadPointsHistory { error in
+            if let error = error, firstError == nil { firstError = error }
+            group.leave()
+        }
+
+        group.enter()
+        loadReferralInfo { error in
+            if let error = error, firstError == nil { firstError = error }
+            group.leave()
+        }
+
+        group.notify(queue: .main) {
+            self.isLoading = false
+            if let message = firstError {
+                self.errorMessage = message
+            }
+        }
+    }
+
+    // MARK: - Firestore Loads
+
+    private func loadUserDocument(completion: @escaping (String?) -> Void) {
+        db.collection("users").document(userId).getDocument { snapshot, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    completion("Error loading user profile: \(error.localizedDescription)")
+                    return
+                }
+                guard let data = snapshot?.data() else {
+                    completion("User profile not found")
+                    return
+                }
+
+                // Update summary with freshest fields
+                let accountCreatedDate: Date = (data["accountCreatedDate"] as? Timestamp)?.dateValue() ?? self.userSummary.accountCreatedDate
+                let updated = UserAccount(
+                    id: self.userSummary.id,
+                    firstName: data["firstName"] as? String ?? self.userSummary.firstName,
+                    email: data["email"] as? String ?? self.userSummary.email,
+                    phoneNumber: data["phone"] as? String ?? self.userSummary.phoneNumber,
+                    points: data["points"] as? Int ?? self.userSummary.points,
+                    lifetimePoints: data["lifetimePoints"] as? Int ?? self.userSummary.lifetimePoints,
+                    avatarEmoji: data["avatarEmoji"] as? String ?? self.userSummary.avatarEmoji,
+                    avatarColorName: data["avatarColor"] as? String ?? self.userSummary.avatarColorName,
+                    profilePhotoURL: data["profilePhotoURL"] as? String ?? self.userSummary.profilePhotoURL,
+                    isVerified: data["isVerified"] as? Bool ?? self.userSummary.isVerified,
+                    isAdmin: data["isAdmin"] as? Bool ?? self.userSummary.isAdmin,
+                    isEmployee: data["isEmployee"] as? Bool ?? self.userSummary.isEmployee,
+                    accountCreatedDate: accountCreatedDate,
+                    profileImage: self.userSummary.profileImage
+                )
+                self.userSummary = updated
+
+                // Keep editable fields in sync with latest data
+                self.syncEditableFieldsFromSummary()
+
+                // Dietary preferences
+                self.likesSpicyFood = data["likesSpicyFood"] as? Bool ?? false
+                self.dislikesSpicyFood = data["dislikesSpicyFood"] as? Bool ?? false
+                self.hasPeanutAllergy = data["hasPeanutAllergy"] as? Bool ?? false
+                self.isVegetarian = data["isVegetarian"] as? Bool ?? false
+                self.hasLactoseIntolerance = data["hasLactoseIntolerance"] as? Bool ?? false
+                self.doesntEatPork = data["doesntEatPork"] as? Bool ?? false
+                self.tastePreferences = data["tastePreferences"] as? String ?? ""
+                self.hasCompletedPreferences = data["hasCompletedPreferences"] as? Bool ?? false
+
+                // Referral code (if present)
+                self.referralCode = data["referralCode"] as? String
+
+                completion(nil)
+            }
+        }
+    }
+
+    private func loadPointsHistory(completion: @escaping (String?) -> Void) {
+        db.collection("pointsTransactions")
+            .whereField("userId", isEqualTo: userId)
+            .limit(to: 100)
+            .getDocuments { snapshot, error in
+                DispatchQueue.main.async {
+                    if let error = error {
+                        completion("Error loading points history: \(error.localizedDescription)")
+                        return
+                    }
+                    guard let documents = snapshot?.documents else {
+                        self.transactions = []
+                        self.summary = nil
+                        completion(nil)
+                        return
+                    }
+
+                    let loaded = documents.compactMap { PointsTransaction.fromFirestore($0) }
+                    // Sort newest first
+                    let sorted = loaded.sorted { $0.timestamp > $1.timestamp }
+                    self.transactions = sorted
+                    self.updateSummary(from: sorted)
+                    completion(nil)
+                }
+            }
+    }
+
+    private func loadReferralInfo(completion: @escaping (String?) -> Void) {
+        var outbound: [ReferralConnection] = []
+        var inbound: ReferralConnection?
+        let group = DispatchGroup()
+        var firstError: String?
+
+        // Outbound (this user referred others)
+        group.enter()
+        db.collection("referrals")
+            .whereField("referrerUserId", isEqualTo: userId)
+            .getDocuments { snapshot, error in
+                if let error = error {
+                    if firstError == nil { firstError = "Error loading outbound referrals: \(error.localizedDescription)" }
+                    group.leave()
+                    return
+                }
+                guard let docs = snapshot?.documents, !docs.isEmpty else {
+                    group.leave()
+                    return
+                }
+
+                let innerGroup = DispatchGroup()
+                for doc in docs {
+                    let data = doc.data()
+                    let referredUserId = data["referredUserId"] as? String ?? ""
+                    let statusRaw = (data["status"] as? String) ?? "pending"
+                    let status = statusRaw == "awarded" ? "Awarded" : "Pending"
+                    let referralId = doc.documentID
+
+                    innerGroup.enter()
+                    self.db.collection("users").document(referredUserId).getDocument { userDoc, _ in
+                        let name = (userDoc?.data()?["firstName"] as? String) ?? "Friend"
+                        let pts = (userDoc?.data()?["totalPoints"] as? Int) ?? 0
+                        let connection = ReferralConnection(
+                            id: referralId,
+                            name: name,
+                            relation: "You referred",
+                            status: status,
+                            pointsTowards50: max(0, min(50, pts))
+                        )
+                        outbound.append(connection)
+                        innerGroup.leave()
+                    }
+                }
+
+                innerGroup.notify(queue: .main) {
+                    group.leave()
+                }
+            }
+
+        // Inbound (someone referred this user)
+        group.enter()
+        db.collection("referrals")
+            .whereField("referredUserId", isEqualTo: userId)
+            .limit(to: 1)
+            .getDocuments { snapshot, error in
+                if let error = error {
+                    if firstError == nil { firstError = "Error loading inbound referral: \(error.localizedDescription)" }
+                    group.leave()
+                    return
+                }
+                guard let doc = snapshot?.documents.first else {
+                    group.leave()
+                    return
+                }
+
+                let data = doc.data()
+                let referrerUserId = data["referrerUserId"] as? String ?? ""
+                let statusRaw = (data["status"] as? String) ?? "pending"
+                let status = statusRaw == "awarded" ? "Awarded" : "Pending"
+                let referralId = doc.documentID
+
+                self.db.collection("users").document(referrerUserId).getDocument { userDoc, _ in
+                    let name = (userDoc?.data()?["firstName"] as? String) ?? "Friend"
+                    let connection = ReferralConnection(
+                        id: referralId,
+                        name: name,
+                        relation: "Referred by",
+                        status: status,
+                        pointsTowards50: 0
+                    )
+                    inbound = connection
+                    group.leave()
+                }
+            }
+
+        group.notify(queue: .main) {
+            self.outboundReferrals = outbound.sorted { $0.name < $1.name }
+            self.inboundReferral = inbound
+            completion(firstError)
+        }
+    }
+
+    // MARK: - Admin Editing
+
+    func saveAdminEdits(completion: @escaping (Bool, String?) -> Void) {
+        // Validate points input
+        guard let pointsInt = Int(editablePoints), pointsInt >= 0 else {
+            let message = "Points must be a valid non-negative number"
+            errorMessage = message
+            completion(false, message)
+            return
+        }
+
+        let phone = editablePhoneNumber
+        let isAdminFlag = editableIsAdmin
+        let isVerifiedFlag = editableIsVerified
+
+        let userRef = db.collection("users").document(userId)
+        isLoading = true
+        errorMessage = ""
+
+        db.runTransaction({ (transaction, errorPointer) -> Any? in
+            do {
+                let snapshot = try transaction.getDocument(userRef)
+                let currentPoints = (snapshot.data()?["points"] as? Int) ?? 0
+                let delta = pointsInt - currentPoints
+                var updateData: [String: Any] = [
+                    "phone": phone,
+                    "points": pointsInt,
+                    "isAdmin": isAdminFlag,
+                    "isVerified": isVerifiedFlag
+                ]
+                transaction.updateData(updateData, forDocument: userRef)
+                return ["prev": currentPoints, "delta": delta]
+            } catch let error as NSError {
+                errorPointer?.pointee = error
+                return nil
+            }
+        }, completion: { [weak self] result, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isLoading = false
+
+                if let error = error {
+                    let message = "Failed to update user: \(error.localizedDescription)"
+                    self.errorMessage = message
+                    completion(false, message)
+                    return
+                }
+
+                var previousPoints = self.userSummary.points
+                var delta = 0
+                if let dict = result as? [String: Int] {
+                    previousPoints = dict["prev"] ?? self.userSummary.points
+                    delta = dict["delta"] ?? 0
+                }
+
+                // Update local summary with new values
+                let updatedSummary = UserAccount(
+                    id: self.userSummary.id,
+                    firstName: self.userSummary.firstName,
+                    email: self.userSummary.email,
+                    phoneNumber: phone,
+                    points: pointsInt,
+                    lifetimePoints: self.userSummary.lifetimePoints,
+                    avatarEmoji: self.userSummary.avatarEmoji,
+                    avatarColorName: self.userSummary.avatarColorName,
+                    profilePhotoURL: self.userSummary.profilePhotoURL,
+                    isVerified: isVerifiedFlag,
+                    isAdmin: isAdminFlag,
+                    isEmployee: self.userSummary.isEmployee,
+                    accountCreatedDate: self.userSummary.accountCreatedDate,
+                    profileImage: self.userSummary.profileImage
+                )
+                self.userSummary = updatedSummary
+                self.syncEditableFieldsFromSummary()
+
+                // Log points adjustment if needed and update history
+                self.logAdminAdjustmentIfNeeded(previousPoints: previousPoints, newPoints: pointsInt, delta: delta)
+
+                // Trigger referral check if new points >= 50 (the referral threshold)
+                if pointsInt >= 50 {
+                    self.triggerReferralCheckForUser()
+                }
+
+                completion(true, nil)
+            }
+        })
+    }
+
+    private func logAdminAdjustmentIfNeeded(previousPoints: Int, newPoints: Int, delta: Int) {
+        guard delta != 0 else { return }
+
+        let adjustment = PointsTransaction(
+            userId: userId,
+            type: .adminAdjustment,
+            amount: delta,
+            description: "Points adjusted by admin",
+            metadata: [
+                "previousPoints": previousPoints,
+                "newPoints": newPoints
+            ]
+        )
+
+        db.collection("pointsTransactions").document(adjustment.id).setData(adjustment.toFirestore()) { [weak self] error in
+            guard let self = self else { return }
+            if let error = error {
+                print("❌ Error logging admin adjustment: \(error.localizedDescription)")
+                return
+            }
+
+            print("✅ Admin points adjustment logged (delta: \(delta))")
+            DispatchQueue.main.async {
+                // Prepend new transaction in local history and refresh summary
+                self.transactions.insert(adjustment, at: 0)
+                self.updateSummary(from: self.transactions)
+            }
+        }
+    }
+
+    /// Triggers the backend referral award-check for the target user.
+    /// Called after admin adjusts points to ensure referral bonuses are awarded if threshold is met.
+    private func triggerReferralCheckForUser() {
+        print("📤 triggerReferralCheckForUser() called for userId: \(userId)")
+        
+        guard let url = URL(string: "\(Config.backendURL)/referrals/award-check") else {
+            print("❌ Invalid backend URL for referral check")
+            return
+        }
+
+        print("📤 Calling: \(url.absoluteString)")
+
+        // Get admin's auth token to make the authenticated request
+        Auth.auth().currentUser?.getIDToken { [weak self] token, error in
+            guard let self = self, let token = token else {
+                if let error = error {
+                    print("❌ Failed to get admin token for referral check: \(error.localizedDescription)")
+                }
+                return
+            }
+
+            print("📤 Got auth token, making request...")
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+
+            // Pass the target user ID so backend checks their referral status
+            let body: [String: Any] = ["targetUserId": self.userId]
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+            URLSession.shared.dataTask(with: request) { data, response, error in
+                if let error = error {
+                    print("❌ Referral check request failed: \(error.localizedDescription)")
+                    return
+                }
+
+                guard let http = response as? HTTPURLResponse else {
+                    print("❌ No HTTP response received")
+                    return
+                }
+
+                print("📥 Referral check HTTP status: \(http.statusCode)")
+
+                if let data = data,
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    print("📥 Referral check response: \(json)")
+                    
+                    if let status = json["status"] as? String {
+                        if status == "awarded" {
+                            print("🎉 Referral bonus awarded for user \(self.userId)!")
+                            // Reload referral info to reflect the new status
+                            DispatchQueue.main.async {
+                                self.loadReferralInfo { _ in }
+                            }
+                        } else if status == "not_eligible" {
+                            let reason = json["reason"] as? String ?? "unknown"
+                            print("ℹ️ Referral not eligible: \(reason)")
+                        } else {
+                            print("ℹ️ Referral check result: \(status)")
+                        }
+                    }
+                } else {
+                    print("⚠️ Could not parse response, HTTP \(http.statusCode)")
+                    if let data = data, let raw = String(data: data, encoding: .utf8) {
+                        print("⚠️ Raw response: \(raw)")
+                    }
+                }
+            }.resume()
+        }
+    }
+
+    func syncEditableFieldsFromSummary() {
+        editablePoints = String(userSummary.points)
+        editablePhoneNumber = userSummary.phoneNumber
+        editableIsAdmin = userSummary.isAdmin
+        editableIsVerified = userSummary.isVerified
+    }
+
+    // MARK: - Helpers
+
+    private func updateSummary(from transactions: [PointsTransaction]) {
+        let totalEarned = transactions.filter { $0.isEarned }.reduce(0) { $0 + $1.amount }
+        let totalSpent = abs(transactions.filter { $0.isSpent }.reduce(0) { $0 + $1.amount }
+        )
+        let currentBalance = totalEarned - totalSpent
+        let transactionCount = transactions.count
+        let lastTransactionDate = transactions.first?.timestamp
+
+        summary = PointsHistorySummary(
+            totalEarned: totalEarned,
+            totalSpent: totalSpent,
+            currentBalance: currentBalance,
+            transactionCount: transactionCount,
+            lastTransactionDate: lastTransactionDate
+        )
+    }
+}
+
+
+

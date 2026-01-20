@@ -50,8 +50,9 @@ struct Config {
     // Keep the backend base here (chat, rewards, receipt analysis, referral, etc.).
     static let productionBackendURL = "https://restaurant-stripe-server-1.onrender.com"
     
-    // Firebase configuration
-    static let firebaseProjectID = "restaurant-demo-12345"
+    // Firebase configuration (single source of truth is GoogleService-Info.plist)
+    // NOTE: Do not hardcode alternate project IDs here.
+    static let firebaseProjectID = "dumplinghouseapp"
     
     // Performance monitoring
     static let enablePerformanceMonitoring = true
