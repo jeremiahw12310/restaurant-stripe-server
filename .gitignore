@@ -69,16 +69,20 @@ jspm_packages/
 # dotenv environment variables file
 .env
 
-# iOS App Files (exclude from backend repo)
-*.xcodeproj/
-*.xcworkspace/
-*.swift
-*.plist
-*.entitlements
+# iOS App Files
+# Note: Xcode Cloud requires .xcodeproj to be committed
+# Exclude user-specific data but allow project structure
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
 *.app/
 *.ipa
 *.dSYM.zip
 *.dSYM
+# Allow .xcodeproj structure (needed for Xcode Cloud)
+# Allow .swift files (source code)
+# Allow .plist files (configuration)
+# Allow .entitlements files (capabilities)
 
 # macOS
 .DS_Store
