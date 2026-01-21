@@ -3622,8 +3622,13 @@ IMPORTANT:
         rewardDescription, 
         pointsRequired, 
         rewardCategory,
-        selectedItemId,      // NEW: Optional selected item ID
-        selectedItemName     // NEW: Optional selected item name
+        selectedItemId,      // Optional selected item ID
+        selectedItemName,    // Optional selected item name
+        selectedToppingId,   // NEW: Optional topping ID (for drink rewards)
+        selectedToppingName, // NEW: Optional topping name (for drink rewards)
+        selectedItemId2,     // NEW: Optional second item ID (for half-and-half)
+        selectedItemName2,   // NEW: Optional second item name (for half-and-half)
+        cookingMethod        // NEW: Optional cooking method (for dumpling rewards)
       } = req.body;
       
       if (!userId || !rewardTitle || !pointsRequired) {
@@ -3681,10 +3686,33 @@ IMPORTANT:
         expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes from now
         isExpired: false,
         isUsed: false,
-        // NEW: Store selected item info if provided
+        // Store selected item info if provided
         ...(selectedItemId && { selectedItemId }),
-        ...(selectedItemName && { selectedItemName })
+        ...(selectedItemName && { selectedItemName }),
+        // NEW: Store topping info if provided (for drink rewards)
+        ...(selectedToppingId && { selectedToppingId }),
+        ...(selectedToppingName && { selectedToppingName }),
+        // NEW: Store second item info if provided (for half-and-half)
+        ...(selectedItemId2 && { selectedItemId2 }),
+        ...(selectedItemName2 && { selectedItemName2 }),
+        // NEW: Store cooking method if provided (for dumpling rewards)
+        ...(cookingMethod && { cookingMethod })
       };
+      
+      // Build description for transaction
+      let transactionDescription = `Redeemed: ${rewardTitle}`;
+      if (selectedItemName) {
+        transactionDescription = `Redeemed: ${selectedItemName}`;
+        if (selectedToppingName) {
+          transactionDescription += ` with ${selectedToppingName}`;
+        }
+        if (selectedItemName2) {
+          transactionDescription = `Redeemed: Half and Half: ${selectedItemName} + ${selectedItemName2}`;
+          if (cookingMethod) {
+            transactionDescription += ` (${cookingMethod})`;
+          }
+        }
+      }
       
       // Create points transaction for deduction
       const pointsTransaction = {
@@ -3692,14 +3720,15 @@ IMPORTANT:
         userId: userId,
         type: 'reward_redemption',
         amount: -pointsRequired, // Negative amount for deduction
-        description: selectedItemName 
-          ? `Redeemed: ${selectedItemName}` 
-          : `Redeemed: ${rewardTitle}`,
+        description: transactionDescription,
         timestamp: admin.firestore.FieldValue.serverTimestamp(),
         isEarned: false,
         redemptionCode: redemptionCode,
         rewardTitle: rewardTitle,
-        ...(selectedItemName && { selectedItemName })
+        ...(selectedItemName && { selectedItemName }),
+        ...(selectedToppingName && { selectedToppingName }),
+        ...(selectedItemName2 && { selectedItemName2 }),
+        ...(cookingMethod && { cookingMethod })
       };
       
       // Perform database operations in a batch
@@ -3726,6 +3755,15 @@ IMPORTANT:
       if (selectedItemName) {
         console.log(`🍽️ Selected item: ${selectedItemName}`);
       }
+      if (selectedToppingName) {
+        console.log(`🧋 Selected topping: ${selectedToppingName}`);
+      }
+      if (selectedItemName2) {
+        console.log(`🥟 Second item: ${selectedItemName2}`);
+      }
+      if (cookingMethod) {
+        console.log(`🔥 Cooking method: ${cookingMethod}`);
+      }
       
       res.json({
         success: true,
@@ -3733,7 +3771,10 @@ IMPORTANT:
         newPointsBalance: newPointsBalance,
         pointsDeducted: pointsRequired,
         rewardTitle: rewardTitle,
-        selectedItemName: selectedItemName || null,  // NEW: Include in response
+        selectedItemName: selectedItemName || null,
+        selectedToppingName: selectedToppingName || null,  // NEW: Include in response
+        selectedItemName2: selectedItemName2 || null,      // NEW: Include in response
+        cookingMethod: cookingMethod || null,               // NEW: Include in response
         expiresAt: redeemedReward.expiresAt,
         message: 'Reward redeemed successfully! Show the code to your cashier.'
       });
@@ -4036,7 +4077,8 @@ IMPORTANT:
 
       const mapUser = (doc) => {
         const data = doc.data() || {};
-        const created = data.accountCreatedDate;
+        // Check both accountCreatedDate and createdAt for backward compatibility
+        const created = data.accountCreatedDate || data.createdAt;
         const createdDate = created && typeof created.toDate === 'function' ? created.toDate() : null;
 
         return {
@@ -4133,6 +4175,109 @@ IMPORTANT:
     }
   });
 
+  /**
+   * POST /admin/users/cleanup-orphans
+   *
+   * Finds and deletes orphaned Firestore user documents (documents without
+   * corresponding Firebase Auth accounts). This helps clean up duplicates
+   * that occur when accounts are deleted and recreated.
+   *
+   * Returns:
+   * - deletedCount: number of orphaned documents deleted
+   * - checkedCount: total number of documents checked
+   */
+  app.post('/admin/users/cleanup-orphans', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const db = admin.firestore();
+      const auth = admin.auth();
+      
+      console.log('🧹 Starting orphaned accounts cleanup...');
+      
+      let checkedCount = 0;
+      let deletedCount = 0;
+      let lastDoc = null;
+      const pageSize = 500;
+      const orphanedUIDs = [];
+      
+      // Scan through all user documents in batches
+      while (true) {
+        let query = db.collection('users')
+          .orderBy(admin.firestore.FieldPath.documentId())
+          .limit(pageSize);
+        
+        if (lastDoc) {
+          query = query.startAfter(lastDoc);
+        }
+        
+        const snapshot = await query.get();
+        if (snapshot.empty) {
+          break;
+        }
+        
+        // Check each document for orphaned status
+        for (const doc of snapshot.docs) {
+          checkedCount++;
+          const uid = doc.id;
+          
+          try {
+            // Check if Firebase Auth account exists for this UID
+            await auth.getUser(uid);
+            // If getUser succeeds, the account exists - not orphaned
+          } catch (error) {
+            // If getUser fails with user-not-found, it's an orphaned document
+            if (error.code === 'auth/user-not-found') {
+              orphanedUIDs.push(uid);
+              console.log(`🔍 Found orphaned account: ${uid}`);
+            } else {
+              // Other errors (permissions, etc.) - log but don't treat as orphaned
+              console.warn(`⚠️ Error checking user ${uid}: ${error.code}`);
+            }
+          }
+        }
+        
+        lastDoc = snapshot.docs[snapshot.docs.length - 1];
+        
+        // If we got fewer docs than pageSize, we've reached the end
+        if (snapshot.docs.length < pageSize) {
+          break;
+        }
+      }
+      
+      // Delete orphaned documents in batches (Firestore batch limit is 500)
+      const batchSize = 450; // Leave some headroom
+      for (let i = 0; i < orphanedUIDs.length; i += batchSize) {
+        const batch = db.batch();
+        const batchUIDs = orphanedUIDs.slice(i, i + batchSize);
+        
+        for (const uid of batchUIDs) {
+          batch.delete(db.collection('users').doc(uid));
+        }
+        
+        try {
+          await batch.commit();
+          deletedCount += batchUIDs.length;
+          console.log(`✅ Deleted batch of ${batchUIDs.length} orphaned accounts`);
+        } catch (error) {
+          console.error(`❌ Error deleting batch: ${error.message}`);
+        }
+      }
+      
+      console.log(`✅ Cleanup complete: Deleted ${deletedCount} orphaned accounts out of ${checkedCount} checked`);
+      
+      return res.json({
+        deletedCount,
+        checkedCount,
+        message: `Cleaned up ${deletedCount} orphaned account(s) out of ${checkedCount} checked`
+      });
+    } catch (error) {
+      console.error('❌ Error in /admin/users/cleanup-orphans:', error);
+      res.status(500).json({ error: 'Failed to cleanup orphaned accounts' });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // Admin-only Rewards Validation / Consumption (QR scanning)
   // ---------------------------------------------------------------------------
@@ -4210,8 +4355,13 @@ IMPORTANT:
           expiresAt: expiresAt ? expiresAt.toISOString() : null,
           isUsed: data.isUsed === true,
           isExpired: data.isExpired === true || (expiresAt ? expiresAt <= new Date() : false),
-          selectedItemId: data.selectedItemId || null,      // NEW
-          selectedItemName: data.selectedItemName || null   // NEW
+          selectedItemId: data.selectedItemId || null,
+          selectedItemName: data.selectedItemName || null,
+          selectedToppingId: data.selectedToppingId || null,    // NEW: For drink rewards
+          selectedToppingName: data.selectedToppingName || null, // NEW: For drink rewards
+          selectedItemId2: data.selectedItemId2 || null,        // NEW: For half-and-half
+          selectedItemName2: data.selectedItemName2 || null,    // NEW: For half-and-half
+          cookingMethod: data.cookingMethod || null              // NEW: For dumpling rewards
         }
       });
     } catch (error) {

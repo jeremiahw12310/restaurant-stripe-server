@@ -165,6 +165,122 @@ class AuthenticationViewModel: ObservableObject {
     
     // MARK: - Private Helpers
     
+    /// Normalizes phone number for consistent comparison
+    /// Handles variations like "+1234567890" vs "1234567890" vs "+1 234-567-8900"
+    private func normalizePhoneNumber(_ phone: String) -> String {
+        // Remove all non-digit characters except leading +
+        var normalized = phone.trimmingCharacters(in: .whitespaces)
+        
+        // If it starts with +1, keep it; if it starts with 1 (without +), add +
+        if normalized.hasPrefix("+1") {
+            // Already has +1 prefix
+        } else if normalized.hasPrefix("1") && normalized.count == 11 {
+            normalized = "+" + normalized
+        } else if normalized.count == 10 {
+            // 10 digits without country code, add +1
+            normalized = "+1" + normalized
+        }
+        
+        // Remove any remaining non-digit characters except the leading +
+        let digits = normalized.filter { $0.isNumber || $0 == "+" }
+        return digits
+    }
+    
+    /// Checks for orphaned Firestore documents with the same phone number
+    /// Orphaned = Firestore document exists but no corresponding Firebase Auth account
+    private func checkForOrphanedAccounts(phoneNumber: String, currentUID: String, completion: @escaping ([String]) -> Void) {
+        let normalizedPhone = normalizePhoneNumber(phoneNumber)
+        print("🔍 Checking for orphaned accounts with phone: \(normalizedPhone)")
+        
+        // Query Firestore for all documents with this phone number
+        db.collection("users")
+            .whereField("phone", isEqualTo: normalizedPhone)
+            .getDocuments { [weak self] snapshot, error in
+                guard let self = self else {
+                    completion([])
+                    return
+                }
+                
+                if let error = error {
+                    print("⚠️ Error querying for existing accounts: \(error.localizedDescription)")
+                    // Don't block account creation on query errors
+                    completion([])
+                    return
+                }
+                
+                guard let documents = snapshot?.documents, !documents.isEmpty else {
+                    print("✅ No existing accounts found with this phone number")
+                    completion([])
+                    return
+                }
+                
+                print("🔍 Found \(documents.count) document(s) with phone number \(normalizedPhone)")
+                
+                // When creating a new account, any existing documents with the same phone number
+                // but different UIDs are likely duplicates from previous account deletions.
+                // Delete all of them to prevent duplicates in admin view.
+                var duplicateUIDs: [String] = []
+                
+                for doc in documents {
+                    let docUID = doc.documentID
+                    
+                    // Skip the current UID (in case we're updating)
+                    if docUID == currentUID {
+                        print("ℹ️ Skipping current UID: \(docUID)")
+                        continue
+                    }
+                    
+                    // If we're creating a new account and find documents with same phone but different UID,
+                    // they're duplicates that should be deleted. This happens when:
+                    // 1. User deletes account (Auth deleted, Firestore doc might not be)
+                    // 2. User recreates account with same phone (new UID, old Firestore doc still exists)
+                    print("🔍 Found duplicate account with same phone: \(docUID)")
+                    duplicateUIDs.append(docUID)
+                }
+                
+                DispatchQueue.main.async {
+                    print("✅ Found \(duplicateUIDs.count) duplicate account(s) to clean up")
+                    completion(duplicateUIDs)
+                }
+            }
+    }
+    
+    /// Deletes orphaned Firestore documents
+    private func deleteOrphanedAccounts(orphanedUIDs: [String], completion: @escaping (Bool) -> Void) {
+        guard !orphanedUIDs.isEmpty else {
+            completion(true)
+            return
+        }
+        
+        print("🧹 Deleting \(orphanedUIDs.count) orphaned account(s)...")
+        let group = DispatchGroup()
+        var deleteErrors: [Error] = []
+        
+        for uid in orphanedUIDs {
+            group.enter()
+            db.collection("users").document(uid).delete { error in
+                if let error = error {
+                    print("⚠️ Failed to delete orphaned account \(uid): \(error.localizedDescription)")
+                    deleteErrors.append(error)
+                } else {
+                    print("✅ Deleted orphaned account: \(uid)")
+                }
+                group.leave()
+            }
+        }
+        
+        group.notify(queue: .main) {
+            let success = deleteErrors.isEmpty
+            if success {
+                print("✅ Successfully cleaned up \(orphanedUIDs.count) orphaned account(s)")
+            } else {
+                print("⚠️ Cleaned up \(orphanedUIDs.count - deleteErrors.count) of \(orphanedUIDs.count) orphaned account(s)")
+            }
+            // Don't block account creation even if some deletions failed
+            completion(true)
+        }
+    }
+    
     private func saveUserDetailsToFirestore(uid: String) {
         print("🔵 saveUserDetailsToFirestore called")
         
@@ -182,13 +298,35 @@ class AuthenticationViewModel: ObservableObject {
             phoneToSave = formattedPhoneNumber
         }
         
-        print("🔵 Phone to save: \(phoneToSave), verifiedPhoneNumber: \(verifiedPhoneNumber), formattedPhoneNumber: \(formattedPhoneNumber)")
+        // Normalize phone number for consistent storage and comparison
+        phoneToSave = normalizePhoneNumber(phoneToSave)
+        
+        print("🔵 Phone to save (normalized): \(phoneToSave), verifiedPhoneNumber: \(verifiedPhoneNumber), formattedPhoneNumber: \(formattedPhoneNumber)")
         
         // Validate phone number - warn if it looks incomplete
         if phoneToSave == "+1" || phoneToSave.count < 12 {
             print("⚠️ Warning: Phone number appears incomplete: \(phoneToSave)")
         }
         
+        // Check for orphaned accounts with the same phone number before creating new account
+        checkForOrphanedAccounts(phoneNumber: phoneToSave, currentUID: uid) { [weak self] orphanedUIDs in
+            guard let self = self else { return }
+            
+            // Delete orphaned accounts if any found
+            if !orphanedUIDs.isEmpty {
+                self.deleteOrphanedAccounts(orphanedUIDs: orphanedUIDs) { [weak self] _ in
+                    // Continue with account creation regardless of cleanup result
+                    self?.createUserDocument(uid: uid, phoneToSave: phoneToSave)
+                }
+            } else {
+                // No orphaned accounts, proceed directly to account creation
+                self.createUserDocument(uid: uid, phoneToSave: phoneToSave)
+            }
+        }
+    }
+    
+    /// Creates the user document in Firestore
+    private func createUserDocument(uid: String, phoneToSave: String) {
         let userData: [String: Any] = [
             "uid": uid, 
             "phone": phoneToSave, 
@@ -202,7 +340,8 @@ class AuthenticationViewModel: ObservableObject {
             "points": 0, 
             "isNewUser": true, // Mark as new user for welcome popup
             "hasReceivedWelcomePoints": false, // Ensure welcome points not received yet
-            "createdAt": FieldValue.serverTimestamp()
+            "accountCreatedDate": FieldValue.serverTimestamp(),
+            "createdAt": FieldValue.serverTimestamp() // Keep both for backward compatibility
         ]
         print("🔵 AuthenticationViewModel: Creating user with isNewUser: true")
         

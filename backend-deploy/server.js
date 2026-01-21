@@ -374,144 +374,6 @@ app.get('/referrals/mine', async (req, res) => {
   }
 });
 
-// Check and award referral bonus when referred user reaches 50 points
-app.post('/referrals/award-check', async (req, res) => {
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    const idToken = authHeader.split('Bearer ')[1];
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
-    const callerUid = decodedToken.uid;
-
-    const db = admin.firestore();
-    const REFERRAL_BONUS = 50;
-
-    // Allow admins to specify a target user (for admin panel point adjustments)
-    const { targetUserId } = req.body || {};
-    let checkUserId = callerUid; // default: check for calling user
-
-    if (targetUserId && targetUserId !== callerUid) {
-      // Verify caller is an admin before allowing check for another user
-      const callerDoc = await db.collection('users').doc(callerUid).get();
-      if (!callerDoc.exists || !callerDoc.data().isAdmin) {
-        return res.status(403).json({ error: 'Admin required to check other users' });
-      }
-      checkUserId = targetUserId;
-      console.log(`🎯 Admin ${callerUid} triggering referral award-check for user: ${checkUserId}`);
-    } else {
-      console.log(`🎯 Referral award-check for user: ${checkUserId}`);
-    }
-
-    // Find referral where target user is the referred person
-    const referralSnap = await db.collection('referrals')
-      .where('referredUserId', '==', checkUserId)
-      .limit(1)
-      .get();
-
-    if (referralSnap.empty) {
-      return res.json({ status: 'not_eligible', reason: 'no_referral' });
-    }
-
-    const referralDoc = referralSnap.docs[0];
-    const referralId = referralDoc.id;
-    const referralData = referralDoc.data();
-    const referrerId = referralData.referrerUserId;
-
-    if (referralData.status === 'awarded') {
-      return res.json({ status: 'already_awarded', referralId });
-    }
-
-    // Check referred user's points
-    const referredUserRef = db.collection('users').doc(checkUserId);
-    const referredUserDoc = await referredUserRef.get();
-    if (!referredUserDoc.exists) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const referredUserData = referredUserDoc.data();
-    if ((referredUserData.points || 0) < 50) {
-      return res.json({ status: 'not_eligible', reason: 'threshold_not_met', currentPoints: referredUserData.points || 0 });
-    }
-
-    const referrerUserRef = db.collection('users').doc(referrerId);
-    const referrerUserDoc = await referrerUserRef.get();
-
-    let referrerNewPoints = null, referredNewPoints = null;
-    let referrerFcmToken = null, referredFcmToken = null;
-    let referrerName = 'Friend', referredName = 'Friend';
-
-    await db.runTransaction(async (tx) => {
-      const txReferralDoc = await tx.get(db.collection('referrals').doc(referralId));
-      if (txReferralDoc.data().status === 'awarded') throw new Error('ALREADY_AWARDED');
-
-      // Award referred user
-      const txReferredDoc = await tx.get(referredUserRef);
-      const txReferredData = txReferredDoc.data() || {};
-      referredFcmToken = txReferredData.fcmToken || null;
-      referredName = txReferredData.firstName || 'Friend';
-      const referredPts = txReferredData.points || 0;
-      const referredLife = typeof txReferredData.lifetimePoints === 'number' ? txReferredData.lifetimePoints : referredPts;
-      referredNewPoints = referredPts + REFERRAL_BONUS;
-
-      tx.update(referredUserRef, { points: referredNewPoints, lifetimePoints: referredLife + REFERRAL_BONUS });
-      tx.set(db.collection('pointsTransactions').doc(`referral_referred_${Date.now()}_${Math.random().toString(36).substr(2,9)}`), {
-        userId: checkUserId, type: 'referral', amount: REFERRAL_BONUS,
-        description: 'Referral bonus - reached 50 points!',
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        metadata: { referralId, role: 'referred' }
-      });
-
-      // Award referrer if exists
-      if (referrerUserDoc.exists) {
-        const txReferrerDoc = await tx.get(referrerUserRef);
-        const txReferrerData = txReferrerDoc.data() || {};
-        referrerFcmToken = txReferrerData.fcmToken || null;
-        referrerName = txReferrerData.firstName || 'Friend';
-        const referrerPts = txReferrerData.points || 0;
-        const referrerLife = typeof txReferrerData.lifetimePoints === 'number' ? txReferrerData.lifetimePoints : referrerPts;
-        referrerNewPoints = referrerPts + REFERRAL_BONUS;
-
-        tx.update(referrerUserRef, { points: referrerNewPoints, lifetimePoints: referrerLife + REFERRAL_BONUS });
-        tx.set(db.collection('pointsTransactions').doc(`referral_referrer_${Date.now()}_${Math.random().toString(36).substr(2,9)}`), {
-          userId: referrerId, type: 'referral', amount: REFERRAL_BONUS,
-          description: `Referral bonus - ${referredName} reached 50 points!`,
-          timestamp: admin.firestore.FieldValue.serverTimestamp(),
-          metadata: { referralId, role: 'referrer', referredUserId: checkUserId }
-        });
-      }
-
-      tx.update(db.collection('referrals').doc(referralId), {
-        status: 'awarded',
-        awardedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-    });
-
-    console.log(`🎉 Referral ${referralId} awarded!`);
-
-    // Send push notifications (fire-and-forget)
-    if (referrerFcmToken) {
-      sendPushNotificationToToken(referrerFcmToken, 'Referral Bonus Awarded! 🎉',
-        `${referredName} reached 50 points! You earned +${REFERRAL_BONUS} bonus points.`,
-        { type: 'referral_awarded', role: 'referrer', referralId }
-      ).then(r => console.log('📱 Referrer push:', r));
-    }
-    if (referredFcmToken) {
-      sendPushNotificationToToken(referredFcmToken, 'Referral Bonus Awarded! 🎉',
-        `You reached 50 points! You and ${referrerName} each earned +${REFERRAL_BONUS} bonus points.`,
-        { type: 'referral_awarded', role: 'referred', referralId }
-      ).then(r => console.log('📱 Referred push:', r));
-    }
-
-    return res.json({ status: 'awarded', referralId, referrerBonus: referrerNewPoints !== null ? REFERRAL_BONUS : 0, referredBonus: REFERRAL_BONUS });
-  } catch (error) {
-    if (error.message === 'ALREADY_AWARDED') return res.json({ status: 'already_awarded' });
-    console.error('❌ Error in /referrals/award-check:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
 // ---------------------------------------------------------------------------
 // Referral Award System - Push Notification Helper
 // ---------------------------------------------------------------------------
@@ -529,12 +391,15 @@ async function sendPushNotificationToToken(fcmToken, title, body, data = {}) {
     const axios = require('axios');
     const { GoogleAuth } = require('google-auth-library');
     
+    // Get service account from environment
     if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
       console.warn('⚠️ FIREBASE_SERVICE_ACCOUNT_KEY not set, cannot send push notification');
       return { success: false, error: 'Service account not configured' };
     }
     
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    
+    // Create auth client with cloud-platform scope
     const auth = new GoogleAuth({
       credentials: serviceAccount,
       scopes: ['https://www.googleapis.com/auth/cloud-platform']
@@ -547,28 +412,339 @@ async function sendPushNotificationToToken(fcmToken, title, body, data = {}) {
     const fcmPayload = {
       message: {
         token: fcmToken,
-        notification: { title, body },
-        data: { ...data, timestamp: new Date().toISOString() },
+        notification: {
+          title: title,
+          body: body
+        },
+        data: {
+          ...data,
+          timestamp: new Date().toISOString()
+        },
+        // Add explicit APNs configuration for iOS
         apns: {
-          headers: { 'apns-priority': '10', 'apns-topic': 'bytequack.dumplinghouse' },
-          payload: { aps: { alert: { title, body }, sound: 'default', badge: 1 } }
+          headers: {
+            'apns-priority': '10',
+            'apns-topic': 'bytequack.dumplinghouse' // Must match iOS bundle ID
+          },
+          payload: {
+            aps: {
+              alert: {
+                title: title,
+                body: body
+              },
+              sound: 'default',
+              badge: 1
+            }
+          }
         }
       }
     };
     
     const response = await axios.post(
-      'https://fcm.googleapis.com/v1/projects/dumplinghouseapp/messages:send',
+      `https://fcm.googleapis.com/v1/projects/dumplinghouseapp/messages:send`,
       fcmPayload,
-      { headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
     );
     
-    console.log('✅ FCM push sent:', response.data);
+    console.log(`✅ FCM push sent successfully:`, response.data);
     return { success: true };
   } catch (error) {
-    console.warn('❌ FCM push failed:', error.response?.data || error.message);
+    console.warn(`❌ FCM push failed:`, error.response?.data || error.message);
     return { success: false, error: error.response?.data?.error?.message || error.message };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Referral Award Check Endpoint
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /referrals/award-check
+ * 
+ * Called by the iOS app when a user's points cross the 50-point threshold.
+ * Checks if the calling user is part of a pending referral and awards +50 bonus
+ * points to BOTH the referrer and the referred user.
+ * 
+ * Also sends push notifications to both users.
+ * 
+ * Returns:
+ *   - { status: 'awarded', referralId, referrerBonus, referredBonus } on success
+ *   - { status: 'already_awarded', referralId } if already processed
+ *   - { status: 'not_eligible', reason } if not eligible
+ */
+app.post('/referrals/award-check', async (req, res) => {
+  try {
+    // Authenticate the user
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const idToken = authHeader.split('Bearer ')[1];
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const uid = decodedToken.uid;
+
+    console.log(`🎯 Referral award-check for user: ${uid}`);
+
+    const db = admin.firestore();
+    const REFERRAL_BONUS = 50;
+
+    // Find the referral document where this user is the referred person
+    const referralSnap = await db.collection('referrals')
+      .where('referredUserId', isEqualTo: uid)
+      .limit(1)
+      .get();
+
+    if (referralSnap.empty) {
+      console.log(`ℹ️ User ${uid} has no referral relationship`);
+      return res.json({ status: 'not_eligible', reason: 'no_referral' });
+    }
+
+    const referralDoc = referralSnap.docs[0];
+    const referralId = referralDoc.id;
+    const referralData = referralDoc.data();
+    const referrerId = referralData.referrerUserId;
+
+    console.log(`📋 Found referral ${referralId}: referrer=${referrerId}, status=${referralData.status}`);
+
+    // Check if already awarded
+    if (referralData.status === 'awarded') {
+      console.log(`ℹ️ Referral ${referralId} already awarded`);
+      return res.json({ status: 'already_awarded', referralId });
+    }
+
+    // Get the referred user's current points
+    const referredUserRef = db.collection('users').doc(uid);
+    const referredUserDoc = await referredUserRef.get();
+    
+    if (!referredUserDoc.exists) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const referredUserData = referredUserDoc.data();
+    const referredUserPoints = referredUserData.points || 0;
+
+    // Check if referred user has reached the 50-point threshold
+    if (referredUserPoints < 50) {
+      console.log(`ℹ️ User ${uid} has ${referredUserPoints} points, needs 50 for referral bonus`);
+      return res.json({ 
+        status: 'not_eligible', 
+        reason: 'threshold_not_met',
+        currentPoints: referredUserPoints,
+        requiredPoints: 50
+      });
+    }
+
+    console.log(`✅ User ${uid} has ${referredUserPoints} points, eligible for referral bonus!`);
+
+    // Get the referrer's document
+    const referrerUserRef = db.collection('users').doc(referrerId);
+    const referrerUserDoc = await referrerUserRef.get();
+    
+    if (!referrerUserDoc.exists) {
+      console.warn(`⚠️ Referrer ${referrerId} not found, proceeding with referred user award only`);
+      // We'll still award the referred user but skip the referrer
+    }
+
+    const referrerUserData = referrerUserDoc.exists ? referrerUserDoc.data() : null;
+
+    // Use a transaction to award points atomically
+    let referrerNewPoints = null;
+    let referredNewPoints = null;
+    let referrerFcmToken = null;
+    let referredFcmToken = null;
+    let referrerName = 'Friend';
+    let referredName = 'Friend';
+
+    await db.runTransaction(async (tx) => {
+      // Re-fetch the referral doc inside the transaction to ensure consistency
+      const txReferralDoc = await tx.get(db.collection('referrals').doc(referralId));
+      if (txReferralDoc.data().status === 'awarded') {
+        throw new Error('ALREADY_AWARDED');
+      }
+
+      // Re-fetch user documents inside transaction
+      const txReferredUserDoc = await tx.get(referredUserRef);
+      const txReferredData = txReferredUserDoc.data() || {};
+      const currentReferredPoints = txReferredData.points || 0;
+      const currentReferredLifetime = (typeof txReferredData.lifetimePoints === 'number') 
+        ? txReferredData.lifetimePoints 
+        : currentReferredPoints;
+      referredFcmToken = txReferredData.fcmToken || null;
+      referredName = txReferredData.firstName || 'Friend';
+
+      // Award +50 to referred user
+      referredNewPoints = currentReferredPoints + REFERRAL_BONUS;
+      const referredNewLifetime = currentReferredLifetime + REFERRAL_BONUS;
+
+      tx.update(referredUserRef, {
+        points: referredNewPoints,
+        lifetimePoints: referredNewLifetime
+      });
+
+      // Create points transaction for referred user
+      const referredTxId = `referral_referred_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      tx.set(db.collection('pointsTransactions').doc(referredTxId), {
+        userId: uid,
+        type: 'referral',
+        amount: REFERRAL_BONUS,
+        description: 'Referral bonus - reached 50 points!',
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        metadata: {
+          referralId: referralId,
+          role: 'referred'
+        }
+      });
+
+      // Award +50 to referrer if they exist
+      if (referrerUserDoc.exists) {
+        const txReferrerUserDoc = await tx.get(referrerUserRef);
+        const txReferrerData = txReferrerUserDoc.data() || {};
+        const currentReferrerPoints = txReferrerData.points || 0;
+        const currentReferrerLifetime = (typeof txReferrerData.lifetimePoints === 'number')
+          ? txReferrerData.lifetimePoints
+          : currentReferrerPoints;
+        referrerFcmToken = txReferrerData.fcmToken || null;
+        referrerName = txReferrerData.firstName || 'Friend';
+
+        referrerNewPoints = currentReferrerPoints + REFERRAL_BONUS;
+        const referrerNewLifetime = currentReferrerLifetime + REFERRAL_BONUS;
+
+        tx.update(referrerUserRef, {
+          points: referrerNewPoints,
+          lifetimePoints: referrerNewLifetime
+        });
+
+        // Create points transaction for referrer
+        const referrerTxId = `referral_referrer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        tx.set(db.collection('pointsTransactions').doc(referrerTxId), {
+          userId: referrerId,
+          type: 'referral',
+          amount: REFERRAL_BONUS,
+          description: `Referral bonus - ${referredName} reached 50 points!`,
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          metadata: {
+            referralId: referralId,
+            role: 'referrer',
+            referredUserId: uid
+          }
+        });
+      }
+
+      // Update referral status to 'awarded'
+      tx.update(db.collection('referrals').doc(referralId), {
+        status: 'awarded',
+        awardedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+
+    console.log(`🎉 Referral ${referralId} awarded! Referrer: +${referrerNewPoints !== null ? REFERRAL_BONUS : 0}, Referred: +${REFERRAL_BONUS}`);
+
+    // Create Firestore notification documents for both users
+    const notificationPromises = [];
+    
+    // Create notification for referrer
+    if (referrerId) {
+      const referrerNotifRef = db.collection('notifications').doc();
+      notificationPromises.push(
+        referrerNotifRef.set({
+          userId: referrerId,
+          title: 'Referral Bonus Awarded! 🎉',
+          body: `${referredName} reached 50 points! You earned +${REFERRAL_BONUS} bonus points.`,
+          type: 'referral',
+          read: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          metadata: {
+            referralId: referralId,
+            role: 'referrer'
+          }
+        })
+      );
+    }
+    
+    // Create notification for referred user
+    const referredNotifRef = db.collection('notifications').doc();
+    notificationPromises.push(
+      referredNotifRef.set({
+        userId: uid,
+        title: 'Referral Bonus Awarded! 🎉',
+        body: `You reached 50 points! You and ${referrerName} each earned +${REFERRAL_BONUS} bonus points.`,
+        type: 'referral',
+        read: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        metadata: {
+          referralId: referralId,
+          role: 'referred'
+        }
+      })
+    );
+
+    // Send push notifications to both users (fire-and-forget, don't block response)
+    const pushPromises = [];
+
+    // Push to referrer
+    if (referrerFcmToken) {
+      pushPromises.push(
+        sendPushNotificationToToken(
+          referrerFcmToken,
+          'Referral Bonus Awarded! 🎉',
+          `${referredName} reached 50 points! You earned +${REFERRAL_BONUS} bonus points.`,
+          { type: 'referral_awarded', role: 'referrer', referralId }
+        ).then(result => {
+          console.log(`📱 Referrer push result:`, result);
+        })
+      );
+    } else {
+      console.log(`ℹ️ Referrer ${referrerId} has no FCM token, skipping push`);
+    }
+
+    // Push to referred user
+    if (referredFcmToken) {
+      pushPromises.push(
+        sendPushNotificationToToken(
+          referredFcmToken,
+          'Referral Bonus Awarded! 🎉',
+          `You reached 50 points! You and ${referrerName} each earned +${REFERRAL_BONUS} bonus points.`,
+          { type: 'referral_awarded', role: 'referred', referralId }
+        ).then(result => {
+          console.log(`📱 Referred user push result:`, result);
+        })
+      );
+    } else {
+      console.log(`ℹ️ Referred user ${uid} has no FCM token, skipping push`);
+    }
+
+    // Don't await push notifications - let them complete in background
+    Promise.all(pushPromises).catch(err => {
+      console.warn('⚠️ Some push notifications failed:', err);
+    });
+    
+    // Don't await notification documents - let them complete in background
+    Promise.all(notificationPromises).catch(err => {
+      console.warn('⚠️ Failed to create notification documents:', err);
+    });
+
+    return res.json({
+      status: 'awarded',
+      referralId,
+      referrerBonus: referrerNewPoints !== null ? REFERRAL_BONUS : 0,
+      referredBonus: REFERRAL_BONUS,
+      referrerNewPoints,
+      referredNewPoints
+    });
+
+  } catch (error) {
+    if (error.message === 'ALREADY_AWARDED') {
+      return res.json({ status: 'already_awarded' });
+    }
+    console.error('❌ Error in /referrals/award-check:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // Helper function to generate referral codes
 function generateReferralCode(length = 6) {
@@ -3853,8 +4029,13 @@ IMPORTANT:
         rewardDescription, 
         pointsRequired, 
         rewardCategory,
-        selectedItemId,      // NEW: Optional selected item ID
-        selectedItemName     // NEW: Optional selected item name
+        selectedItemId,      // Optional selected item ID
+        selectedItemName,    // Optional selected item name
+        selectedToppingId,   // NEW: Optional topping ID (for drink rewards)
+        selectedToppingName, // NEW: Optional topping name (for drink rewards)
+        selectedItemId2,     // NEW: Optional second item ID (for half-and-half)
+        selectedItemName2,   // NEW: Optional second item name (for half-and-half)
+        cookingMethod        // NEW: Optional cooking method (for dumpling rewards)
       } = req.body;
       
       if (!userId || !rewardTitle || !pointsRequired) {
@@ -3912,10 +4093,33 @@ IMPORTANT:
         expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes from now
         isExpired: false,
         isUsed: false,
-        // NEW: Store selected item info if provided
+        // Store selected item info if provided
         ...(selectedItemId && { selectedItemId }),
-        ...(selectedItemName && { selectedItemName })
+        ...(selectedItemName && { selectedItemName }),
+        // NEW: Store topping info if provided (for drink rewards)
+        ...(selectedToppingId && { selectedToppingId }),
+        ...(selectedToppingName && { selectedToppingName }),
+        // NEW: Store second item info if provided (for half-and-half)
+        ...(selectedItemId2 && { selectedItemId2 }),
+        ...(selectedItemName2 && { selectedItemName2 }),
+        // NEW: Store cooking method if provided (for dumpling rewards)
+        ...(cookingMethod && { cookingMethod })
       };
+      
+      // Build description for transaction
+      let transactionDescription = `Redeemed: ${rewardTitle}`;
+      if (selectedItemName) {
+        transactionDescription = `Redeemed: ${selectedItemName}`;
+        if (selectedToppingName) {
+          transactionDescription += ` with ${selectedToppingName}`;
+        }
+        if (selectedItemName2) {
+          transactionDescription = `Redeemed: Half and Half: ${selectedItemName} + ${selectedItemName2}`;
+          if (cookingMethod) {
+            transactionDescription += ` (${cookingMethod})`;
+          }
+        }
+      }
       
       // Create points transaction for deduction
       const pointsTransaction = {
@@ -3923,14 +4127,15 @@ IMPORTANT:
         userId: userId,
         type: 'reward_redemption',
         amount: -pointsRequired, // Negative amount for deduction
-        description: selectedItemName 
-          ? `Redeemed: ${selectedItemName}` 
-          : `Redeemed: ${rewardTitle}`,
+        description: transactionDescription,
         timestamp: admin.firestore.FieldValue.serverTimestamp(),
         isEarned: false,
         redemptionCode: redemptionCode,
         rewardTitle: rewardTitle,
-        ...(selectedItemName && { selectedItemName })
+        ...(selectedItemName && { selectedItemName }),
+        ...(selectedToppingName && { selectedToppingName }),
+        ...(selectedItemName2 && { selectedItemName2 }),
+        ...(cookingMethod && { cookingMethod })
       };
       
       // Perform database operations in a batch
@@ -3957,6 +4162,15 @@ IMPORTANT:
       if (selectedItemName) {
         console.log(`🍽️ Selected item: ${selectedItemName}`);
       }
+      if (selectedToppingName) {
+        console.log(`🧋 Selected topping: ${selectedToppingName}`);
+      }
+      if (selectedItemName2) {
+        console.log(`🥟 Second item: ${selectedItemName2}`);
+      }
+      if (cookingMethod) {
+        console.log(`🔥 Cooking method: ${cookingMethod}`);
+      }
       
       res.json({
         success: true,
@@ -3964,7 +4178,10 @@ IMPORTANT:
         newPointsBalance: newPointsBalance,
         pointsDeducted: pointsRequired,
         rewardTitle: rewardTitle,
-        selectedItemName: selectedItemName || null,  // NEW: Include in response
+        selectedItemName: selectedItemName || null,
+        selectedToppingName: selectedToppingName || null,  // NEW: Include in response
+        selectedItemName2: selectedItemName2 || null,      // NEW: Include in response
+        cookingMethod: cookingMethod || null,               // NEW: Include in response
         expiresAt: redeemedReward.expiresAt,
         message: 'Reward redeemed successfully! Show the code to your cashier.'
       });
@@ -4111,41 +4328,13 @@ IMPORTANT:
       }
 
       const trimmedToken = fcmToken.trim();
-
-      // DEDUPLICATION: Remove this token from any OTHER user who has it
-      // This prevents notifications from going to the wrong device after account switches
-      const existingTokenQuery = await db.collection('users')
-        .where('fcmToken', '==', trimmedToken)
-        .get();
-
-      let cleanedCount = 0;
-      if (!existingTokenQuery.empty) {
-        const batch = db.batch();
-        for (const doc of existingTokenQuery.docs) {
-          if (doc.id !== userContext.uid) {
-            batch.update(doc.ref, {
-              fcmToken: admin.firestore.FieldValue.delete(),
-              hasFcmToken: false,
-              fcmTokenUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-            cleanedCount++;
-          }
-        }
-
-        if (cleanedCount > 0) {
-          await batch.commit();
-          console.log(`🧹 Cleaned FCM token from ${cleanedCount} other user(s) for uid ${userContext.uid}`);
-        }
-      }
-
-      // Now store the token for the current user
       await userRef.set({
         hasFcmToken: true,
         fcmToken: trimmedToken,
         fcmTokenUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
 
-      return res.json({ ok: true, hasFcmToken: true, cleanedFromOtherUsers: cleanedCount });
+      return res.json({ ok: true, hasFcmToken: true });
     } catch (error) {
       console.error('❌ Error in /me/fcmToken:', error);
       return res.status(500).json({ error: 'Failed to store FCM token' });
@@ -4295,7 +4484,8 @@ IMPORTANT:
 
       const mapUser = (doc) => {
         const data = doc.data() || {};
-        const created = data.accountCreatedDate;
+        // Check both accountCreatedDate and createdAt for backward compatibility
+        const created = data.accountCreatedDate || data.createdAt;
         const createdDate = created && typeof created.toDate === 'function' ? created.toDate() : null;
 
         return {
@@ -4392,6 +4582,109 @@ IMPORTANT:
     }
   });
 
+  /**
+   * POST /admin/users/cleanup-orphans
+   *
+   * Finds and deletes orphaned Firestore user documents (documents without
+   * corresponding Firebase Auth accounts). This helps clean up duplicates
+   * that occur when accounts are deleted and recreated.
+   *
+   * Returns:
+   * - deletedCount: number of orphaned documents deleted
+   * - checkedCount: total number of documents checked
+   */
+  app.post('/admin/users/cleanup-orphans', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const db = admin.firestore();
+      const auth = admin.auth();
+      
+      console.log('🧹 Starting orphaned accounts cleanup...');
+      
+      let checkedCount = 0;
+      let deletedCount = 0;
+      let lastDoc = null;
+      const pageSize = 500;
+      const orphanedUIDs = [];
+      
+      // Scan through all user documents in batches
+      while (true) {
+        let query = db.collection('users')
+          .orderBy(admin.firestore.FieldPath.documentId())
+          .limit(pageSize);
+        
+        if (lastDoc) {
+          query = query.startAfter(lastDoc);
+        }
+        
+        const snapshot = await query.get();
+        if (snapshot.empty) {
+          break;
+        }
+        
+        // Check each document for orphaned status
+        for (const doc of snapshot.docs) {
+          checkedCount++;
+          const uid = doc.id;
+          
+          try {
+            // Check if Firebase Auth account exists for this UID
+            await auth.getUser(uid);
+            // If getUser succeeds, the account exists - not orphaned
+          } catch (error) {
+            // If getUser fails with user-not-found, it's an orphaned document
+            if (error.code === 'auth/user-not-found') {
+              orphanedUIDs.push(uid);
+              console.log(`🔍 Found orphaned account: ${uid}`);
+            } else {
+              // Other errors (permissions, etc.) - log but don't treat as orphaned
+              console.warn(`⚠️ Error checking user ${uid}: ${error.code}`);
+            }
+          }
+        }
+        
+        lastDoc = snapshot.docs[snapshot.docs.length - 1];
+        
+        // If we got fewer docs than pageSize, we've reached the end
+        if (snapshot.docs.length < pageSize) {
+          break;
+        }
+      }
+      
+      // Delete orphaned documents in batches (Firestore batch limit is 500)
+      const batchSize = 450; // Leave some headroom
+      for (let i = 0; i < orphanedUIDs.length; i += batchSize) {
+        const batch = db.batch();
+        const batchUIDs = orphanedUIDs.slice(i, i + batchSize);
+        
+        for (const uid of batchUIDs) {
+          batch.delete(db.collection('users').doc(uid));
+        }
+        
+        try {
+          await batch.commit();
+          deletedCount += batchUIDs.length;
+          console.log(`✅ Deleted batch of ${batchUIDs.length} orphaned accounts`);
+        } catch (error) {
+          console.error(`❌ Error deleting batch: ${error.message}`);
+        }
+      }
+      
+      console.log(`✅ Cleanup complete: Deleted ${deletedCount} orphaned accounts out of ${checkedCount} checked`);
+      
+      return res.json({
+        deletedCount,
+        checkedCount,
+        message: `Cleaned up ${deletedCount} orphaned account(s) out of ${checkedCount} checked`
+      });
+    } catch (error) {
+      console.error('❌ Error in /admin/users/cleanup-orphans:', error);
+      res.status(500).json({ error: 'Failed to cleanup orphaned accounts' });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // Staff-only Rewards Validation / Consumption (QR scanning)
   // ---------------------------------------------------------------------------
@@ -4469,8 +4762,13 @@ IMPORTANT:
           expiresAt: expiresAt ? expiresAt.toISOString() : null,
           isUsed: data.isUsed === true,
           isExpired: data.isExpired === true || (expiresAt ? expiresAt <= new Date() : false),
-          selectedItemId: data.selectedItemId || null,      // NEW
-          selectedItemName: data.selectedItemName || null   // NEW
+          selectedItemId: data.selectedItemId || null,
+          selectedItemName: data.selectedItemName || null,
+          selectedToppingId: data.selectedToppingId || null,    // NEW: For drink rewards
+          selectedToppingName: data.selectedToppingName || null, // NEW: For drink rewards
+          selectedItemId2: data.selectedItemId2 || null,        // NEW: For half-and-half
+          selectedItemName2: data.selectedItemName2 || null,    // NEW: For half-and-half
+          cookingMethod: data.cookingMethod || null              // NEW: For dumpling rewards
         }
       });
     } catch (error) {
