@@ -3628,7 +3628,8 @@ IMPORTANT:
         selectedToppingName, // NEW: Optional topping name (for drink rewards)
         selectedItemId2,     // NEW: Optional second item ID (for half-and-half)
         selectedItemName2,   // NEW: Optional second item name (for half-and-half)
-        cookingMethod        // NEW: Optional cooking method (for dumpling rewards)
+        cookingMethod,       // NEW: Optional cooking method (for dumpling rewards)
+        drinkType            // NEW: Optional drink type (Lemonade or Soda)
       } = req.body;
       
       if (!userId || !rewardTitle || !pointsRequired) {
@@ -3696,7 +3697,9 @@ IMPORTANT:
         ...(selectedItemId2 && { selectedItemId2 }),
         ...(selectedItemName2 && { selectedItemName2 }),
         // NEW: Store cooking method if provided (for dumpling rewards)
-        ...(cookingMethod && { cookingMethod })
+        ...(cookingMethod && { cookingMethod }),
+        // NEW: Store drink type if provided (for Lemonade/Soda rewards)
+        ...(drinkType && { drinkType })
       };
       
       // Build description for transaction
@@ -3775,6 +3778,7 @@ IMPORTANT:
         selectedToppingName: selectedToppingName || null,  // NEW: Include in response
         selectedItemName2: selectedItemName2 || null,      // NEW: Include in response
         cookingMethod: cookingMethod || null,               // NEW: Include in response
+        drinkType: drinkType || null,                       // NEW: Include in response
         expiresAt: redeemedReward.expiresAt,
         message: 'Reward redeemed successfully! Show the code to your cashier.'
       });
@@ -4361,7 +4365,8 @@ IMPORTANT:
           selectedToppingName: data.selectedToppingName || null, // NEW: For drink rewards
           selectedItemId2: data.selectedItemId2 || null,        // NEW: For half-and-half
           selectedItemName2: data.selectedItemName2 || null,    // NEW: For half-and-half
-          cookingMethod: data.cookingMethod || null              // NEW: For dumpling rewards
+          cookingMethod: data.cookingMethod || null,            // NEW: For dumpling rewards
+          drinkType: data.drinkType || null                      // NEW: For Lemonade/Soda rewards
         }
       });
     } catch (error) {
@@ -4425,7 +4430,13 @@ IMPORTANT:
               isUsed: true,
               isExpired: data.isExpired === true || (expiresAt ? expiresAt <= new Date() : false),
               selectedItemId: data.selectedItemId || null,
-              selectedItemName: data.selectedItemName || null
+              selectedItemName: data.selectedItemName || null,
+              selectedToppingId: data.selectedToppingId || null,
+              selectedToppingName: data.selectedToppingName || null,
+              selectedItemId2: data.selectedItemId2 || null,
+              selectedItemName2: data.selectedItemName2 || null,
+              cookingMethod: data.cookingMethod || null,
+              drinkType: data.drinkType || null
             }
           };
         }
@@ -4447,7 +4458,13 @@ IMPORTANT:
               isUsed: false,
               isExpired: true,
               selectedItemId: data.selectedItemId || null,
-              selectedItemName: data.selectedItemName || null
+              selectedItemName: data.selectedItemName || null,
+              selectedToppingId: data.selectedToppingId || null,
+              selectedToppingName: data.selectedToppingName || null,
+              selectedItemId2: data.selectedItemId2 || null,
+              selectedItemName2: data.selectedItemName2 || null,
+              cookingMethod: data.cookingMethod || null,
+              drinkType: data.drinkType || null
             }
           };
         }
@@ -4479,8 +4496,14 @@ IMPORTANT:
             expiresAt: expiresAt ? expiresAt.toISOString() : null,
             isUsed: true,
             isExpired: false,
-            selectedItemId: data.selectedItemId || null,      // NEW
-            selectedItemName: data.selectedItemName || null   // NEW
+            selectedItemId: data.selectedItemId || null,
+            selectedItemName: data.selectedItemName || null,
+            selectedToppingId: data.selectedToppingId || null,
+            selectedToppingName: data.selectedToppingName || null,
+            selectedItemId2: data.selectedItemId2 || null,
+            selectedItemName2: data.selectedItemName2 || null,
+            cookingMethod: data.cookingMethod || null,
+            drinkType: data.drinkType || null
           }
         };
       });
