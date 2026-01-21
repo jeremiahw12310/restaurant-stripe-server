@@ -495,7 +495,7 @@ app.post('/referrals/award-check', async (req, res) => {
 
     // Find the referral document where this user is the referred person
     const referralSnap = await db.collection('referrals')
-      .where('referredUserId', isEqualTo: uid)
+      .where('referredUserId', '==', uid)
       .limit(1)
       .get();
 
