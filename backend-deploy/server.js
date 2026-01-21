@@ -5133,8 +5133,8 @@ IMPORTANT:
       const pageSize = Math.min(parseInt(req.query.limit, 10) || 50, 200);
       const startAfterTs = req.query.startAfter ? new Date(req.query.startAfter) : null;
 
-      let query = db.collection('usedReceipts')
-        .orderBy('timestamp', 'desc')
+      let query = db.collection('receipts')
+        .orderBy('createdAt', 'desc')
         .limit(pageSize);
 
       if (startAfterTs && !isNaN(startAfterTs.getTime())) {
@@ -5178,7 +5178,7 @@ IMPORTANT:
           id: doc.id,
           orderNumber: data.orderNumber || null,
           orderDate: data.orderDate || null,
-          timestamp: data.timestamp ? data.timestamp.toDate().toISOString() : null,
+          timestamp: data.createdAt ? data.createdAt.toDate().toISOString() : null,
           userId: data.userId || null,
           userName: userInfo.firstName || userInfo.name || null,
           userPhone: userInfo.phone || null
@@ -5186,8 +5186,8 @@ IMPORTANT:
       });
 
       const lastDoc = snapshot.docs[snapshot.docs.length - 1];
-      const nextPageToken = lastDoc && lastDoc.get('timestamp')
-        ? lastDoc.get('timestamp').toDate().toISOString()
+      const nextPageToken = lastDoc && lastDoc.get('createdAt')
+        ? lastDoc.get('createdAt').toDate().toISOString()
         : null;
 
       res.json({
@@ -5209,41 +5209,20 @@ IMPORTANT:
       const db = admin.firestore();
       const receiptId = req.params.id;
 
-      const usedReceiptRef = db.collection('usedReceipts').doc(receiptId);
-      const usedReceiptDoc = await usedReceiptRef.get();
+      const receiptRef = db.collection('receipts').doc(receiptId);
+      const receiptDoc = await receiptRef.get();
 
-      if (!usedReceiptDoc.exists) {
+      if (!receiptDoc.exists) {
         return res.status(404).json({ error: 'Receipt not found' });
       }
 
-      const usedData = usedReceiptDoc.data() || {};
-      const { orderNumber, orderDate, userId } = usedData;
-
-      if (!orderNumber || !orderDate) {
-        console.warn('⚠️ Used receipt missing orderNumber or orderDate; deleting usedReceipts doc only');
-      }
+      const receiptData = receiptDoc.data() || {};
+      const { orderNumber, orderDate, userId } = receiptData;
 
       const batch = db.batch();
 
-      // Always delete the usedReceipts entry
-      batch.delete(usedReceiptRef);
-
-      // Also delete any backend receipts that match this orderNumber + orderDate
-      if (orderNumber && orderDate) {
-        try {
-          const receiptsRef = db.collection('receipts');
-          const receiptsSnapshot = await receiptsRef
-            .where('orderNumber', '==', orderNumber)
-            .where('orderDate', '==', orderDate)
-            .get();
-
-          receiptsSnapshot.forEach(doc => {
-            batch.delete(doc.ref);
-          });
-        } catch (matchErr) {
-          console.warn('⚠️ Failed to query matching receipts for deletion:', matchErr.message || matchErr);
-        }
-      }
+      // Delete the receipt entry
+      batch.delete(receiptRef);
 
       // Log admin action for audit
       const actionRef = db.collection('adminActions').doc();
