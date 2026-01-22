@@ -308,6 +308,7 @@ private struct AdminRewardsConfirmView: View {
     let onFinished: () -> Void
 
     @State private var autoDismissScheduled = false
+    @State private var showGiveCustomerScreen = false
 
     var body: some View {
         ZStack {
@@ -333,14 +334,16 @@ private struct AdminRewardsConfirmView: View {
                 VStack(spacing: 12) {
                     if let reward = viewModel.reward {
                         VStack(spacing: 8) {
-                            // Show selected item name if available, otherwise reward title
-                            Text(reward.selectedItemName ?? reward.rewardTitle ?? "Reward")
+                            // Build display name based on reward type
+                            let displayName = viewModel.buildDisplayName(for: reward)
+                            
+                            Text(displayName)
                                 .font(.system(size: 18, weight: .black, design: .rounded))
                                 .foregroundColor(Theme.modernPrimary)
                                 .multilineTextAlignment(.center)
                             
-                            // Show reward tier if selected item is different
-                            if let selectedName = reward.selectedItemName, selectedName != reward.rewardTitle {
+                            // Show reward tier if we have detailed selections
+                            if displayName != reward.rewardTitle {
                                 Text("(\(reward.rewardTitle ?? "Reward"))")
                                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                                     .foregroundColor(Theme.modernSecondary.opacity(0.8))
@@ -478,8 +481,112 @@ private struct AdminRewardsConfirmView: View {
             guard newValue == .done else { return }
             guard !autoDismissScheduled else { return }
             autoDismissScheduled = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                onFinished()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                showGiveCustomerScreen = true
+            }
+        }
+        .fullScreenCover(isPresented: $showGiveCustomerScreen) {
+            if let reward = viewModel.reward {
+                AdminRewardGiveCustomerView(
+                    reward: reward,
+                    displayName: viewModel.buildDisplayName(for: reward),
+                    onDone: {
+                        showGiveCustomerScreen = false
+                        onFinished()
+                    }
+                )
+            }
+        }
+    }
+}
+
+// MARK: - Give Customer View
+
+private struct AdminRewardGiveCustomerView: View {
+    let reward: AdminRewardsScanViewModel.Reward
+    let displayName: String
+    let onDone: () -> Void
+    
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                gradient: Gradient(colors: [Theme.modernBackground, Theme.modernCardSecondary, Theme.modernBackground]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            
+            VStack(spacing: 32) {
+                Spacer()
+                
+                // Success checkmark
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 80, weight: .bold))
+                    .foregroundColor(.green)
+                    .shadow(color: .green.opacity(0.3), radius: 20, x: 0, y: 10)
+                
+                // Header text
+                Text("Please give the customer:")
+                    .font(.system(size: 22, weight: .black, design: .rounded))
+                    .foregroundColor(Theme.modernPrimary)
+                
+                // Item details card
+                VStack(spacing: 16) {
+                    // Main item display name
+                    Text(displayName)
+                        .font(.system(size: 24, weight: .black, design: .rounded))
+                        .foregroundColor(Theme.modernPrimary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(3)
+                    
+                    Divider()
+                        .background(Color.white.opacity(0.2))
+                    
+                    // Reward tier name
+                    if let rewardTitle = reward.rewardTitle {
+                        VStack(spacing: 6) {
+                            Text(rewardTitle)
+                                .font(.system(size: 18, weight: .bold, design: .rounded))
+                                .foregroundColor(Theme.modernSecondary)
+                            
+                            if let pointsRequired = reward.pointsRequired {
+                                Text("\(pointsRequired) Points")
+                                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                    .foregroundColor(Theme.modernSecondary.opacity(0.8))
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(24)
+                .background(
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(Theme.modernCard)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 20)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        )
+                        .shadow(color: Theme.cardShadow, radius: 15, x: 0, y: 8)
+                )
+                .padding(.horizontal, 24)
+                
+                Spacer()
+                
+                // Done button
+                Button(action: onDone) {
+                    Text("Done")
+                        .font(.system(size: 18, weight: .black, design: .rounded))
+                        .foregroundColor(Color(red: 0.15, green: 0.1, blue: 0.0))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 18)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(LinearGradient(colors: [Theme.primaryGold, Theme.energyOrange], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .shadow(color: Theme.primaryGold.opacity(0.35), radius: 12, x: 0, y: 6)
+                        )
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 40)
             }
         }
     }
@@ -510,8 +617,14 @@ final class AdminRewardsScanViewModel: ObservableObject {
         let expiresAt: String?
         let isUsed: Bool?
         let isExpired: Bool?
-        let selectedItemId: String?      // NEW: Selected item ID
-        let selectedItemName: String?    // NEW: Selected item name for display
+        let selectedItemId: String?      // Selected item ID
+        let selectedItemName: String?    // Selected item name for display
+        let selectedToppingId: String?   // NEW: Topping ID (for drink rewards)
+        let selectedToppingName: String? // NEW: Topping name (for drink rewards)
+        let selectedItemId2: String?     // NEW: Second item ID (for half-and-half)
+        let selectedItemName2: String?   // NEW: Second item name (for half-and-half)
+        let cookingMethod: String?       // NEW: Cooking method (for dumpling rewards)
+        let drinkType: String?           // NEW: Drink type (Lemonade or Soda)
     }
 
     struct ValidateResponse: Codable {
@@ -530,6 +643,8 @@ final class AdminRewardsScanViewModel: ObservableObject {
     var expiresAtText: String? {
         guard let iso = reward?.expiresAt else { return nil }
         let isoFormatter = ISO8601DateFormatter()
+        // Support fractional seconds (e.g., "2023-11-02T11:47:32.135Z")
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let date = isoFormatter.date(from: iso) {
             let fmt = DateFormatter()
             fmt.dateStyle = .none
@@ -537,6 +652,51 @@ final class AdminRewardsScanViewModel: ObservableObject {
             return fmt.string(from: date)
         }
         return nil
+    }
+    
+    func buildDisplayName(for reward: Reward) -> String {
+        // Check for half-and-half (has second item) - shows both flavors and cooking method
+        if let itemName = reward.selectedItemName, let itemName2 = reward.selectedItemName2 {
+            var display = "Half and Half: \(itemName) + \(itemName2)"
+            if let method = reward.cookingMethod {
+                display += " (\(method))"
+            }
+            return display
+        }
+        
+        // Check for single dumpling with cooking method (has item but no second item)
+        // Shows flavor and cooking method
+        if let itemName = reward.selectedItemName,
+           reward.selectedItemName2 == nil,
+           let method = reward.cookingMethod {
+            return "\(itemName) (\(method))"
+        }
+        
+        // Check for drink with topping
+        // For Lemonade/Soda: shows flavor, drink type, and topping
+        // For other teas: shows flavor and topping
+        if let itemName = reward.selectedItemName, let toppingName = reward.selectedToppingName {
+            if let drinkType = reward.drinkType {
+                // Lemonade or Soda with topping
+                return "\(itemName) (\(drinkType)) with \(toppingName)"
+            }
+            // Other teas (Milk Tea, Fruit Tea, Coffee) with topping
+            return "\(itemName) with \(toppingName)"
+        }
+        
+        // Check for drink with drink type but no topping (Lemonade/Soda only)
+        if let itemName = reward.selectedItemName, let drinkType = reward.drinkType {
+            return "\(itemName) (\(drinkType))"
+        }
+        
+        // Check for drink without topping (other teas - Milk Tea, Fruit Tea, Coffee)
+        // Shows just the flavor/item name
+        if let itemName = reward.selectedItemName {
+            return itemName
+        }
+        
+        // Fallback to reward title
+        return reward.rewardTitle ?? "Reward"
     }
 
     func handleScannedString(_ scannedString: String, onCode: (String) -> Void) {

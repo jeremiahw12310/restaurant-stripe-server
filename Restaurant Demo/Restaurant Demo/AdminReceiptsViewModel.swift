@@ -104,7 +104,10 @@ class AdminReceiptsViewModel: ObservableObject {
                 
                 let tsDate: Date?
                 if let iso = timestampISO {
-                    tsDate = ISO8601DateFormatter().date(from: iso)
+                    let formatter = ISO8601DateFormatter()
+                    // Support fractional seconds (e.g., "2023-11-02T11:47:32.135Z")
+                    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                    tsDate = formatter.date(from: iso)
                 } else {
                     tsDate = nil
                 }

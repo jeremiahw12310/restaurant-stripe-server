@@ -12,6 +12,16 @@ class AdminOfficeViewModel: ObservableObject {
     @Published var sortOrder: SortOrder = .ascending
     @Published var errorMessage: String?
     
+    // Cleanup state
+    @Published var isCleaningUp = false
+    @Published var cleanupResult: CleanupResult?
+    
+    struct CleanupResult {
+        let checkedCount: Int
+        let deletedCount: Int
+        let message: String
+    }
+    
     enum SortOption: String, CaseIterable {
         case name = "Name"
         case email = "Email"
@@ -31,7 +41,12 @@ class AdminOfficeViewModel: ObservableObject {
     private var activeSearchQuery: String = ""
     private var searchDebounceWorkItem: DispatchWorkItem?
     private var currentRequestId: UUID?
-    private static let isoFormatter = ISO8601DateFormatter()
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        // Support fractional seconds (e.g., "2023-11-02T11:47:32.135Z")
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
     
     func loadUsers() {
         // Initial load resets paging
@@ -274,6 +289,101 @@ class AdminOfficeViewModel: ObservableObject {
                     self.hasMore = hasMore
                     self.nextCursor = nextCursor
                     self.sortUsers()
+                }
+            }.resume()
+        }
+    }
+    
+    // MARK: - Cleanup Orphaned Accounts
+    
+    func cleanupOrphanedAccounts() {
+        guard let currentUser = Auth.auth().currentUser else {
+            errorMessage = "Not authenticated. Please log in again."
+            return
+        }
+        
+        isCleaningUp = true
+        cleanupResult = nil
+        errorMessage = nil
+        
+        currentUser.getIDToken { [weak self] token, error in
+            guard let self else { return }
+            
+            if let error = error {
+                DispatchQueue.main.async {
+                    self.isCleaningUp = false
+                    self.errorMessage = "Failed to get auth token: \(error.localizedDescription)"
+                }
+                return
+            }
+            
+            guard let token else {
+                DispatchQueue.main.async {
+                    self.isCleaningUp = false
+                    self.errorMessage = "Failed to get auth token"
+                }
+                return
+            }
+            
+            guard let url = URL(string: "\(Config.backendURL)/admin/users/cleanup-orphans") else {
+                DispatchQueue.main.async {
+                    self.isCleaningUp = false
+                    self.errorMessage = "Invalid server URL"
+                }
+                return
+            }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            
+            URLSession.shared.dataTask(with: request) { data, response, networkError in
+                DispatchQueue.main.async {
+                    self.isCleaningUp = false
+                    
+                    if let networkError = networkError {
+                        self.errorMessage = "Network error: \(networkError.localizedDescription)"
+                        return
+                    }
+                    
+                    guard let http = response as? HTTPURLResponse else {
+                        self.errorMessage = "Invalid response"
+                        return
+                    }
+                    
+                    guard let data else {
+                        self.errorMessage = "No data returned"
+                        return
+                    }
+                    
+                    guard http.statusCode == 200 else {
+                        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                           let msg = json["error"] as? String {
+                            self.errorMessage = msg
+                        } else {
+                            self.errorMessage = "Cleanup failed (status \(http.statusCode))"
+                        }
+                        return
+                    }
+                    
+                    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                        self.errorMessage = "Failed to parse server response"
+                        return
+                    }
+                    
+                    let checkedCount = json["checkedCount"] as? Int ?? 0
+                    let deletedCount = json["deletedCount"] as? Int ?? 0
+                    let message = json["message"] as? String ?? "Cleanup completed"
+                    
+                    self.cleanupResult = CleanupResult(
+                        checkedCount: checkedCount,
+                        deletedCount: deletedCount,
+                        message: message
+                    )
+                    
+                    // Refresh users list after cleanup
+                    self.loadUsers()
                 }
             }.resume()
         }

@@ -5218,10 +5218,26 @@ IMPORTANT:
    *   totalPointsDistributed: number
    * }
    */
+  
+  // Cache for admin stats to reduce Firestore reads (2 minute TTL)
+  const adminStatsCache = {
+    data: null,
+    timestamp: null,
+    ttl: 2 * 60 * 1000 // 2 minutes in milliseconds
+  };
+  
   app.get('/admin/stats', async (req, res) => {
     try {
       const adminContext = await requireAdmin(req, res);
       if (!adminContext) return;
+
+      // Check cache first
+      const cacheNow = Date.now();
+      if (adminStatsCache.data && adminStatsCache.timestamp && 
+          (cacheNow - adminStatsCache.timestamp) < adminStatsCache.ttl) {
+        console.log('📊 Admin stats served from cache');
+        return res.json(adminStatsCache.data);
+      }
 
       const db = admin.firestore();
       
@@ -5309,7 +5325,11 @@ IMPORTANT:
         totalPointsDistributed
       };
 
-      console.log('📊 Admin stats fetched:', stats);
+      // Update cache
+      adminStatsCache.data = stats;
+      adminStatsCache.timestamp = cacheNow;
+
+      console.log('📊 Admin stats fetched and cached:', stats);
       res.json(stats);
 
     } catch (error) {
