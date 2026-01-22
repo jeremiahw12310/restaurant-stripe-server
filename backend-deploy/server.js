@@ -5683,6 +5683,7 @@ IMPORTANT:
       weekAgo.setHours(0, 0, 0, 0);
 
       // Run all queries in parallel for efficiency
+      // Note: Using .get() and .size instead of .count().get() for compatibility
       const [
         usersSnapshot,
         usersTodaySnapshot,
@@ -5695,41 +5696,41 @@ IMPORTANT:
         pointsSnapshot
       ] = await Promise.all([
         // Total users count
-        db.collection('users').count().get(),
+        db.collection('users').get(),
         
         // New users today (check both accountCreatedDate and createdAt for compatibility)
         db.collection('users')
           .where('accountCreatedDate', '>=', todayStart)
-          .count().get(),
+          .get(),
         
         // New users this week
         db.collection('users')
           .where('accountCreatedDate', '>=', weekAgo)
-          .count().get(),
+          .get(),
         
         // Total receipts scanned
-        db.collection('usedReceipts').count().get(),
+        db.collection('usedReceipts').get(),
         
         // Receipts scanned today
         db.collection('usedReceipts')
           .where('timestamp', '>=', todayStart)
-          .count().get(),
+          .get(),
         
         // Receipts scanned this week
         db.collection('usedReceipts')
           .where('timestamp', '>=', weekAgo)
-          .count().get(),
+          .get(),
         
         // Total rewards redeemed (isUsed = true)
         db.collection('redeemedRewards')
           .where('isUsed', '==', true)
-          .count().get(),
+          .get(),
         
         // Rewards redeemed today
         db.collection('redeemedRewards')
           .where('isUsed', '==', true)
           .where('usedAt', '>=', todayStart)
-          .count().get(),
+          .get(),
         
         // Get aggregate points from users collection
         db.collection('users').select('lifetimePoints').get()
@@ -5745,14 +5746,14 @@ IMPORTANT:
       });
 
       const stats = {
-        totalUsers: usersSnapshot.data().count || 0,
-        newUsersToday: usersTodaySnapshot.data().count || 0,
-        newUsersThisWeek: usersWeekSnapshot.data().count || 0,
-        totalReceipts: receiptsSnapshot.data().count || 0,
-        receiptsToday: receiptsTodaySnapshot.data().count || 0,
-        receiptsThisWeek: receiptsWeekSnapshot.data().count || 0,
-        totalRewardsRedeemed: rewardsSnapshot.data().count || 0,
-        rewardsRedeemedToday: rewardsTodaySnapshot.data().count || 0,
+        totalUsers: usersSnapshot.size || 0,
+        newUsersToday: usersTodaySnapshot.size || 0,
+        newUsersThisWeek: usersWeekSnapshot.size || 0,
+        totalReceipts: receiptsSnapshot.size || 0,
+        receiptsToday: receiptsTodaySnapshot.size || 0,
+        receiptsThisWeek: receiptsWeekSnapshot.size || 0,
+        totalRewardsRedeemed: rewardsSnapshot.size || 0,
+        rewardsRedeemedToday: rewardsTodaySnapshot.size || 0,
         totalPointsDistributed
       };
 
