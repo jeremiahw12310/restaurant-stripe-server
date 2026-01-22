@@ -5625,16 +5625,16 @@ IMPORTANT:
           .get(),
         
         // Total receipts scanned
-        db.collection('usedReceipts').get(),
+        db.collection('receipts').get(),
         
         // Receipts scanned today
-        db.collection('usedReceipts')
-          .where('timestamp', '>=', todayStart)
+        db.collection('receipts')
+          .where('createdAt', '>=', todayStart)
           .get(),
         
         // Receipts scanned this week
-        db.collection('usedReceipts')
-          .where('timestamp', '>=', weekAgo)
+        db.collection('receipts')
+          .where('createdAt', '>=', weekAgo)
           .get(),
         
         // Total rewards redeemed (isUsed = true)
