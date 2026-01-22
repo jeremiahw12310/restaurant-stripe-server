@@ -18,6 +18,7 @@ class NotificationService: NSObject, ObservableObject {
     @Published var fcmToken: String?
     @Published var hasNotificationPermission: Bool = false
     @Published var unreadNotificationCount: Int = 0
+    @Published var notifications: [AppNotification] = []
     
     private let db = Firestore.firestore()
     private var notificationsListener: ListenerRegistration?
@@ -248,16 +249,33 @@ class NotificationService: NSObject, ObservableObject {
                     return
                 }
                 
-                guard let documents = snapshot?.documents else { return }
+                guard let documents = snapshot?.documents else {
+                    DispatchQueue.main.async {
+                        self?.notifications = []
+                        self?.unreadNotificationCount = 0
+                    }
+                    return
+                }
+                
+                // Parse all notifications with error handling
+                let allNotifications = documents.compactMap { doc -> AppNotification? in
+                    let data = doc.data()
+                    // Validate that data is actually a dictionary
+                    guard data is [String: Any] else {
+                        print("⚠️ NotificationService: Invalid data format for notification \(doc.documentID)")
+                        return nil
+                    }
+                    // Safely create notification - init handles edge cases internally
+                    return AppNotification(id: doc.documentID, data: data)
+                }
                 
                 // Count unread notifications
-                let unreadCount = documents.filter { doc in
-                    let data = doc.data()
-                    return data["read"] as? Bool != true
-                }.count
+                let unreadCount = allNotifications.filter { !$0.read }.count
                 
                 DispatchQueue.main.async {
+                    self?.notifications = allNotifications
                     self?.unreadNotificationCount = unreadCount
+                    self?.updateAppBadge()
                 }
             }
     }
@@ -266,15 +284,23 @@ class NotificationService: NSObject, ObservableObject {
     func stopNotificationsListener() {
         notificationsListener?.remove()
         notificationsListener = nil
+        DispatchQueue.main.async {
+            self.notifications = []
+            self.unreadNotificationCount = 0
+        }
     }
     
     /// Mark a notification as read
     func markNotificationAsRead(notificationId: String) {
         db.collection("notifications").document(notificationId).updateData([
             "read": true
-        ]) { error in
+        ]) { [weak self] error in
             if let error = error {
                 print("❌ NotificationService: Failed to mark notification as read: \(error.localizedDescription)")
+            } else {
+                DispatchQueue.main.async {
+                    self?.updateAppBadge()
+                }
             }
         }
     }
@@ -294,11 +320,14 @@ class NotificationService: NSObject, ObservableObject {
                     batch?.updateData(["read": true], forDocument: doc.reference)
                 }
                 
-                batch?.commit { error in
+                batch?.commit { [weak self] error in
                     if let error = error {
                         print("❌ NotificationService: Failed to mark all as read: \(error.localizedDescription)")
                     } else {
                         print("✅ NotificationService: All notifications marked as read")
+                        DispatchQueue.main.async {
+                            self?.updateAppBadge()
+                        }
                     }
                 }
             }
@@ -323,6 +352,25 @@ class NotificationService: NSObject, ObservableObject {
             if let error = error {
                 print("❌ NotificationService: Failed to show local notification: \(error.localizedDescription)")
             }
+        }
+    }
+    
+    // MARK: - Push Notification Tap Handling
+    
+    /// Handle when user taps on a push notification
+    /// Marks all unread notifications as read (since push payloads don't include Firestore document IDs)
+    func handlePushNotificationTap(userInfo: [String: Any]) {
+        print("📱 NotificationService: Handling push notification tap")
+        markAllNotificationsAsRead()
+    }
+    
+    // MARK: - App Badge Management
+    
+    /// Update the app icon badge number based on unread notification count
+    func updateAppBadge() {
+        DispatchQueue.main.async {
+            UIApplication.shared.applicationIconBadgeNumber = self.unreadNotificationCount
+            print("📱 NotificationService: Updated app badge to \(self.unreadNotificationCount)")
         }
     }
 }
@@ -358,21 +406,57 @@ struct AppNotification: Identifiable, Codable {
         case adminBroadcast = "admin_broadcast"
         case adminIndividual = "admin_individual"
         case system = "system"
+        case referral = "referral"
+        case rewardGift = "reward_gift"
     }
     
     init(id: String, data: [String: Any]) {
         self.id = id
-        self.userId = data["userId"] as? String ?? ""
-        self.title = data["title"] as? String ?? ""
-        self.body = data["body"] as? String ?? ""
-        self.read = data["read"] as? Bool ?? false
         
+        // Safely extract fields with defensive checks
+        if let userId = data["userId"] as? String {
+            self.userId = userId
+        } else if let userId = data["userId"] {
+            // Handle any other type by converting to string
+            self.userId = String(describing: userId)
+        } else {
+            self.userId = ""
+        }
+        
+        if let title = data["title"] as? String {
+            self.title = title
+        } else if let title = data["title"] {
+            self.title = String(describing: title)
+        } else {
+            self.title = ""
+        }
+        
+        if let body = data["body"] as? String {
+            self.body = body
+        } else if let body = data["body"] {
+            self.body = String(describing: body)
+        } else {
+            self.body = ""
+        }
+        
+        // Safely extract read status
+        if let read = data["read"] as? Bool {
+            self.read = read
+        } else {
+            self.read = false
+        }
+        
+        // Safely handle createdAt field - could be Timestamp or Date
         if let timestamp = data["createdAt"] as? Timestamp {
             self.createdAt = timestamp.dateValue()
+        } else if let date = data["createdAt"] as? Date {
+            self.createdAt = date
         } else {
+            // Fallback if createdAt is missing or invalid
             self.createdAt = Date()
         }
         
+        // Safely extract type
         if let typeString = data["type"] as? String,
            let type = NotificationType(rawValue: typeString) {
             self.type = type

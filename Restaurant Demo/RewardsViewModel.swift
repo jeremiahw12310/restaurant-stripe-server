@@ -18,10 +18,13 @@ class RewardsViewModel: ObservableObject {
             guard let self = self else { return }
             if let user = user {
                 self.startActiveRedemptionListener(userId: user.uid)
+                self.startGiftedRewardsListener(userId: user.uid)
             } else {
                 self.stopActiveRedemptionListener()
+                self.stopGiftedRewardsListener()
                 self.activeRedemption = nil
                 self.lastSuccessData = nil
+                self.giftedRewards = []
             }
         }
     }
@@ -31,6 +34,7 @@ class RewardsViewModel: ObservableObject {
             Auth.auth().removeStateDidChangeListener(handle)
         }
         stopActiveRedemptionListener()
+        stopGiftedRewardsListener()
     }
     private var authHandle: AuthStateDidChangeListenerHandle?
     private var activeListener: ListenerRegistration?
@@ -47,19 +51,37 @@ class RewardsViewModel: ObservableObject {
         }
     }
     @Published var rewardJustUsed = false
+    @Published var giftedRewards: [GiftedReward] = []
     
+    private var giftedRewardsListener: ListenerRegistration?
     private let categories = ["All", "Food", "Drinks", "Condiments", "Special"]
+    
+    // MARK: - Lunch Special Availability Check
+    private func isLunchSpecialAvailable() -> Bool {
+        let calendar = Calendar.current
+        let now = Date()
+        let currentHour = calendar.component(.hour, from: now)
+        let currentDay = calendar.component(.weekday, from: now) // 1=Sunday, 2=Monday, ..., 7=Saturday
+        
+        // Check if it's Monday-Friday (weekday 2-6)
+        let isWeekday = currentDay >= 2 && currentDay <= 6
+        
+        // Check if it's between 11 AM and 4 PM (hours 11-15)
+        let isLunchHours = currentHour >= 11 && currentHour < 16
+        
+        return isWeekday && isLunchHours
+    }
     
     // MARK: - Reward Options - Updated to match exact pricing structure
     var rewardOptions: [RewardOption] {
-        [
+        let allRewards = [
             // 250 pts tier
             RewardOption(title: "Free Peanut Sauce", description: "Any dipping sauce selection", pointsRequired: 250, color: .orange, icon: "🥫", category: "Condiments", imageName: "peanut", rewardTierId: "tier_sauce_250"),
             
             // 450 pts tier
             RewardOption(title: "Fruit Tea", description: "Fruit Tea with up to one free Topping option included", pointsRequired: 450, color: .blue, icon: "🧋", category: "Drinks", imageName: "fruittea", eligibleCategoryId: "Fruit Tea", rewardTierId: "tier_drinks_fruit_tea_450"),
             RewardOption(title: "Milk Tea", description: "Milk Tea with up to one free Topping option included", pointsRequired: 450, color: .blue, icon: "🧋", category: "Drinks", imageName: "milktea", eligibleCategoryId: "Milk Tea", rewardTierId: "tier_drinks_milk_tea_450"),
-            RewardOption(title: "Lemonade", description: "Lemonade with up to one free Topping option included", pointsRequired: 450, color: .blue, icon: "🧋", category: "Drinks", imageName: "lemonade", eligibleCategoryId: "Lemonade", rewardTierId: "tier_drinks_lemonade_450"),
+            RewardOption(title: "Lemonade or Soda", description: "Lemonade or Soda with up to one free Topping option included", pointsRequired: 450, color: .blue, icon: "🧋", category: "Drinks", imageName: "lemonade", rewardTierId: "tier_drinks_lemonade_450"),
             RewardOption(title: "Coffee", description: "Coffee with up to one free Topping option included", pointsRequired: 450, color: .blue, icon: "🧋", category: "Drinks", imageName: "milktea", eligibleCategoryId: "Coffee", rewardTierId: "tier_drinks_coffee_450"),
             
             // 500 pts tier
@@ -72,7 +94,7 @@ class RewardsViewModel: ObservableObject {
             RewardOption(title: "Pizza Dumplings (6)", description: "6 Piece Pizza Dumplings", pointsRequired: 850, color: .pink, icon: "🥟", category: "Food", imageName: "pizza", rewardTierId: "tier_pizza_dumplings_850"),
             
             // 1,000 pts tier
-            RewardOption(title: "6-Piece Lunch Special Dumplings", description: "6-Piece Lunch Special", pointsRequired: 850, color: .indigo, icon: "🍱", category: "Food", imageName: "porkshrimp", rewardTierId: "tier_pizza_dumplings_850"),
+            RewardOption(title: "6-Piece Lunch Special Dumplings", description: "6-Piece Lunch Special", pointsRequired: 850, color: .indigo, icon: "🍱", category: "Food", imageName: "porkshrimp", eligibleCategoryId: "Dumplings", rewardTierId: "tier_lunch_special_850"),
             
             // 1,500 pts tier
             RewardOption(title: "12-Piece Dumplings", description: "12-Piece Dumplings", pointsRequired: 1500, color: .brown, icon: "🥟", category: "Food", imageName: "porkshrimp", rewardTierId: "tier_12piece_1500"),
@@ -80,6 +102,14 @@ class RewardsViewModel: ObservableObject {
             // 2,000 pts tier
             RewardOption(title: "Full Combo", description: "Dumplings + Drink", pointsRequired: 2000, color: Color(red: 1.0, green: 0.84, blue: 0.0), icon: "🎉", category: "Special", rewardTierId: "tier_full_combo_2000")
         ]
+        
+        // Filter out lunch special if not available
+        return allRewards.filter { reward in
+            if reward.title == "6-Piece Lunch Special Dumplings" {
+                return isLunchSpecialAvailable()
+            }
+            return true
+        }
     }
     
     var availableCategories: [String] {
@@ -200,6 +230,74 @@ class RewardsViewModel: ObservableObject {
         showConfetti = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             self.showConfetti = false
+        }
+    }
+    
+    // MARK: - Gifted Rewards
+    
+    func startGiftedRewardsListener(userId: String) {
+        // Stop any existing listener
+        stopGiftedRewardsListener()
+        
+        // Load gifted rewards from API (not Firestore directly, as we need server-side filtering)
+        Task {
+            await loadGiftedRewards()
+        }
+    }
+    
+    func stopGiftedRewardsListener() {
+        giftedRewardsListener?.remove()
+        giftedRewardsListener = nil
+    }
+    
+    @MainActor
+    func loadGiftedRewards() async {
+        guard let user = Auth.auth().currentUser else {
+            giftedRewards = []
+            return
+        }
+        
+        do {
+            let token = try await user.getIDTokenResult(forcingRefresh: false).token
+            let url = URL(string: "\(Config.backendURL)/me/gifted-rewards")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw NSError(domain: "RewardsViewModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+            }
+            
+            guard httpResponse.statusCode == 200 else {
+                let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let errorMessage = errorData?["error"] as? String ?? "Failed to load gifted rewards"
+                print("❌ Error loading gifted rewards: \(errorMessage)")
+                return
+            }
+            
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let giftsArray = json?["gifts"] as? [[String: Any]] ?? []
+            
+            // Parse gifts
+            let decoder = JSONDecoder()
+            var parsedGifts: [GiftedReward] = []
+            
+            for giftDict in giftsArray {
+                // Convert to JSON data for decoding
+                if let giftData = try? JSONSerialization.data(withJSONObject: giftDict),
+                   let gift = try? decoder.decode(GiftedReward.self, from: giftData) {
+                    parsedGifts.append(gift)
+                }
+            }
+            
+            self.giftedRewards = parsedGifts
+            print("✅ Loaded \(parsedGifts.count) gifted rewards")
+            
+        } catch {
+            print("❌ Error loading gifted rewards: \(error.localizedDescription)")
+            self.giftedRewards = []
         }
     }
 } 

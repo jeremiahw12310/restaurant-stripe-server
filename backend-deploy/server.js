@@ -4885,6 +4885,700 @@ IMPORTANT:
   });
 
   // ---------------------------------------------------------------------------
+  // Admin Gift Rewards - Send Rewards to Customers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * POST /admin/rewards/gift
+   * 
+   * Send an existing reward to all customers or specific users.
+   * 
+   * Request body:
+   * {
+   *   rewardTitle: string (required)
+   *   rewardDescription: string (required)
+   *   rewardCategory: string (required)
+   *   imageName: string | null (for existing rewards)
+   *   targetType: 'all' | 'individual' (required)
+   *   userIds: string[] (required if targetType is 'individual')
+   *   expiresAt: string | null (ISO date string, optional)
+   * }
+   */
+  app.post('/admin/rewards/gift', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const { rewardTitle, rewardDescription, rewardCategory, imageName, targetType, userIds, expiresAt } = req.body;
+
+      // Validate required fields
+      if (!rewardTitle || typeof rewardTitle !== 'string' || rewardTitle.trim().length === 0) {
+        return res.status(400).json({ error: 'rewardTitle is required' });
+      }
+
+      if (!rewardDescription || typeof rewardDescription !== 'string' || rewardDescription.trim().length === 0) {
+        return res.status(400).json({ error: 'rewardDescription is required' });
+      }
+
+      if (!rewardCategory || typeof rewardCategory !== 'string' || rewardCategory.trim().length === 0) {
+        return res.status(400).json({ error: 'rewardCategory is required' });
+      }
+
+      if (!targetType || !['all', 'individual'].includes(targetType)) {
+        return res.status(400).json({ error: 'targetType must be "all" or "individual"' });
+      }
+
+      if (targetType === 'individual') {
+        if (!Array.isArray(userIds) || userIds.length === 0) {
+          return res.status(400).json({ error: 'userIds array is required for individual targeting' });
+        }
+      }
+
+      const db = admin.firestore();
+      const trimmedTitle = rewardTitle.trim();
+      const trimmedDescription = rewardDescription.trim();
+
+      // Parse expiration date if provided
+      let expiresAtTimestamp = null;
+      if (expiresAt) {
+        const parsedDate = new Date(expiresAt);
+        if (isNaN(parsedDate.getTime())) {
+          return res.status(400).json({ error: 'Invalid expiresAt date format' });
+        }
+        expiresAtTimestamp = admin.firestore.Timestamp.fromDate(parsedDate);
+      }
+
+      // Create gifted reward document
+      const giftedRewardRef = db.collection('giftedRewards').doc();
+      const giftedRewardData = {
+        type: targetType === 'all' ? 'broadcast' : 'individual',
+        targetUserIds: targetType === 'all' ? null : userIds,
+        rewardTitle: trimmedTitle,
+        rewardDescription: trimmedDescription,
+        rewardCategory: rewardCategory.trim(),
+        pointsRequired: 0, // Always free
+        imageName: imageName || null,
+        imageURL: null, // Not used for existing rewards
+        isCustom: false,
+        sentAt: admin.firestore.FieldValue.serverTimestamp(),
+        sentByAdminId: adminContext.uid,
+        expiresAt: expiresAtTimestamp,
+        isActive: true
+      };
+
+      await giftedRewardRef.set(giftedRewardData);
+
+      console.log(`🎁 Admin ${adminContext.uid} sent gift reward: "${trimmedTitle}" to ${targetType === 'all' ? 'all customers' : `${userIds.length} users`}`);
+
+      // Get target users
+      let targetUserIds = [];
+      if (targetType === 'all') {
+        // Get all users (excluding employees, but including admins if they're customers)
+        const usersSnapshot = await db.collection('users')
+          .where('isEmployee', '==', false)
+          .get();
+        targetUserIds = usersSnapshot.docs.map(doc => doc.id);
+      } else {
+        targetUserIds = userIds;
+      }
+
+      // Create notifications and send FCM push
+      const notificationPromises = [];
+      const fcmTokens = [];
+      const userDocs = [];
+
+      // Fetch user documents and FCM tokens
+      const batchSize = 30;
+      for (let i = 0; i < targetUserIds.length; i += batchSize) {
+        const batch = targetUserIds.slice(i, i + batchSize);
+        const batchSnapshot = await db.collection('users')
+          .where(admin.firestore.FieldPath.documentId(), 'in', batch)
+          .get();
+        
+        for (const doc of batchSnapshot.docs) {
+          const userData = doc.data() || {};
+          if (userData.fcmToken && typeof userData.fcmToken === 'string') {
+            fcmTokens.push(userData.fcmToken);
+          }
+          userDocs.push({ id: doc.id, data: userData });
+        }
+      }
+
+      // Create in-app notifications
+      for (const user of userDocs) {
+        const notifRef = db.collection('notifications').doc();
+        notificationPromises.push(
+          notifRef.set({
+            userId: user.id,
+            title: "You've received a gift!",
+            body: `Dumpling House sent you a free ${trimmedTitle}. Tap to claim!`,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            read: false,
+            type: 'reward_gift',
+            giftedRewardId: giftedRewardRef.id
+          })
+        );
+      }
+
+      // Send FCM push notifications
+      if (fcmTokens.length > 0) {
+        const messaging = admin.messaging();
+        const messages = fcmTokens.map(token => ({
+          token,
+          notification: {
+            title: "You've received a gift!",
+            body: `Dumpling House sent you a free ${trimmedTitle}. Tap to claim!`
+          },
+          data: {
+            type: 'reward_gift',
+            giftedRewardId: giftedRewardRef.id
+          }
+        }));
+
+        // Send in batches (FCM allows up to 500 per batch)
+        const fcmBatchSize = 500;
+        for (let i = 0; i < messages.length; i += fcmBatchSize) {
+          const batch = messages.slice(i, i + fcmBatchSize);
+          messaging.sendAll(batch).catch(err => {
+            console.warn('⚠️ Some FCM notifications failed:', err);
+          });
+        }
+      }
+
+      // Wait for notification documents to be created
+      await Promise.all(notificationPromises).catch(err => {
+        console.warn('⚠️ Failed to create some notification documents:', err);
+      });
+
+      console.log(`✅ Gift reward sent: ${userDocs.length} notifications, ${fcmTokens.length} push notifications`);
+
+      res.json({
+        success: true,
+        giftedRewardId: giftedRewardRef.id,
+        notificationCount: userDocs.length,
+        pushNotificationCount: fcmTokens.length
+      });
+
+    } catch (error) {
+      console.error('❌ Error sending gift reward:', error);
+      res.status(500).json({ error: 'Failed to send gift reward' });
+    }
+  });
+
+  /**
+   * POST /admin/rewards/gift/custom
+   * 
+   * Send a custom reward with uploaded image to all customers or specific users.
+   * 
+   * Multipart form:
+   * - image: File (required)
+   * - rewardTitle: string (required)
+   * - rewardDescription: string (required)
+   * - rewardCategory: string (required)
+   * - targetType: 'all' | 'individual' (required)
+   * - userIds: string[] (JSON string, required if targetType is 'individual')
+   * - expiresAt: string | null (ISO date string, optional)
+   */
+  app.post('/admin/rewards/gift/custom', upload.single('image'), async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      if (!req.file) {
+        return res.status(400).json({ error: 'Image file is required' });
+      }
+
+      const { rewardTitle, rewardDescription, rewardCategory, targetType, userIds, expiresAt } = req.body;
+
+      // Validate required fields
+      if (!rewardTitle || typeof rewardTitle !== 'string' || rewardTitle.trim().length === 0) {
+        fs.unlinkSync(req.file.path); // Clean up uploaded file
+        return res.status(400).json({ error: 'rewardTitle is required' });
+      }
+
+      if (!rewardDescription || typeof rewardDescription !== 'string' || rewardDescription.trim().length === 0) {
+        fs.unlinkSync(req.file.path);
+        return res.status(400).json({ error: 'rewardDescription is required' });
+      }
+
+      if (!rewardCategory || typeof rewardCategory !== 'string' || rewardCategory.trim().length === 0) {
+        fs.unlinkSync(req.file.path);
+        return res.status(400).json({ error: 'rewardCategory is required' });
+      }
+
+      if (!targetType || !['all', 'individual'].includes(targetType)) {
+        fs.unlinkSync(req.file.path);
+        return res.status(400).json({ error: 'targetType must be "all" or "individual"' });
+      }
+
+      let parsedUserIds = [];
+      if (targetType === 'individual') {
+        try {
+          parsedUserIds = JSON.parse(userIds || '[]');
+        } catch (e) {
+          fs.unlinkSync(req.file.path);
+          return res.status(400).json({ error: 'userIds must be a valid JSON array' });
+        }
+        if (!Array.isArray(parsedUserIds) || parsedUserIds.length === 0) {
+          fs.unlinkSync(req.file.path);
+          return res.status(400).json({ error: 'userIds array is required for individual targeting' });
+        }
+      }
+
+      const db = admin.firestore();
+      const storage = admin.storage();
+      const bucket = storage.bucket();
+
+      // Upload image to Firebase Storage
+      const giftedRewardId = db.collection('giftedRewards').doc().id;
+      const imageFileName = `gifted-rewards/${giftedRewardId}/image.jpg`;
+      const file = bucket.file(imageFileName);
+
+      const imageData = fs.readFileSync(req.file.path);
+      await file.save(imageData, {
+        metadata: {
+          contentType: 'image/jpeg',
+          metadata: {
+            uploadedBy: adminContext.uid,
+            uploadedAt: new Date().toISOString()
+          }
+        }
+      });
+
+      // Make file publicly readable
+      await file.makePublic();
+
+      // Get public URL
+      const imageURL = `https://storage.googleapis.com/${bucket.name}/${imageFileName}`;
+
+      // Clean up local file
+      fs.unlinkSync(req.file.path);
+
+      // Parse expiration date if provided
+      let expiresAtTimestamp = null;
+      if (expiresAt) {
+        const parsedDate = new Date(expiresAt);
+        if (isNaN(parsedDate.getTime())) {
+          return res.status(400).json({ error: 'Invalid expiresAt date format' });
+        }
+        expiresAtTimestamp = admin.firestore.Timestamp.fromDate(parsedDate);
+      }
+
+      // Create gifted reward document
+      const giftedRewardRef = db.collection('giftedRewards').doc(giftedRewardId);
+      const trimmedTitle = rewardTitle.trim();
+      const trimmedDescription = rewardDescription.trim();
+
+      const giftedRewardData = {
+        type: targetType === 'all' ? 'broadcast' : 'individual',
+        targetUserIds: targetType === 'all' ? null : parsedUserIds,
+        rewardTitle: trimmedTitle,
+        rewardDescription: trimmedDescription,
+        rewardCategory: rewardCategory.trim(),
+        pointsRequired: 0, // Always free
+        imageName: null, // Not used for custom rewards
+        imageURL: imageURL,
+        isCustom: true,
+        sentAt: admin.firestore.FieldValue.serverTimestamp(),
+        sentByAdminId: adminContext.uid,
+        expiresAt: expiresAtTimestamp,
+        isActive: true
+      };
+
+      await giftedRewardRef.set(giftedRewardData);
+
+      console.log(`🎁 Admin ${adminContext.uid} sent custom gift reward: "${trimmedTitle}" to ${targetType === 'all' ? 'all customers' : `${parsedUserIds.length} users`}`);
+
+      // Get target users
+      let targetUserIds = [];
+      if (targetType === 'all') {
+        // Get all users (excluding employees)
+        const usersSnapshot = await db.collection('users')
+          .where('isEmployee', '==', false)
+          .get();
+        targetUserIds = usersSnapshot.docs.map(doc => doc.id);
+      } else {
+        targetUserIds = parsedUserIds;
+      }
+
+      // Create notifications and send FCM push
+      const notificationPromises = [];
+      const fcmTokens = [];
+      const userDocs = [];
+
+      // Fetch user documents and FCM tokens
+      const batchSize = 30;
+      for (let i = 0; i < targetUserIds.length; i += batchSize) {
+        const batch = targetUserIds.slice(i, i + batchSize);
+        const batchSnapshot = await db.collection('users')
+          .where(admin.firestore.FieldPath.documentId(), 'in', batch)
+          .get();
+        
+        for (const doc of batchSnapshot.docs) {
+          const userData = doc.data() || {};
+          if (userData.fcmToken && typeof userData.fcmToken === 'string') {
+            fcmTokens.push(userData.fcmToken);
+          }
+          userDocs.push({ id: doc.id, data: userData });
+        }
+      }
+
+      // Create in-app notifications
+      for (const user of userDocs) {
+        const notifRef = db.collection('notifications').doc();
+        notificationPromises.push(
+          notifRef.set({
+            userId: user.id,
+            title: "You've received a gift!",
+            body: `Dumpling House sent you a free ${trimmedTitle}. Tap to claim!`,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            read: false,
+            type: 'reward_gift',
+            giftedRewardId: giftedRewardRef.id
+          })
+        );
+      }
+
+      // Send FCM push notifications
+      if (fcmTokens.length > 0) {
+        const messaging = admin.messaging();
+        const messages = fcmTokens.map(token => ({
+          token,
+          notification: {
+            title: "You've received a gift!",
+            body: `Dumpling House sent you a free ${trimmedTitle}. Tap to claim!`
+          },
+          data: {
+            type: 'reward_gift',
+            giftedRewardId: giftedRewardRef.id
+          }
+        }));
+
+        // Send in batches (FCM allows up to 500 per batch)
+        const fcmBatchSize = 500;
+        for (let i = 0; i < messages.length; i += fcmBatchSize) {
+          const batch = messages.slice(i, i + fcmBatchSize);
+          messaging.sendAll(batch).catch(err => {
+            console.warn('⚠️ Some FCM notifications failed:', err);
+          });
+        }
+      }
+
+      // Wait for notification documents to be created
+      await Promise.all(notificationPromises).catch(err => {
+        console.warn('⚠️ Failed to create some notification documents:', err);
+      });
+
+      console.log(`✅ Custom gift reward sent: ${userDocs.length} notifications, ${fcmTokens.length} push notifications`);
+
+      res.json({
+        success: true,
+        giftedRewardId: giftedRewardRef.id,
+        imageURL: imageURL,
+        notificationCount: userDocs.length,
+        pushNotificationCount: fcmTokens.length
+      });
+
+    } catch (error) {
+      console.error('❌ Error sending custom gift reward:', error);
+      // Clean up uploaded file if it still exists
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+      res.status(500).json({ error: 'Failed to send custom gift reward' });
+    }
+  });
+
+  /**
+   * GET /me/gifted-rewards
+   * 
+   * Get user's available gifted rewards (unclaimed broadcast rewards + individual gifts)
+   */
+  app.get('/me/gifted-rewards', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+      if (!token) {
+        return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+      }
+
+      let uid;
+      try {
+        const decoded = await admin.auth().verifyIdToken(token);
+        uid = decoded.uid;
+      } catch (e) {
+        return res.status(401).json({ error: 'Invalid auth token' });
+      }
+
+      const db = admin.firestore();
+      const now = admin.firestore.Timestamp.now();
+
+      // Get broadcast gifts (active, not expired, not yet claimed by this user)
+      const broadcastGiftsSnapshot = await db.collection('giftedRewards')
+        .where('type', '==', 'broadcast')
+        .where('isActive', '==', true)
+        .get();
+
+      // Get individual gifts for this user
+      const individualGiftsSnapshot = await db.collection('giftedRewards')
+        .where('type', '==', 'individual')
+        .where('targetUserIds', 'array-contains', uid)
+        .where('isActive', '==', true)
+        .get();
+
+      // Get user's existing claims
+      const claimsSnapshot = await db.collection('giftedRewardClaims')
+        .where('userId', '==', uid)
+        .get();
+
+      const claimedGiftIds = new Set(claimsSnapshot.docs.map(doc => doc.data().giftedRewardId));
+
+      // Filter and combine gifts
+      const availableGifts = [];
+
+      // Process broadcast gifts
+      for (const doc of broadcastGiftsSnapshot.docs) {
+        const data = doc.data();
+        const giftId = doc.id;
+
+        // Skip if already claimed
+        if (claimedGiftIds.has(giftId)) {
+          continue;
+        }
+
+        // Check expiration
+        if (data.expiresAt) {
+          const expiresAt = data.expiresAt.toDate();
+          if (expiresAt < new Date()) {
+            continue; // Expired
+          }
+        }
+
+        availableGifts.push({
+          id: giftId,
+          type: data.type || 'broadcast',
+          targetUserIds: data.targetUserIds || null,
+          rewardTitle: data.rewardTitle || '',
+          rewardDescription: data.rewardDescription || '',
+          rewardCategory: data.rewardCategory || '',
+          pointsRequired: data.pointsRequired || 0,
+          imageName: data.imageName || null,
+          imageURL: data.imageURL || null,
+          isCustom: data.isCustom || false,
+          sentByAdminId: data.sentByAdminId || '',
+          isActive: data.isActive !== false,
+          sentAt: data.sentAt ? data.sentAt.toDate().toISOString() : null,
+          expiresAt: data.expiresAt ? data.expiresAt.toDate().toISOString() : null
+        });
+      }
+
+      // Process individual gifts
+      for (const doc of individualGiftsSnapshot.docs) {
+        const data = doc.data();
+        const giftId = doc.id;
+
+        // Skip if already claimed
+        if (claimedGiftIds.has(giftId)) {
+          continue;
+        }
+
+        // Check expiration
+        if (data.expiresAt) {
+          const expiresAt = data.expiresAt.toDate();
+          if (expiresAt < new Date()) {
+            continue; // Expired
+          }
+        }
+
+        availableGifts.push({
+          id: giftId,
+          type: data.type || 'individual',
+          targetUserIds: data.targetUserIds || null,
+          rewardTitle: data.rewardTitle || '',
+          rewardDescription: data.rewardDescription || '',
+          rewardCategory: data.rewardCategory || '',
+          pointsRequired: data.pointsRequired || 0,
+          imageName: data.imageName || null,
+          imageURL: data.imageURL || null,
+          isCustom: data.isCustom || false,
+          sentByAdminId: data.sentByAdminId || '',
+          isActive: data.isActive !== false,
+          sentAt: data.sentAt ? data.sentAt.toDate().toISOString() : null,
+          expiresAt: data.expiresAt ? data.expiresAt.toDate().toISOString() : null
+        });
+      }
+
+      // Sort by sentAt (newest first)
+      availableGifts.sort((a, b) => {
+        const aTime = a.sentAt ? new Date(a.sentAt).getTime() : 0;
+        const bTime = b.sentAt ? new Date(b.sentAt).getTime() : 0;
+        return bTime - aTime;
+      });
+
+      res.json({ gifts: availableGifts });
+
+    } catch (error) {
+      console.error('❌ Error fetching gifted rewards:', error);
+      res.status(500).json({ error: 'Failed to fetch gifted rewards' });
+    }
+  });
+
+  /**
+   * POST /rewards/claim-gift
+   * 
+   * Claim a gifted reward and create a redeemed reward entry
+   * 
+   * Request body:
+   * {
+   *   giftedRewardId: string (required)
+   *   selectedItemId?: string
+   *   selectedItemName?: string
+   *   selectedToppingId?: string
+   *   selectedToppingName?: string
+   *   selectedItemId2?: string
+   *   selectedItemName2?: string
+   *   cookingMethod?: string
+   *   drinkType?: string
+   *   selectedDrinkItemId?: string
+   *   selectedDrinkItemName?: string
+   * }
+   */
+  app.post('/rewards/claim-gift', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+      if (!token) {
+        return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+      }
+
+      let uid;
+      try {
+        const decoded = await admin.auth().verifyIdToken(token);
+        uid = decoded.uid;
+      } catch (e) {
+        return res.status(401).json({ error: 'Invalid auth token' });
+      }
+
+      const { giftedRewardId, selectedItemId, selectedItemName, selectedToppingId, selectedToppingName, 
+              selectedItemId2, selectedItemName2, cookingMethod, drinkType, selectedDrinkItemId, selectedDrinkItemName } = req.body;
+
+      if (!giftedRewardId || typeof giftedRewardId !== 'string') {
+        return res.status(400).json({ error: 'giftedRewardId is required' });
+      }
+
+      const db = admin.firestore();
+
+      // Verify gift exists and is available
+      const giftDoc = await db.collection('giftedRewards').doc(giftedRewardId).get();
+      if (!giftDoc.exists) {
+        return res.status(404).json({ error: 'Gift reward not found' });
+      }
+
+      const giftData = giftDoc.data();
+      
+      // Check if active
+      if (!giftData.isActive) {
+        return res.status(400).json({ error: 'Gift reward is no longer active' });
+      }
+
+      // Check expiration
+      if (giftData.expiresAt) {
+        const expiresAt = giftData.expiresAt.toDate();
+        if (expiresAt < new Date()) {
+          return res.status(400).json({ error: 'Gift reward has expired' });
+        }
+      }
+
+      // Check if already claimed
+      const existingClaim = await db.collection('giftedRewardClaims')
+        .where('giftedRewardId', '==', giftedRewardId)
+        .where('userId', '==', uid)
+        .limit(1)
+        .get();
+
+      if (!existingClaim.empty) {
+        return res.status(400).json({ error: 'Gift reward already claimed' });
+      }
+
+      // Generate redemption code (8 digits)
+      const redemptionCode = Math.floor(10000000 + Math.random() * 90000000).toString();
+
+      // Calculate expiration (15 minutes from now)
+      const expiresAt = new Date();
+      expiresAt.setMinutes(expiresAt.getMinutes() + 15);
+
+      // Create redeemed reward entry (same structure as regular redemption)
+      const redeemedRewardRef = db.collection('redeemedRewards').doc();
+      const redeemedReward = {
+        id: redeemedRewardRef.id,
+        userId: uid,
+        rewardTitle: giftData.rewardTitle,
+        rewardDescription: giftData.rewardDescription,
+        rewardCategory: giftData.rewardCategory,
+        pointsRequired: 0, // Free gift
+        redemptionCode: redemptionCode,
+        redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
+        expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
+        isExpired: false,
+        isUsed: false,
+        selectedItemId: selectedItemId || null,
+        selectedItemName: selectedItemName || null,
+        selectedToppingId: selectedToppingId || null,
+        selectedToppingName: selectedToppingName || null,
+        selectedItemId2: selectedItemId2 || null,
+        selectedItemName2: selectedItemName2 || null,
+        cookingMethod: cookingMethod || null,
+        drinkType: drinkType || null,
+        selectedDrinkItemId: selectedDrinkItemId || null,
+        selectedDrinkItemName: selectedDrinkItemName || null,
+        isGiftedReward: true,
+        giftedRewardId: giftedRewardId
+      };
+
+      // Create claim record
+      const claimRef = db.collection('giftedRewardClaims').doc();
+      const claim = {
+        giftedRewardId: giftedRewardId,
+        userId: uid,
+        claimedAt: admin.firestore.FieldValue.serverTimestamp(),
+        redeemedRewardId: redeemedRewardRef.id,
+        isUsed: false,
+        usedAt: null
+      };
+
+      // Write both in a batch
+      const batch = db.batch();
+      batch.set(redeemedRewardRef, redeemedReward);
+      batch.set(claimRef, claim);
+      await batch.commit();
+
+      console.log(`✅ User ${uid} claimed gift reward ${giftedRewardId}, redemption code: ${redemptionCode}`);
+
+      res.json({
+        success: true,
+        redemptionCode: redemptionCode,
+        newPointsBalance: 0, // No points deducted for gifts
+        pointsDeducted: 0,
+        rewardTitle: giftData.rewardTitle,
+        selectedItemName: selectedItemName || null,
+        selectedToppingName: selectedToppingName || null,
+        selectedItemName2: selectedItemName2 || null,
+        cookingMethod: cookingMethod || null,
+        drinkType: drinkType || null,
+        selectedDrinkItemId: selectedDrinkItemId || null,
+        selectedDrinkItemName: selectedDrinkItemName || null,
+        expiresAt: expiresAt.toISOString(),
+        message: 'Gift reward claimed successfully! Show the code to your cashier.',
+        error: null
+      });
+
+    } catch (error) {
+      console.error('❌ Error claiming gift reward:', error);
+      res.status(500).json({ error: 'Failed to claim gift reward' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
   // Admin Reward Tier Item Management
   // ---------------------------------------------------------------------------
 

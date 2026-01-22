@@ -1,4 +1,5 @@
 import SwiftUI
+import FirebaseAuth
 
 // MARK: - Unified Rewards Screen
 /// Premium Dutch Bros style rewards screen with energy and sophistication
@@ -91,6 +92,11 @@ struct UnifiedRewardsScreen: View {
                             .onTapGesture { showRedeemedCard = true }
                         }
                         
+                        // Gifted Rewards section (at top, before everything else)
+                        if !rewardsVM.giftedRewards.isEmpty {
+                            giftedRewardsSection
+                        }
+                        
                         // Lifetime Points section (moved from home)
                         lifetimePointsSection
 
@@ -116,6 +122,9 @@ struct UnifiedRewardsScreen: View {
         }
         .onAppear {
             rewardsVM.loadUserPoints(from: userVM)
+            if let uid = Auth.auth().currentUser?.uid {
+                rewardsVM.startGiftedRewardsListener(userId: uid)
+            }
         }
         .onChange(of: userVM.points) { _, new in
             rewardsVM.updatePoints(new)
@@ -126,6 +135,9 @@ struct UnifiedRewardsScreen: View {
             withAnimation(.spring(response: 0.5, dampingFraction: 0.6).delay(0.1)) {
                 pointsScale = 1.0
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("openRewardsHistory"))) { _ in
+            showPointsHistory = true
         }
         .fullScreenCover(isPresented: $showExpiredScreen) {
             RewardExpiredScreen {
@@ -304,6 +316,46 @@ struct UnifiedRewardsScreen: View {
     
     // Removed compact header for performance
 
+    // MARK: - Gifted Rewards Section
+    private var giftedRewardsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Image(systemName: "gift.fill")
+                    .font(.system(size: 20, weight: .black))
+                    .foregroundColor(Color(red: 1.0, green: 0.3, blue: 0.5))
+                
+                Text("YOU HAVE A GIFT!")
+                    .font(.system(size: 20, weight: .black, design: .rounded))
+                    .foregroundStyle(Theme.darkGoldGradient)
+                    .tracking(0.5)
+                
+                Spacer()
+                
+                Text("\(rewardsVM.giftedRewards.count)")
+                    .font(.system(size: 16, weight: .black, design: .rounded))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(Color(red: 1.0, green: 0.3, blue: 0.5))
+                    )
+            }
+            .padding(.horizontal, 20)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(rewardsVM.giftedRewards, id: \.id) { gift in
+                        GiftedRewardCard(gift: gift)
+                            .frame(width: 320)
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+        }
+        .padding(.vertical, 16)
+    }
+    
     // MARK: - Lifetime Points Section
     private var lifetimePointsSection: some View {
         HStack {
@@ -520,7 +572,9 @@ struct UnifiedRewardsScreen: View {
                     color: reward.color,
                     icon: reward.icon,
                     category: reward.category,
-                    imageName: reward.imageName
+                    imageName: reward.imageName,
+                    eligibleCategoryId: reward.eligibleCategoryId,
+                    rewardTierId: reward.rewardTierId
                 )
             }
         }
@@ -537,6 +591,8 @@ struct CompactRewardCard: View {
     let currentPoints: Int
     let isUnlocked: Bool
     
+    @EnvironmentObject var userVM: UserViewModel
+    @EnvironmentObject var rewardsVM: RewardsViewModel
     @State private var showDetailView = false
     @State private var isPressed = false
     
@@ -632,6 +688,9 @@ struct CompactRewardCard: View {
         .animation(.easeOut(duration: 0.15), value: isPressed)
         .sheet(isPresented: $showDetailView) {
             RewardDetailView(reward: reward, currentPoints: currentPoints)
+                .environmentObject(userVM)
+                .environmentObject(rewardsVM)
+                .environmentObject(MenuViewModel())
         }
     }
 }

@@ -12,6 +12,11 @@ struct AdminOverviewView: View {
     @State private var showNotifications = false
     @State private var showRewardHistory = false
     @State private var showBannedNumbers = false
+    @State private var showSendRewards = false
+    
+    // Swipe to dismiss state
+    @State private var dragOffset: CGFloat = 0
+    @State private var isAtTop: Bool = true
     
     var body: some View {
         NavigationStack {
@@ -20,31 +25,72 @@ struct AdminOverviewView: View {
                 Color(red: 0.98, green: 0.96, blue: 0.94)
                     .ignoresSafeArea()
                 
-                ScrollView {
-                    VStack(spacing: 24) {
-                        // Header
-                        header
-                        
-                        // Stats Grid
-                        if viewModel.isLoading && viewModel.stats == nil {
-                            loadingView
-                        } else if let stats = viewModel.stats {
-                            statsGrid(stats: stats)
-                        } else if let error = viewModel.errorMessage {
-                            errorView(message: error)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(spacing: 24) {
+                            // Header
+                            header
+                            
+                            // Stats Grid
+                            if viewModel.isLoading && viewModel.stats == nil {
+                                loadingView
+                            } else if let stats = viewModel.stats {
+                                statsGrid(stats: stats)
+                            } else if let error = viewModel.errorMessage {
+                                errorView(message: error)
+                            }
+                            
+                            // Quick Actions
+                            quickActions
+                            
+                            Spacer(minLength: 40)
                         }
-                        
-                        // Quick Actions
-                        quickActions
-                        
-                        Spacer(minLength: 40)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 16)
+                        .id("top")
+                        .background(
+                            GeometryReader { geometry in
+                                Color.clear
+                                    .preference(key: ScrollOffsetPreferenceKey.self, value: geometry.frame(in: .named("scroll")).minY)
+                            }
+                        )
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
+                    .coordinateSpace(name: "scroll")
+                    .refreshable {
+                        await viewModel.loadStats()
+                    }
+                    .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
+                        // Check if we're at the top (with small threshold for floating point precision)
+                        isAtTop = value <= 10
+                    }
                 }
-                .refreshable {
-                    await viewModel.loadStats()
-                }
+                .offset(y: max(0, dragOffset))
+                .opacity(dragOffset > 0 ? max(0.7, 1 - dragOffset / 300) : 1)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 10)
+                        .onChanged { value in
+                            // Only allow drag to dismiss when at the top and dragging down
+                            if isAtTop && value.translation.height > 0 {
+                                dragOffset = value.translation.height
+                            } else if dragOffset > 0 && !isAtTop {
+                                // Reset if user scrolls away from top while dragging
+                                dragOffset = 0
+                            }
+                        }
+                        .onEnded { value in
+                            // If dragged down more than 100 points, dismiss
+                            if dragOffset > 100 && isAtTop {
+                                withAnimation(.easeOut(duration: 0.3)) {
+                                    dismiss()
+                                }
+                            } else {
+                                // Spring back to original position
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    dragOffset = 0
+                                }
+                            }
+                        }
+                )
             }
             .navigationBarHidden(true)
             .onAppear {
@@ -72,6 +118,9 @@ struct AdminOverviewView: View {
             }
             .sheet(isPresented: $showBannedNumbers) {
                 AdminBannedNumbersView()
+            }
+            .sheet(isPresented: $showSendRewards) {
+                AdminSendRewardsView()
             }
         }
     }
@@ -299,6 +348,16 @@ struct AdminOverviewView: View {
                 gradient: [.purple, .pink]
             ) {
                 showRewardsScan = true
+            }
+            
+            // Send Rewards
+            ActionButton(
+                title: "Send Rewards",
+                subtitle: "Gift rewards to all customers",
+                icon: "gift.fill",
+                gradient: [Color(red: 1.0, green: 0.3, blue: 0.5), Color(red: 1.0, green: 0.5, blue: 0.7)]
+            ) {
+                showSendRewards = true
             }
             
             // Reward Config
