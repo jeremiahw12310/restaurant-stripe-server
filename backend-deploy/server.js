@@ -5891,11 +5891,23 @@ IMPORTANT:
         .limit(pageSize);
 
       if (startAfterTs && !isNaN(startAfterTs.getTime())) {
-        query = query.startAfter(startAfterTs);
+        // Convert Date to Firestore Timestamp for startAfter
+        const timestamp = admin.firestore.Timestamp.fromDate(startAfterTs);
+        query = query.startAfter(timestamp);
       }
 
-      const snapshot = await query.get();
-      console.log(`📋 Admin receipts query returned ${snapshot.size} documents`);
+      let snapshot;
+      try {
+        snapshot = await query.get();
+        console.log(`📋 Admin receipts query returned ${snapshot.size} documents`);
+      } catch (queryError) {
+        console.error('❌ Error executing receipts query:', queryError);
+        // If orderBy fails, try without it (fallback)
+        console.log('⚠️ Attempting fallback query without orderBy...');
+        const fallbackQuery = db.collection('receipts').limit(pageSize);
+        snapshot = await fallbackQuery.get();
+        console.log(`📋 Fallback query returned ${snapshot.size} documents`);
+      }
 
       const receipts = [];
       const userIds = new Set();

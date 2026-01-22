@@ -1,12 +1,4 @@
 {
-  "indexes": [
-    {
-      "collectionGroup": "receipts",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
-      ]
-    }
-  ],
+  "indexes": [],
   "fieldOverrides": []
 }
