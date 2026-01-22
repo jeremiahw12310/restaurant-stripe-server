@@ -5882,18 +5882,36 @@ IMPORTANT:
 
       const db = admin.firestore();
 
-      // Basic pagination: limit + optional startAfter timestamp
+      // Basic pagination: limit + optional startAfter cursor (createdAt ISO string + docId)
       const pageSize = Math.min(parseInt(req.query.limit, 10) || 50, 200);
-      const startAfterTs = req.query.startAfter ? new Date(req.query.startAfter) : null;
+      let startAfterCursor = null;
+      if (req.query.startAfter) {
+        try {
+          // Parse cursor: "timestampISO|docId" format
+          const parts = req.query.startAfter.split('|');
+          if (parts.length === 2) {
+            const timestamp = admin.firestore.Timestamp.fromDate(new Date(parts[0]));
+            const docId = parts[1];
+            // Get the document reference to use as cursor
+            const cursorDoc = await db.collection('receipts').doc(docId).get();
+            if (cursorDoc.exists) {
+              startAfterCursor = cursorDoc;
+            }
+          }
+        } catch (e) {
+          console.warn('⚠️ Invalid pagination cursor, ignoring:', e.message);
+        }
+      }
 
+      // Use compound ordering for stable pagination (createdAt desc, then docId desc)
+      // This prevents skipping/duplicating receipts with identical timestamps
       let query = db.collection('receipts')
         .orderBy('createdAt', 'desc')
+        .orderBy(admin.firestore.FieldPath.documentId(), 'desc')
         .limit(pageSize);
 
-      if (startAfterTs && !isNaN(startAfterTs.getTime())) {
-        // Convert Date to Firestore Timestamp for startAfter
-        const timestamp = admin.firestore.Timestamp.fromDate(startAfterTs);
-        query = query.startAfter(timestamp);
+      if (startAfterCursor) {
+        query = query.startAfter(startAfterCursor);
       }
 
       let snapshot;
@@ -5919,21 +5937,28 @@ IMPORTANT:
         }
       });
 
-      // Fetch basic user info for all involved users
+      // Fetch basic user info for all involved users (batched for efficiency)
       const usersMap = {};
       if (userIds.size > 0) {
         const userIdArray = Array.from(userIds);
-        const userPromises = userIdArray.map(async userId => {
-          try {
-            const userDoc = await db.collection('users').doc(userId).get();
+        // Firestore 'in' queries are limited to 30 items, so batch them
+        const batchSize = 30;
+        const userBatches = [];
+        for (let i = 0; i < userIdArray.length; i += batchSize) {
+          const batch = userIdArray.slice(i, i + batchSize);
+          // Use getAll() for efficient batch reads (Admin SDK supports this)
+          const userRefs = batch.map(userId => db.collection('users').doc(userId));
+          userBatches.push(admin.firestore().getAll(...userRefs));
+        }
+        
+        const allUserDocs = await Promise.all(userBatches);
+        for (const userDocs of allUserDocs) {
+          for (const userDoc of userDocs) {
             if (userDoc.exists) {
-              usersMap[userId] = userDoc.data() || {};
+              usersMap[userDoc.id] = userDoc.data() || {};
             }
-          } catch (err) {
-            console.warn('⚠️ Failed to load user for receipt list:', userId, err.message || err);
           }
-        });
-        await Promise.all(userPromises);
+        }
       }
 
       snapshot.forEach(doc => {
@@ -5951,9 +5976,10 @@ IMPORTANT:
         });
       });
 
+      // Generate pagination token: "createdAtISO|docId" format for stable cursor
       const lastDoc = snapshot.docs[snapshot.docs.length - 1];
       const nextPageToken = lastDoc && lastDoc.get('createdAt')
-        ? lastDoc.get('createdAt').toDate().toISOString()
+        ? `${lastDoc.get('createdAt').toDate().toISOString()}|${lastDoc.id}`
         : null;
 
       res.json({
@@ -6376,56 +6402,68 @@ IMPORTANT:
       weekAgo.setHours(0, 0, 0, 0);
 
       // Run all queries in parallel for efficiency
-      // Note: Using .get() and .size instead of .count().get() for compatibility
+      // Use count() aggregation for large collections to avoid reading all documents
       const [
-        usersSnapshot,
-        usersTodaySnapshot,
-        usersWeekSnapshot,
-        receiptsSnapshot,
-        receiptsTodaySnapshot,
-        receiptsWeekSnapshot,
-        rewardsSnapshot,
-        rewardsTodaySnapshot,
+        usersCount,
+        usersTodayCount,
+        usersWeekCount,
+        receiptsCount,
+        receiptsTodayCount,
+        receiptsWeekCount,
+        rewardsCount,
+        rewardsTodayCount,
         pointsSnapshot
       ] = await Promise.all([
-        // Total users count
-        db.collection('users').get(),
+        // Total users count (using count aggregation)
+        db.collection('users').count().get().then(snap => snap.data().count),
         
-        // New users today (check both accountCreatedDate and createdAt for compatibility)
+        // New users today (using count aggregation)
         db.collection('users')
           .where('accountCreatedDate', '>=', todayStart)
-          .get(),
+          .count()
+          .get()
+          .then(snap => snap.data().count),
         
-        // New users this week
+        // New users this week (using count aggregation)
         db.collection('users')
           .where('accountCreatedDate', '>=', weekAgo)
-          .get(),
+          .count()
+          .get()
+          .then(snap => snap.data().count),
         
-        // Total receipts scanned
-        db.collection('receipts').get(),
+        // Total receipts scanned (using count aggregation)
+        db.collection('receipts').count().get().then(snap => snap.data().count),
         
-        // Receipts scanned today
+        // Receipts scanned today (using count aggregation)
         db.collection('receipts')
           .where('createdAt', '>=', todayStart)
-          .get(),
+          .count()
+          .get()
+          .then(snap => snap.data().count),
         
-        // Receipts scanned this week
+        // Receipts scanned this week (using count aggregation)
         db.collection('receipts')
           .where('createdAt', '>=', weekAgo)
-          .get(),
+          .count()
+          .get()
+          .then(snap => snap.data().count),
         
-        // Total rewards redeemed (isUsed = true)
+        // Total rewards redeemed (using count aggregation)
         db.collection('redeemedRewards')
           .where('isUsed', '==', true)
-          .get(),
+          .count()
+          .get()
+          .then(snap => snap.data().count),
         
-        // Rewards redeemed today
+        // Rewards redeemed today (using count aggregation)
         db.collection('redeemedRewards')
           .where('isUsed', '==', true)
           .where('usedAt', '>=', todayStart)
-          .get(),
+          .count()
+          .get()
+          .then(snap => snap.data().count),
         
-        // Get aggregate points from users collection
+        // Get aggregate points from users collection (still need full docs for sum)
         db.collection('users').select('lifetimePoints').get()
       ]);
 
@@ -6439,14 +6477,14 @@ IMPORTANT:
       });
 
       const stats = {
-        totalUsers: usersSnapshot.size || 0,
-        newUsersToday: usersTodaySnapshot.size || 0,
-        newUsersThisWeek: usersWeekSnapshot.size || 0,
-        totalReceipts: receiptsSnapshot.size || 0,
-        receiptsToday: receiptsTodaySnapshot.size || 0,
-        receiptsThisWeek: receiptsWeekSnapshot.size || 0,
-        totalRewardsRedeemed: rewardsSnapshot.size || 0,
-        rewardsRedeemedToday: rewardsTodaySnapshot.size || 0,
+        totalUsers: usersCount || 0,
+        newUsersToday: usersTodayCount || 0,
+        newUsersThisWeek: usersWeekCount || 0,
+        totalReceipts: receiptsCount || 0,
+        receiptsToday: receiptsTodayCount || 0,
+        receiptsThisWeek: receiptsWeekCount || 0,
+        totalRewardsRedeemed: rewardsCount || 0,
+        rewardsRedeemedToday: rewardsTodayCount || 0,
         totalPointsDistributed
       };
 
