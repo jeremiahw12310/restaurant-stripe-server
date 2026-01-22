@@ -18,4 +18,4 @@ services:
         value: dumplinghouseapp
     healthCheckPath: /
     # Firebase ADC Setup - No service account keys required 
-    # Force redeploy - Added preview-dumpling-hero-comment endpoint 
+    # Force redeploy - Added admin notifications support (includeAdmins feature) 
