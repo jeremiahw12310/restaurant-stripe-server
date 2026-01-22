@@ -51,6 +51,7 @@ struct AdminUserDetailView: View {
                             rewardsHistorySection
                             dietarySection
                             referralSection
+                            banSection
                         }
                         .padding(.horizontal, 20)
                         .padding(.vertical, 16)
@@ -156,6 +157,9 @@ struct AdminUserDetailView: View {
                     }
                     if user.isVerified {
                         pill(text: "Verified", color: .green)
+                    }
+                    if user.isBanned {
+                        pill(text: "Banned", color: .red)
                     }
                 }
             }
@@ -459,6 +463,109 @@ struct AdminUserDetailView: View {
                     .fill(status == "Awarded" ? Color.green.opacity(0.2) : Color.orange.opacity(0.2))
             )
             .foregroundColor(status == "Awarded" ? .green : .orange)
+    }
+
+    // MARK: - Ban Section
+
+    @State private var showBanConfirmation = false
+    @State private var showUnbanConfirmation = false
+    @State private var banReason: String = ""
+
+    private var banSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Account Status")
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+
+            if viewModel.userSummary.isBanned {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.red)
+                    Text("This user is banned")
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                        .foregroundColor(.white)
+                    Spacer()
+                }
+
+                Button(action: {
+                    showUnbanConfirmation = true
+                }) {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                        Text("Unban User")
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.green)
+                    .cornerRadius(10)
+                }
+                .disabled(viewModel.isBanning)
+            } else {
+                Button(action: {
+                    showBanConfirmation = true
+                }) {
+                    HStack {
+                        Image(systemName: "xmark.circle.fill")
+                        Text("Ban User")
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.red)
+                    .cornerRadius(10)
+                }
+                .disabled(viewModel.isBanning)
+            }
+
+            if viewModel.isBanning {
+                HStack {
+                    ProgressView()
+                        .tint(.white)
+                    Text("Processing...")
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundColor(.white.opacity(0.7))
+                }
+            }
+
+            if let banError = viewModel.banError {
+                Text(banError)
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundColor(.red)
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 18)
+                .fill(Color(red: 0.11, green: 0.11, blue: 0.15))
+        )
+        .alert("Ban User", isPresented: $showBanConfirmation) {
+            TextField("Reason (optional)", text: $banReason)
+            Button("Cancel", role: .cancel) {
+                banReason = ""
+            }
+            Button("Ban", role: .destructive) {
+                viewModel.banUser(reason: banReason.isEmpty ? nil : banReason) { success, error in
+                    if success {
+                        banReason = ""
+                    }
+                }
+            }
+        } message: {
+            Text("Are you sure you want to ban this user? They will not be able to sign in or create a new account with this phone number.")
+        }
+        .alert("Unban User", isPresented: $showUnbanConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Unban", role: .destructive) {
+                viewModel.unbanUser { success, error in
+                    // Handled in viewModel
+                }
+            }
+        } message: {
+            Text("Are you sure you want to unban this user? They will be able to sign in again.")
+        }
     }
 }
 

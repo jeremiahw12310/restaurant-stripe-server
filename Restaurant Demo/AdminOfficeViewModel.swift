@@ -254,6 +254,7 @@ class AdminOfficeViewModel: ObservableObject {
                         let isVerified = u["isVerified"] as? Bool ?? false
                         let isAdmin = u["isAdmin"] as? Bool ?? false
                         let isEmployee = u["isEmployee"] as? Bool ?? false
+                        let isBanned = u["isBanned"] as? Bool ?? false
                         
                         var createdAt = Date()
                         if let iso = u["accountCreatedDate"] as? String,
@@ -274,6 +275,7 @@ class AdminOfficeViewModel: ObservableObject {
                             isVerified: isVerified,
                             isAdmin: isAdmin,
                             isEmployee: isEmployee,
+                            isBanned: isBanned,
                             accountCreatedDate: createdAt,
                             profileImage: nil
                         )
@@ -403,6 +405,7 @@ struct UserAccount: Identifiable {
     let isVerified: Bool
     let isAdmin: Bool
     let isEmployee: Bool
+    let isBanned: Bool
     let accountCreatedDate: Date
     var profileImage: UIImage?
     

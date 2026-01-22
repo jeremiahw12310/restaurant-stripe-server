@@ -16,6 +16,7 @@ struct ContentView: View {
     @StateObject private var smartLayout = SmartLayoutManager()
     @StateObject private var userVM = UserViewModel()
     @StateObject private var sharedRewardsVM = RewardsViewModel()
+    @StateObject private var notificationService = NotificationService.shared
     
     // Performance signposts (visible in Instruments → Points of Interest)
     private let perfLog = OSLog(subsystem: Bundle.main.bundleIdentifier ?? "RestaurantDemo", category: "Perf")
@@ -66,6 +67,7 @@ struct ContentView: View {
                         Image(systemName: "line.3.horizontal")
                         Text("More")
                     }
+                    .badge(notificationService.unreadNotificationCount > 0 ? "\(notificationService.unreadNotificationCount)" : nil)
                     .tag(4)
             }
             .accentColor(Color(red: 0.7, green: 0.5, blue: 0.1))
@@ -92,6 +94,18 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .incomingReferralCode)) { notif in
                 let code = (notif.userInfo?["code"] as? String) ?? ""
                 handleIncomingReferral(code: code)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("didTapPushNotification"))) { notif in
+                if let userInfo = notif.userInfo as? [String: Any] {
+                    NotificationService.shared.handlePushNotificationTap(userInfo: userInfo)
+                }
+            }
+            .alert("Account Banned", isPresented: $userVM.showBannedAlert) {
+                Button("OK", role: .cancel) {
+                    userVM.showBannedAlert = false
+                }
+            } message: {
+                Text("Your account has been banned. You will be signed out. Please contact support if you believe this is an error.")
             }
             .onChange(of: selectedTab) { _, newTab in
                 updateThemeContext(for: newTab)

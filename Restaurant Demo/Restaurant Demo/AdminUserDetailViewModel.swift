@@ -120,6 +120,7 @@ class AdminUserDetailViewModel: ObservableObject {
                     isVerified: data["isVerified"] as? Bool ?? self.userSummary.isVerified,
                     isAdmin: data["isAdmin"] as? Bool ?? self.userSummary.isAdmin,
                     isEmployee: data["isEmployee"] as? Bool ?? self.userSummary.isEmployee,
+                    isBanned: data["isBanned"] as? Bool ?? false,
                     accountCreatedDate: accountCreatedDate,
                     profileImage: self.userSummary.profileImage
                 )
@@ -288,16 +289,26 @@ class AdminUserDetailViewModel: ObservableObject {
         db.runTransaction({ (transaction, errorPointer) -> Any? in
             do {
                 let snapshot = try transaction.getDocument(userRef)
-                let currentPoints = (snapshot.data()?["points"] as? Int) ?? 0
+                let userData = snapshot.data() ?? [:]
+                let currentPoints = (userData["points"] as? Int) ?? 0
+                let currentLifetime = (userData["lifetimePoints"] as? Int) ?? currentPoints
                 let delta = pointsInt - currentPoints
+                
+                // Calculate new lifetime points: only increase if points are added
+                // Lifetime points should never decrease (they represent total points ever earned)
+                let newLifetimePoints = delta > 0 
+                    ? currentLifetime + delta  // Add delta when points increase
+                    : currentLifetime          // Keep same when points decrease
+                
                 var updateData: [String: Any] = [
                     "phone": phone,
                     "points": pointsInt,
+                    "lifetimePoints": newLifetimePoints,
                     "isAdmin": isAdminFlag,
                     "isVerified": isVerifiedFlag
                 ]
                 transaction.updateData(updateData, forDocument: userRef)
-                return ["prev": currentPoints, "delta": delta]
+                return ["prev": currentPoints, "delta": delta, "lifetime": newLifetimePoints]
             } catch let error as NSError {
                 errorPointer?.pointee = error
                 return nil
@@ -316,9 +327,11 @@ class AdminUserDetailViewModel: ObservableObject {
 
                 var previousPoints = self.userSummary.points
                 var delta = 0
+                var newLifetimePoints = self.userSummary.lifetimePoints
                 if let dict = result as? [String: Int] {
                     previousPoints = dict["prev"] ?? self.userSummary.points
                     delta = dict["delta"] ?? 0
+                    newLifetimePoints = dict["lifetime"] ?? self.userSummary.lifetimePoints
                 }
 
                 // Update local summary with new values
@@ -328,13 +341,14 @@ class AdminUserDetailViewModel: ObservableObject {
                     email: self.userSummary.email,
                     phoneNumber: phone,
                     points: pointsInt,
-                    lifetimePoints: self.userSummary.lifetimePoints,
+                    lifetimePoints: newLifetimePoints,
                     avatarEmoji: self.userSummary.avatarEmoji,
                     avatarColorName: self.userSummary.avatarColorName,
                     profilePhotoURL: self.userSummary.profilePhotoURL,
                     isVerified: isVerifiedFlag,
                     isAdmin: isAdminFlag,
                     isEmployee: self.userSummary.isEmployee,
+                    isBanned: self.userSummary.isBanned,
                     accountCreatedDate: self.userSummary.accountCreatedDate,
                     profileImage: self.userSummary.profileImage
                 )
@@ -481,6 +495,154 @@ class AdminUserDetailViewModel: ObservableObject {
             transactionCount: transactionCount,
             lastTransactionDate: lastTransactionDate
         )
+    }
+
+    // MARK: - Ban/Unban Functions
+
+    @Published var isBanning: Bool = false
+    @Published var banError: String?
+
+    func banUser(reason: String? = nil, completion: @escaping (Bool, String?) -> Void) {
+        guard !isBanning else { return }
+        isBanning = true
+        banError = nil
+
+        Task {
+            do {
+                guard let user = Auth.auth().currentUser else {
+                    await MainActor.run {
+                        self.isBanning = false
+                        self.banError = "You must be signed in to ban users"
+                        completion(false, self.banError)
+                    }
+                    return
+                }
+
+                let token = try await user.getIDTokenResult(forcingRefresh: false).token
+                guard let url = URL(string: "\(Config.backendURL)/admin/ban-user") else {
+                    await MainActor.run {
+                        self.isBanning = false
+                        self.banError = "Invalid server URL"
+                        completion(false, self.banError)
+                    }
+                    return
+                }
+
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+
+                var body: [String: Any] = ["userId": userId]
+                if let reason = reason, !reason.isEmpty {
+                    body["reason"] = reason
+                }
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    await MainActor.run {
+                        self.isBanning = false
+                        self.banError = "Unexpected response from server"
+                        completion(false, self.banError)
+                    }
+                    return
+                }
+
+                guard (200..<300).contains(http.statusCode) else {
+                    let bodyText = String(data: data, encoding: .utf8) ?? ""
+                    await MainActor.run {
+                        self.isBanning = false
+                        self.banError = "Failed to ban user (\(http.statusCode)). \(bodyText)"
+                        completion(false, self.banError)
+                    }
+                    return
+                }
+
+                // Reload user document to get updated isBanned status
+                await MainActor.run {
+                    self.loadUserDocument { _ in }
+                    self.isBanning = false
+                    completion(true, nil)
+                }
+            } catch {
+                await MainActor.run {
+                    self.isBanning = false
+                    self.banError = "Failed to ban user: \(error.localizedDescription)"
+                    completion(false, self.banError)
+                }
+            }
+        }
+    }
+
+    func unbanUser(completion: @escaping (Bool, String?) -> Void) {
+        guard !isBanning else { return }
+        isBanning = true
+        banError = nil
+
+        Task {
+            do {
+                guard let user = Auth.auth().currentUser else {
+                    await MainActor.run {
+                        self.isBanning = false
+                        self.banError = "You must be signed in to unban users"
+                        completion(false, self.banError)
+                    }
+                    return
+                }
+
+                let token = try await user.getIDTokenResult(forcingRefresh: false).token
+                guard let url = URL(string: "\(Config.backendURL)/admin/unban-number") else {
+                    await MainActor.run {
+                        self.isBanning = false
+                        self.banError = "Invalid server URL"
+                        completion(false, self.banError)
+                    }
+                    return
+                }
+
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+
+                let body = ["phone": userSummary.phoneNumber]
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    await MainActor.run {
+                        self.isBanning = false
+                        self.banError = "Unexpected response from server"
+                        completion(false, self.banError)
+                    }
+                    return
+                }
+
+                guard (200..<300).contains(http.statusCode) else {
+                    let bodyText = String(data: data, encoding: .utf8) ?? ""
+                    await MainActor.run {
+                        self.isBanning = false
+                        self.banError = "Failed to unban user (\(http.statusCode)). \(bodyText)"
+                        completion(false, self.banError)
+                    }
+                    return
+                }
+
+                // Reload user document to get updated isBanned status
+                await MainActor.run {
+                    self.loadUserDocument { _ in }
+                    self.isBanning = false
+                    completion(true, nil)
+                }
+            } catch {
+                await MainActor.run {
+                    self.isBanning = false
+                    self.banError = "Failed to unban user: \(error.localizedDescription)"
+                    completion(false, self.banError)
+                }
+            }
+        }
     }
 }
 

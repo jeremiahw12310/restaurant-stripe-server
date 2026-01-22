@@ -44,6 +44,7 @@ class UserViewModel: ObservableObject {
     
     @Published var isLoading: Bool = true
     @Published var isUploadingPhoto: Bool = false
+    @Published var showBannedAlert: Bool = false
     // Account deletion re-auth state
     @Published var pendingDeletionVerificationID: String? = nil
     @Published var isAwaitingDeletionSMSCode: Bool = false
@@ -145,6 +146,23 @@ class UserViewModel: ObservableObject {
                 self.phoneNumber = data["phone"] as? String ?? ""
                 self.hasReceivedWelcomePoints = data["hasReceivedWelcomePoints"] as? Bool ?? false
                 self.isNewUser = data["isNewUser"] as? Bool ?? false
+                
+                // Check if user is banned - if so, sign them out immediately
+                let isBanned = data["isBanned"] as? Bool ?? false
+                if isBanned {
+                    print("❌ UserViewModel: User is banned. Forcing logout.")
+                    DispatchQueue.main.async {
+                        self.isLoading = false
+                        UserDefaults.standard.set(false, forKey: "isLoggedIn")
+                        // Show alert before signing out
+                        self.showBannedAlert = true
+                        // Sign out after a brief delay to allow alert to show
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            self.signOut()
+                        }
+                    }
+                    return
+                }
                 
                 // Load account creation date
                 if let timestamp = data["accountCreatedDate"] as? Timestamp {

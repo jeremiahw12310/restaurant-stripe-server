@@ -54,13 +54,54 @@ class AuthenticationViewModel: ObservableObject {
             errorMessage = "Please accept the Privacy Policy to continue."; return
         }
         isLoading = true; errorMessage = ""
-        PhoneAuthProvider.provider().verifyPhoneNumber(formattedPhoneNumber, uiDelegate: nil) { [weak self] verificationID, error in
-            DispatchQueue.main.async {
-                self?.isLoading = false
-                if let error = error {
-                    self?.errorMessage = "Failed to send code: \(error.localizedDescription)"; return
+        
+        // Check if phone number is banned before sending SMS
+        Task {
+            do {
+                guard let url = URL(string: "\(Config.backendURL)/check-ban-status?phone=\(formattedPhoneNumber.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")") else {
+                    await MainActor.run {
+                        self.isLoading = false
+                        self.errorMessage = "Invalid server URL"
+                    }
+                    return
                 }
-                self?.verificationID = verificationID
+                
+                let (data, response) = try await URLSession.shared.data(for: URLRequest(url: url))
+                guard let http = response as? HTTPURLResponse,
+                      (200..<300).contains(http.statusCode) else {
+                    await MainActor.run {
+                        self.isLoading = false
+                        self.errorMessage = "Failed to verify phone number"
+                    }
+                    return
+                }
+                
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let isBanned = json["isBanned"] as? Bool, isBanned {
+                    await MainActor.run {
+                        self.isLoading = false
+                        self.errorMessage = "This phone number cannot be used to create an account. Please contact support if you believe this is an error."
+                    }
+                    return
+                }
+                
+                // Phone number is not banned, proceed with SMS verification
+                await MainActor.run {
+                    PhoneAuthProvider.provider().verifyPhoneNumber(self.formattedPhoneNumber, uiDelegate: nil) { [weak self] verificationID, error in
+                        DispatchQueue.main.async {
+                            self?.isLoading = false
+                            if let error = error {
+                                self?.errorMessage = "Failed to send code: \(error.localizedDescription)"; return
+                            }
+                            self?.verificationID = verificationID
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.isLoading = false
+                    self.errorMessage = "Failed to verify phone number: \(error.localizedDescription)"
+                }
             }
         }
     }
@@ -105,6 +146,19 @@ class AuthenticationViewModel: ObservableObject {
                     self?.errorMessage = "Error: \(error.localizedDescription)"; return
                 }
                 if let data = snapshot?.data(), !data.isEmpty {
+                    // Check if user is banned before allowing authentication
+                    let isBanned = data["isBanned"] as? Bool ?? false
+                    if isBanned {
+                        // Sign out immediately
+                        do {
+                            try Auth.auth().signOut()
+                        } catch {
+                            print("Error signing out banned user: \(error)")
+                        }
+                        self?.errorMessage = "This account has been banned. Please contact support if you believe this is an error."
+                        return
+                    }
+                    
                     self?.didAuthenticate = true
                     // Pre-load referral code for instant access when user opens Referral screen
                     self?.preloadReferralCode()

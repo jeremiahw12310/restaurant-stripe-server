@@ -11,6 +11,7 @@ struct AdminOverviewView: View {
     @State private var showRewardTierAdmin = false
     @State private var showNotifications = false
     @State private var showRewardHistory = false
+    @State private var showBannedNumbers = false
     
     var body: some View {
         NavigationStack {
@@ -68,6 +69,9 @@ struct AdminOverviewView: View {
             }
             .sheet(isPresented: $showRewardHistory) {
                 AdminRewardHistoryView()
+            }
+            .sheet(isPresented: $showBannedNumbers) {
+                AdminBannedNumbersView()
             }
         }
     }
@@ -325,6 +329,16 @@ struct AdminOverviewView: View {
                 gradient: [.teal, .cyan]
             ) {
                 showRewardHistory = true
+            }
+            
+            // Banned Numbers
+            ActionButton(
+                title: "Banned Numbers",
+                subtitle: "Manage banned phone numbers",
+                icon: "hand.raised.fill",
+                gradient: [.red, .pink]
+            ) {
+                showBannedNumbers = true
             }
         }
     }

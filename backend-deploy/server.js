@@ -3987,7 +3987,9 @@ IMPORTANT:
         selectedItemId2,     // NEW: Optional second item ID (for half-and-half)
         selectedItemName2,   // NEW: Optional second item name (for half-and-half)
         cookingMethod,       // NEW: Optional cooking method (for dumpling rewards)
-        drinkType            // NEW: Optional drink type (Lemonade or Soda)
+        drinkType,           // NEW: Optional drink type (Lemonade or Soda)
+        selectedDrinkItemId, // NEW: Optional drink item ID (for Full Combo)
+        selectedDrinkItemName // NEW: Optional drink item name (for Full Combo)
       } = req.body;
       
       if (!userId || !rewardTitle || !pointsRequired) {
@@ -4057,7 +4059,10 @@ IMPORTANT:
         // NEW: Store cooking method if provided (for dumpling rewards)
         ...(cookingMethod && { cookingMethod }),
         // NEW: Store drink type if provided (for Lemonade/Soda rewards)
-        ...(drinkType && { drinkType })
+        ...(drinkType && { drinkType }),
+        // NEW: Store drink item if provided (for Full Combo)
+        ...(selectedDrinkItemId && { selectedDrinkItemId }),
+        ...(selectedDrinkItemName && { selectedDrinkItemName })
       };
       
       // Build description for transaction
@@ -4137,6 +4142,8 @@ IMPORTANT:
         selectedItemName2: selectedItemName2 || null,      // NEW: Include in response
         cookingMethod: cookingMethod || null,               // NEW: Include in response
         drinkType: drinkType || null,                       // NEW: Include in response
+        selectedDrinkItemId: selectedDrinkItemId || null,   // NEW: Include in response (for Full Combo)
+        selectedDrinkItemName: selectedDrinkItemName || null, // NEW: Include in response (for Full Combo)
         expiresAt: redeemedReward.expiresAt,
         message: 'Reward redeemed successfully! Show the code to your cashier.'
       });
@@ -4724,7 +4731,9 @@ IMPORTANT:
           selectedItemId2: data.selectedItemId2 || null,        // NEW: For half-and-half
           selectedItemName2: data.selectedItemName2 || null,    // NEW: For half-and-half
           cookingMethod: data.cookingMethod || null,            // NEW: For dumpling rewards
-          drinkType: data.drinkType || null                      // NEW: For Lemonade/Soda rewards
+          drinkType: data.drinkType || null,                     // NEW: For Lemonade/Soda rewards
+          selectedDrinkItemId: data.selectedDrinkItemId || null, // NEW: For Full Combo
+          selectedDrinkItemName: data.selectedDrinkItemName || null // NEW: For Full Combo
         }
       });
     } catch (error) {
@@ -4794,7 +4803,9 @@ IMPORTANT:
               selectedItemId2: data.selectedItemId2 || null,
               selectedItemName2: data.selectedItemName2 || null,
               cookingMethod: data.cookingMethod || null,
-              drinkType: data.drinkType || null
+              drinkType: data.drinkType || null,
+              selectedDrinkItemId: data.selectedDrinkItemId || null,
+              selectedDrinkItemName: data.selectedDrinkItemName || null
             }
           };
         }
@@ -4822,7 +4833,9 @@ IMPORTANT:
               selectedItemId2: data.selectedItemId2 || null,
               selectedItemName2: data.selectedItemName2 || null,
               cookingMethod: data.cookingMethod || null,
-              drinkType: data.drinkType || null
+              drinkType: data.drinkType || null,
+              selectedDrinkItemId: data.selectedDrinkItemId || null,
+              selectedDrinkItemName: data.selectedDrinkItemName || null
             }
           };
         }
@@ -4857,7 +4870,9 @@ IMPORTANT:
             selectedItemId2: data.selectedItemId2 || null,
             selectedItemName2: data.selectedItemName2 || null,
             cookingMethod: data.cookingMethod || null,
-            drinkType: data.drinkType || null
+            drinkType: data.drinkType || null,
+            selectedDrinkItemId: data.selectedDrinkItemId || null,
+            selectedDrinkItemName: data.selectedDrinkItemName || null
           }
         };
       });
@@ -5948,6 +5963,258 @@ IMPORTANT:
     } catch (error) {
       console.error('❌ Error fetching reward history:', error);
       res.status(500).json({ error: 'Failed to fetch reward history' });
+    }
+  });
+
+  /**
+   * GET /check-ban-status
+   * 
+   * Public endpoint to check if a phone number is banned.
+   * Called by iOS before sending SMS verification code.
+   * 
+   * Query params:
+   * - phone: normalized phone number (e.g., "+15551234567")
+   * 
+   * Response:
+   * {
+   *   isBanned: boolean
+   * }
+   */
+  app.get('/check-ban-status', async (req, res) => {
+    try {
+      const phone = req.query.phone;
+      if (!phone || typeof phone !== 'string') {
+        return res.status(400).json({ error: 'Phone number is required' });
+      }
+
+      // Normalize phone number (ensure it starts with +)
+      const normalizedPhone = phone.startsWith('+') ? phone : `+${phone}`;
+
+      const db = admin.firestore();
+      const bannedDoc = await db.collection('bannedNumbers').doc(normalizedPhone).get();
+
+      res.json({ isBanned: bannedDoc.exists });
+    } catch (error) {
+      console.error('❌ Error checking ban status:', error);
+      res.status(500).json({ error: 'Failed to check ban status' });
+    }
+  });
+
+  /**
+   * POST /admin/ban-user
+   * 
+   * Ban a user by their user ID. Adds their phone number to bannedNumbers
+   * and marks the user account as banned.
+   * 
+   * Body:
+   * {
+   *   userId: string,
+   *   reason?: string
+   * }
+   * 
+   * Response:
+   * {
+   *   success: true,
+   *   phone: string
+   * }
+   */
+  app.post('/admin/ban-user', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const { userId, reason } = req.body;
+      if (!userId || typeof userId !== 'string') {
+        return res.status(400).json({ error: 'userId is required' });
+      }
+
+      const db = admin.firestore();
+      
+      // Get user document
+      const userDoc = await db.collection('users').doc(userId).get();
+      if (!userDoc.exists) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const userData = userDoc.data();
+      const phone = userData.phone;
+      
+      if (!phone || typeof phone !== 'string') {
+        return res.status(400).json({ error: 'User does not have a phone number' });
+      }
+
+      // Normalize phone number
+      const normalizedPhone = phone.startsWith('+') ? phone : `+${phone}`;
+
+      // Check if already banned
+      const bannedDoc = await db.collection('bannedNumbers').doc(normalizedPhone).get();
+      if (bannedDoc.exists) {
+        return res.status(400).json({ error: 'This phone number is already banned' });
+      }
+
+      // Add to bannedNumbers collection
+      const bannedData = {
+        phone: normalizedPhone,
+        bannedAt: admin.firestore.FieldValue.serverTimestamp(),
+        bannedByUserId: adminContext.uid,
+        bannedByEmail: adminContext.email || '',
+        originalUserId: userId,
+        originalUserName: userData.firstName || 'Unknown',
+        reason: reason || null
+      };
+
+      await db.collection('bannedNumbers').doc(normalizedPhone).set(bannedData);
+
+      // Mark user as banned
+      await db.collection('users').doc(userId).update({
+        isBanned: true
+      });
+
+      console.log(`🚫 User ${userId} (${normalizedPhone}) banned by ${adminContext.email}`);
+      res.json({ success: true, phone: normalizedPhone });
+    } catch (error) {
+      console.error('❌ Error banning user:', error);
+      res.status(500).json({ error: 'Failed to ban user' });
+    }
+  });
+
+  /**
+   * POST /admin/unban-number
+   * 
+   * Unban a phone number. Removes from bannedNumbers and updates
+   * user account if originalUserId exists.
+   * 
+   * Body:
+   * {
+   *   phone: string
+   * }
+   * 
+   * Response:
+   * {
+   *   success: true
+   * }
+   */
+  app.post('/admin/unban-number', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const { phone } = req.body;
+      if (!phone || typeof phone !== 'string') {
+        return res.status(400).json({ error: 'Phone number is required' });
+      }
+
+      // Normalize phone number
+      const normalizedPhone = phone.startsWith('+') ? phone : `+${phone}`;
+
+      const db = admin.firestore();
+      
+      // Get banned number document
+      const bannedDoc = await db.collection('bannedNumbers').doc(normalizedPhone).get();
+      if (!bannedDoc.exists) {
+        return res.status(404).json({ error: 'Phone number is not banned' });
+      }
+
+      const bannedData = bannedDoc.data();
+      const originalUserId = bannedData?.originalUserId;
+
+      // Remove from bannedNumbers
+      await db.collection('bannedNumbers').doc(normalizedPhone).delete();
+
+      // If there's an original user ID, unban their account
+      if (originalUserId) {
+        const userDoc = await db.collection('users').doc(originalUserId).get();
+        if (userDoc.exists) {
+          await db.collection('users').doc(originalUserId).update({
+            isBanned: false
+          });
+        }
+      }
+
+      console.log(`✅ Phone number ${normalizedPhone} unbanned by ${adminContext.email}`);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('❌ Error unbanning number:', error);
+      res.status(500).json({ error: 'Failed to unban number' });
+    }
+  });
+
+  /**
+   * GET /admin/banned-numbers
+   * 
+   * Get paginated list of banned phone numbers with metadata.
+   * 
+   * Query params:
+   * - limit: number of items per page (default: 50)
+   * - startAfter: document ID for pagination cursor (optional)
+   * 
+   * Response:
+   * {
+   *   bannedNumbers: [
+   *     {
+   *       phone: string,
+   *       bannedAt: string (ISO timestamp),
+   *       bannedByEmail: string,
+   *       originalUserId: string | null,
+   *       originalUserName: string | null,
+   *       reason: string | null
+   *     }
+   *   ],
+   *   hasMore: boolean,
+   *   nextCursor: string | null
+   * }
+   */
+  app.get('/admin/banned-numbers', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const limit = parseInt(req.query.limit) || 50;
+      const startAfter = req.query.startAfter;
+
+      const db = admin.firestore();
+
+      // Build query
+      let query = db.collection('bannedNumbers')
+        .orderBy('bannedAt', 'desc')
+        .limit(limit + 1); // Fetch one extra to check if there's more
+
+      // Apply pagination cursor if provided
+      if (startAfter) {
+        const cursorDoc = await db.collection('bannedNumbers').doc(startAfter).get();
+        if (cursorDoc.exists) {
+          query = query.startAfter(cursorDoc);
+        }
+      }
+
+      const snapshot = await query.get();
+      const hasMore = snapshot.size > limit;
+      const bannedDocs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
+
+      // Format banned numbers
+      const bannedNumbers = bannedDocs.map(doc => {
+        const data = doc.data();
+        return {
+          phone: data.phone || doc.id,
+          bannedAt: data.bannedAt?.toDate?.().toISOString() || null,
+          bannedByEmail: data.bannedByEmail || 'Unknown',
+          originalUserId: data.originalUserId || null,
+          originalUserName: data.originalUserName || null,
+          reason: data.reason || null
+        };
+      });
+
+      const result = {
+        bannedNumbers,
+        hasMore,
+        nextCursor: hasMore && bannedDocs.length > 0 ? bannedDocs[bannedDocs.length - 1].id : null
+      };
+
+      console.log(`📋 Fetched ${bannedNumbers.length} banned numbers (hasMore: ${hasMore})`);
+      res.json(result);
+    } catch (error) {
+      console.error('❌ Error fetching banned numbers:', error);
+      res.status(500).json({ error: 'Failed to fetch banned numbers' });
     }
   });
 }
