@@ -6095,16 +6095,26 @@ IMPORTANT:
       let normalizedPhone = phone.trim();
       const digits = normalizedPhone.replace(/[^\d]/g, '');
       
+      // If it starts with +1, keep it; if it starts with 1, add +; if 10 digits, add +1
       if (normalizedPhone.startsWith('+1') && digits.length === 11) {
-        normalizedPhone = normalizedPhone.substring(0, 12);
+        // Already has +1 prefix with 11 digits (1 + 10)
+        normalizedPhone = normalizedPhone.substring(0, 12); // Ensure exactly 12 chars
+      } else if (normalizedPhone.startsWith('+') && digits.length === 11) {
+        // Has + but missing 1, add it
+        normalizedPhone = '+1' + digits.substring(1);
       } else if (digits.length === 11 && digits.startsWith('1')) {
+        // 11 digits starting with 1, add +
         normalizedPhone = '+' + digits;
       } else if (digits.length === 10) {
+        // 10 digits, add +1
         normalizedPhone = '+1' + digits;
-      } else if (normalizedPhone.startsWith('+')) {
-        normalizedPhone = '+' + digits;
       } else {
-        normalizedPhone = '+1' + digits;
+        // Try to fix: if it has + but wrong format, try to normalize
+        if (normalizedPhone.startsWith('+')) {
+          normalizedPhone = '+' + digits;
+        } else {
+          normalizedPhone = '+1' + digits;
+        }
       }
       
       // Ensure exactly 12 characters
