@@ -4925,7 +4925,7 @@ IMPORTANT:
       const adminContext = await requireAdmin(req, res);
       if (!adminContext) return;
 
-      const { title, body, targetType, userIds } = req.body;
+      const { title, body, targetType, userIds, includeAdmins } = req.body;
 
       // Validate required fields
       if (!title || typeof title !== 'string' || title.trim().length === 0) {
@@ -4946,11 +4946,17 @@ IMPORTANT:
         }
       }
 
+      // Parse includeAdmins (optional, defaults to false for backward compatibility)
+      const shouldIncludeAdmins = includeAdmins === true;
+
       const db = admin.firestore();
       const trimmedTitle = title.trim();
       const trimmedBody = body.trim();
 
-      console.log(`📨 Admin ${adminContext.uid} sending notification: "${trimmedTitle}" to ${targetType === 'all' ? 'all users' : `${userIds.length} users`}`);
+      const recipientDescription = targetType === 'all' 
+        ? (shouldIncludeAdmins ? 'all users (including admins)' : 'all users')
+        : `${userIds.length} users`;
+      console.log(`📨 Admin ${adminContext.uid} sending notification: "${trimmedTitle}" to ${recipientDescription}`);
 
       // Fetch FCM tokens based on target type
       let usersSnapshot;
@@ -5002,7 +5008,7 @@ IMPORTANT:
         usersSnapshot = { docs: allDocs, empty: allDocs.length === 0 };
       }
 
-      // Filter to users with valid FCM tokens (and exclude admins for broadcast)
+      // Filter to users with valid FCM tokens (conditionally exclude admins for broadcast)
       const tokensToSend = [];
       const targetUserIdsForLog = [];
       let excludedAdminCount = 0;
@@ -5011,8 +5017,8 @@ IMPORTANT:
       for (const doc of usersSnapshot.docs) {
         const userData = doc.data() || {};
         
-        // Skip admin users for broadcast (they shouldn't receive customer notifications)
-        if (targetType === 'all' && userData.isAdmin === true) {
+        // Skip admin users for broadcast unless includeAdmins is true
+        if (targetType === 'all' && userData.isAdmin === true && !shouldIncludeAdmins) {
           excludedAdminCount += 1;
           continue;
         }
@@ -5104,6 +5110,7 @@ IMPORTANT:
         body: trimmedBody,
         targetType,
         targetUserIds: targetType === 'individual' ? userIds : null,
+        includeAdmins: shouldIncludeAdmins,
         sentBy: adminContext.uid,
         sentAt: admin.firestore.FieldValue.serverTimestamp(),
         successCount,

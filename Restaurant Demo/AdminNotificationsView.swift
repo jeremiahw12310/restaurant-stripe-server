@@ -221,12 +221,26 @@ struct AdminNotificationsView: View {
             }
             
             if viewModel.targetType == .all {
-                HStack(spacing: 8) {
-                    Image(systemName: "info.circle.fill")
-                        .foregroundColor(.blue)
-                    Text("This will send to all customers with push notifications enabled")
-                        .font(.system(size: 13))
-                        .foregroundColor(.gray)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "info.circle.fill")
+                            .foregroundColor(.blue)
+                        Text("This will send to all customers with push notifications enabled")
+                            .font(.system(size: 13))
+                            .foregroundColor(.gray)
+                    }
+                    
+                    // Include Admins Toggle
+                    Toggle(isOn: $viewModel.includeAdmins) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "person.badge.shield.checkmark.fill")
+                                .foregroundColor(.orange)
+                            Text("Include Admins")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.black)
+                        }
+                    }
+                    .toggleStyle(SwitchToggleStyle(tint: .orange))
                 }
             }
         }
@@ -498,9 +512,27 @@ struct UserSelectionRow: View {
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(user.firstName)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.black)
+                    HStack(spacing: 6) {
+                        Text(user.firstName)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.black)
+                        
+                        if user.isAdmin {
+                            HStack(spacing: 3) {
+                                Image(systemName: "person.badge.shield.checkmark.fill")
+                                    .font(.system(size: 10))
+                                Text("Admin")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(Color.orange.opacity(0.15))
+                            )
+                        }
+                    }
                     
                     if !user.phone.isEmpty {
                         Text(user.phone)
@@ -511,14 +543,16 @@ struct UserSelectionRow: View {
                 
                 Spacer()
                 
-                if user.hasFcmToken {
-                    Image(systemName: "bell.fill")
-                        .foregroundColor(.green)
-                        .font(.system(size: 12))
-                } else {
-                    Image(systemName: "bell.slash")
-                        .foregroundColor(.gray)
-                        .font(.system(size: 12))
+                HStack(spacing: 8) {
+                    if user.hasFcmToken {
+                        Image(systemName: "bell.fill")
+                            .foregroundColor(.green)
+                            .font(.system(size: 12))
+                    } else {
+                        Image(systemName: "bell.slash")
+                            .foregroundColor(.gray)
+                            .font(.system(size: 12))
+                    }
                 }
             }
             .padding(12)
@@ -602,6 +636,7 @@ class AdminNotificationsViewModel: ObservableObject {
     @Published var title: String = ""
     @Published var body: String = ""
     @Published var targetType: TargetType = .all
+    @Published var includeAdmins: Bool = false
     @Published var selectedUserIds: Set<String> = []
     @Published var searchQuery: String = ""
     
@@ -787,8 +822,7 @@ class AdminNotificationsViewModel: ObservableObject {
                     let rawUsers = json["users"] as? [[String: Any]] ?? []
                     
                     let parsed: [NotificationUser] = rawUsers.compactMap { u in
-                        // Exclude staff from customer targeting
-                        if (u["isAdmin"] as? Bool) == true { return nil }
+                        // Exclude employees from customer targeting (but allow admins)
                         if (u["isEmployee"] as? Bool) == true { return nil }
                         
                         let id = u["id"] as? String ?? ""
@@ -798,13 +832,15 @@ class AdminNotificationsViewModel: ObservableObject {
                         let phone = u["phone"] as? String ?? ""
                         let avatarEmoji = u["avatarEmoji"] as? String ?? "👤"
                         let hasFcmToken = u["hasFcmToken"] as? Bool ?? false
+                        let isAdmin = (u["isAdmin"] as? Bool) == true
                         
                         return NotificationUser(
                             id: id,
                             firstName: firstName,
                             phone: phone,
                             avatarEmoji: avatarEmoji,
-                            hasFcmToken: hasFcmToken
+                            hasFcmToken: hasFcmToken,
+                            isAdmin: isAdmin
                         )
                     }
                     .sorted { $0.firstName < $1.firstName }
@@ -853,7 +889,8 @@ class AdminNotificationsViewModel: ObservableObject {
                 "title": self.title.trimmingCharacters(in: .whitespacesAndNewlines),
                 "body": self.body.trimmingCharacters(in: .whitespacesAndNewlines),
                 "targetType": self.targetType == .all ? "all" : "individual",
-                "userIds": self.targetType == .individual ? Array(self.selectedUserIds) : []
+                "userIds": self.targetType == .individual ? Array(self.selectedUserIds) : [],
+                "includeAdmins": self.includeAdmins
             ]
             
             guard let url = URL(string: "\(Config.backendURL)/admin/notifications/send") else {
@@ -920,6 +957,7 @@ class AdminNotificationsViewModel: ObservableObject {
         body = ""
         selectedUserIds.removeAll()
         targetType = .all
+        includeAdmins = false
     }
     
     // MARK: - Load Sent Notifications
@@ -963,6 +1001,7 @@ struct NotificationUser: Identifiable {
     let phone: String
     let avatarEmoji: String
     let hasFcmToken: Bool
+    let isAdmin: Bool
 }
 
 struct SentNotification: Identifiable {
