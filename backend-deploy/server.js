@@ -5708,25 +5708,44 @@ IMPORTANT:
 
       const db = admin.firestore();
       
-      // Get all used rewards, grouped by month
-      const rewardsSnapshot = await db.collection('redeemedRewards')
-        .where('isUsed', '==', true)
-        .orderBy('usedAt', 'desc')
-        .get();
-
-      // Group by month (YYYY-MM format)
+      // Efficiently get months by scanning in batches - only fetch usedAt field
+      // This avoids loading all document data into memory
       const monthMap = new Map();
+      let lastDoc = null;
+      const batchSize = 1000; // Process 1000 at a time
+      let hasMore = true;
       
-      rewardsSnapshot.forEach(doc => {
-        const data = doc.data();
-        const usedAt = data.usedAt;
+      while (hasMore) {
+        let query = db.collection('redeemedRewards')
+          .where('isUsed', '==', true)
+          .orderBy('usedAt', 'desc')
+          .select('usedAt') // Only fetch the usedAt field to minimize data transfer
+          .limit(batchSize);
         
-        if (usedAt && usedAt.toDate) {
-          const date = usedAt.toDate();
-          const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-          monthMap.set(monthKey, (monthMap.get(monthKey) || 0) + 1);
+        if (lastDoc) {
+          query = query.startAfter(lastDoc);
         }
-      });
+        
+        const batchSnapshot = await query.get();
+        hasMore = batchSnapshot.size === batchSize;
+        
+        batchSnapshot.forEach(doc => {
+          const data = doc.data();
+          const usedAt = data.usedAt;
+          
+          if (usedAt && usedAt.toDate) {
+            const date = usedAt.toDate();
+            const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+            monthMap.set(monthKey, (monthMap.get(monthKey) || 0) + 1);
+          }
+        });
+        
+        if (hasMore && batchSnapshot.docs.length > 0) {
+          lastDoc = batchSnapshot.docs[batchSnapshot.docs.length - 1];
+        } else {
+          hasMore = false;
+        }
+      }
 
       // Convert to array and sort by month descending
       const months = Array.from(monthMap.entries())
@@ -5844,34 +5863,49 @@ IMPORTANT:
         }
       }
 
-      // Get summary statistics for the month (total count, points, unique users)
-      const [summarySnapshot, pointsSnapshot] = await Promise.all([
-        db.collection('redeemedRewards')
-          .where('isUsed', '==', true)
-          .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
-          .where('usedAt', '<', admin.firestore.Timestamp.fromDate(monthEnd))
-          .get(),
-        db.collection('redeemedRewards')
-          .where('isUsed', '==', true)
-          .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
-          .where('usedAt', '<', admin.firestore.Timestamp.fromDate(monthEnd))
-          .select('pointsRequired', 'userId')
-          .get()
-      ]);
-
-      // Calculate summary
+      // Get summary statistics for the month using efficient queries
+      // Use aggregation queries if available, otherwise use select() to minimize data transfer
+      let totalRewards = 0;
       let totalPointsRedeemed = 0;
       const uniqueUserIds = new Set();
       
-      pointsSnapshot.forEach(doc => {
-        const data = doc.data();
-        if (typeof data.pointsRequired === 'number') {
-          totalPointsRedeemed += data.pointsRequired;
+      // Process in batches to avoid loading all documents at once
+      let summaryLastDoc = null;
+      let summaryHasMore = true;
+      const summaryBatchSize = 1000;
+      
+      while (summaryHasMore) {
+        let summaryQuery = db.collection('redeemedRewards')
+          .where('isUsed', '==', true)
+          .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
+          .where('usedAt', '<', admin.firestore.Timestamp.fromDate(monthEnd))
+          .select('pointsRequired', 'userId') // Only fetch needed fields
+          .limit(summaryBatchSize);
+        
+        if (summaryLastDoc) {
+          summaryQuery = summaryQuery.startAfter(summaryLastDoc);
         }
-        if (data.userId) {
-          uniqueUserIds.add(data.userId);
+        
+        const summaryBatch = await summaryQuery.get();
+        summaryHasMore = summaryBatch.size === summaryBatchSize;
+        totalRewards += summaryBatch.size;
+        
+        summaryBatch.forEach(doc => {
+          const data = doc.data();
+          if (typeof data.pointsRequired === 'number') {
+            totalPointsRedeemed += data.pointsRequired;
+          }
+          if (data.userId) {
+            uniqueUserIds.add(data.userId);
+          }
+        });
+        
+        if (summaryHasMore && summaryBatch.docs.length > 0) {
+          summaryLastDoc = summaryBatch.docs[summaryBatch.docs.length - 1];
+        } else {
+          summaryHasMore = false;
         }
-      });
+      }
 
       // Format rewards with user names
       const rewards = rewardsDocs.map(doc => {
@@ -5899,7 +5933,7 @@ IMPORTANT:
       const result = {
         month,
         summary: {
-          totalRewards: summarySnapshot.size,
+          totalRewards,
           totalPointsRedeemed,
           uniqueUsers: uniqueUserIds.size
         },
