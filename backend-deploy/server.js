@@ -388,74 +388,25 @@ async function sendPushNotificationToToken(fcmToken, title, body, data = {}) {
   }
 
   try {
-    const axios = require('axios');
-    const { GoogleAuth } = require('google-auth-library');
-    
-    // Get service account from environment
-    if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-      console.warn('⚠️ FIREBASE_SERVICE_ACCOUNT_KEY not set, cannot send push notification');
-      return { success: false, error: 'Service account not configured' };
-    }
-    
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-    
-    // Create auth client with cloud-platform scope
-    const auth = new GoogleAuth({
-      credentials: serviceAccount,
-      scopes: ['https://www.googleapis.com/auth/cloud-platform']
-    });
-    
-    const client = await auth.getClient();
-    const tokenResponse = await client.getAccessToken();
-    const accessToken = tokenResponse.token;
-    
-    const fcmPayload = {
-      message: {
-        token: fcmToken,
-        notification: {
-          title: title,
-          body: body
-        },
-        data: {
-          ...data,
-          timestamp: new Date().toISOString()
-        },
-        // Add explicit APNs configuration for iOS
-        apns: {
-          headers: {
-            'apns-priority': '10',
-            'apns-topic': 'bytequack.dumplinghouse' // Must match iOS bundle ID
-          },
-          payload: {
-            aps: {
-              alert: {
-                title: title,
-                body: body
-              },
-              sound: 'default',
-              badge: 1
-            }
-          }
-        }
+    // Use Firebase Admin SDK messaging method (handles auth automatically)
+    const message = {
+      token: fcmToken,
+      notification: {
+        title: title,
+        body: body
+      },
+      data: {
+        ...data,
+        timestamp: new Date().toISOString()
       }
     };
-    
-    const response = await axios.post(
-      `https://fcm.googleapis.com/v1/projects/dumplinghouseapp/messages:send`,
-      fcmPayload,
-      {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    
-    console.log(`✅ FCM push sent successfully:`, response.data);
+
+    const response = await admin.messaging().send(message);
+    console.log(`✅ FCM push sent successfully:`, response);
     return { success: true };
   } catch (error) {
-    console.warn(`❌ FCM push failed:`, error.response?.data || error.message);
-    return { success: false, error: error.response?.data?.error?.message || error.message };
+    console.warn(`❌ FCM push failed:`, error.message || error);
+    return { success: false, error: error.message || 'Unknown error' };
   }
 }
 
