@@ -5463,94 +5463,43 @@ IMPORTANT:
             type: targetType === 'all' ? 'admin_broadcast' : 'admin_individual',
             timestamp: new Date().toISOString()
           },
-          tokens: batchTokens
-        };
-
-        try {
-          // Try sending via direct HTTP to FCM API (bypassing SDK)
-          const axios = require('axios');
-          const { GoogleAuth } = require('google-auth-library');
-          
-          // Get service account from environment
-          const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-          
-          // Create auth client with broad cloud-platform scope
-          const auth = new GoogleAuth({
-            credentials: serviceAccount,
-            scopes: ['https://www.googleapis.com/auth/cloud-platform']
-          });
-          
-          const client = await auth.getClient();
-          const tokenResponse = await client.getAccessToken();
-          const accessToken = tokenResponse.token;
-          
-          console.log('🔑 Got access token with cloud-platform scope');
-          console.log('   - Token length:', accessToken?.length || 0);
-          console.log('   - Token starts with:', accessToken?.substring(0, 20) + '...');
-          
-          // Test the token by calling a simple Google API first
-          try {
-            const testResponse = await axios.get(
-              `https://cloudresourcemanager.googleapis.com/v1/projects/dumplinghouseapp`,
-              { headers: { 'Authorization': `Bearer ${accessToken}` } }
-            );
-            console.log('✅ Token validation test PASSED - can access project:', testResponse.data?.projectId);
-          } catch (testErr) {
-            console.log('❌ Token validation test FAILED:', testErr.response?.status, testErr.response?.data?.error?.message || testErr.message);
-          }
-          
-          for (let j = 0; j < batchTokens.length; j++) {
-            const fcmPayload = {
-              message: {
-                token: batchTokens[j],
-                notification: {
+          tokens: batchTokens,
+          // Add explicit APNs configuration for iOS
+          apns: {
+            headers: {
+              'apns-priority': '10',
+              'apns-topic': 'bytequack.dumplinghouse' // Must match iOS bundle ID
+            },
+            payload: {
+              aps: {
+                alert: {
                   title: trimmedTitle,
                   body: trimmedBody
                 },
-                data: {
-                  type: targetType === 'all' ? 'admin_broadcast' : 'admin_individual',
-                  timestamp: new Date().toISOString()
-                },
-                // Add explicit APNs configuration for iOS
-                apns: {
-                  headers: {
-                    'apns-priority': '10',
-                    'apns-topic': 'bytequack.dumplinghouse' // Must match iOS bundle ID
-                  },
-                  payload: {
-                    aps: {
-                      alert: {
-                        title: trimmedTitle,
-                        body: trimmedBody
-                      },
-                      sound: 'default',
-                      badge: 1
-                    }
-                  }
+                sound: 'default',
+                badge: 1
+              }
+            }
+          }
+        };
+
+        try {
+          // Use Firebase Admin SDK messaging method (handles auth automatically)
+          const response = await admin.messaging().sendEachForMulticast(message);
+          successCount += response.successCount;
+          failureCount += response.failureCount;
+
+          // Log any failures for debugging
+          if (response.failureCount > 0) {
+            response.responses.forEach((resp, idx) => {
+              if (!resp.success) {
+                console.warn(`❌ FCM send failed for token ${idx}: ${resp.error?.code || 'unknown'}`);
+                if (resp.error) {
+                  console.warn(`   - Error code: ${resp.error.code}`);
+                  console.warn(`   - Error message: ${resp.error.message}`);
                 }
               }
-            };
-            
-            try {
-              const response = await axios.post(
-                `https://fcm.googleapis.com/v1/projects/dumplinghouseapp/messages:send`,
-                fcmPayload,
-                {
-                  headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json'
-                  }
-                }
-              );
-              console.log(`✅ FCM sent successfully to token ${j}, response:`, response.data);
-              successCount += 1;
-            } catch (httpError) {
-              console.warn(`❌ FCM HTTP send failed for token ${j}:`);
-              console.warn(`   - Status: ${httpError.response?.status}`);
-              console.warn(`   - Error: ${JSON.stringify(httpError.response?.data || httpError.message)}`);
-              console.warn(`   - Token prefix: ${batchTokens[j]?.substring(0, 30)}...`);
-              failureCount += 1;
-            }
+            });
           }
         } catch (fcmError) {
           console.error('❌ FCM batch send error:', fcmError);
