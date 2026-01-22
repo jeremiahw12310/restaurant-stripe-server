@@ -262,7 +262,7 @@ struct AdminSendRewardsView: View {
                                 .fill(Color.gray.opacity(0.1))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 12)
-                                        .stroke(Color.gray.opacity(0.3), lineWidth: 2, lineCap: .round, dash: [5, 5])
+                                        .stroke(Color.gray.opacity(0.3), style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [5, 5]))
                                 )
                         )
                     }
@@ -512,7 +512,7 @@ class AdminSendRewardsViewModel: ObservableObject {
             return false
         }
         
-        if let selectedReward = selectedReward {
+        if selectedReward != nil {
             return true // Existing reward selected
         } else {
             // Custom reward
@@ -523,7 +523,7 @@ class AdminSendRewardsViewModel: ObservableObject {
     }
     
     var canShowPreview: Bool {
-        if let selectedReward = selectedReward {
+        if selectedReward != nil {
             return true
         } else {
             return !customTitle.isEmpty || !customDescription.isEmpty || selectedImage != nil
@@ -625,7 +625,7 @@ class AdminSendRewardsViewModel: ObservableObject {
                 return
             }
             
-            if let selectedReward = self.selectedReward {
+            if self.selectedReward != nil {
                 // Send existing reward
                 self.sendExistingReward(idToken: idToken)
             } else {
@@ -638,14 +638,18 @@ class AdminSendRewardsViewModel: ObservableObject {
     private func sendExistingReward(idToken: String) {
         guard let reward = selectedReward else { return }
         
-        let requestBody: [String: Any] = [
+        var requestBody: [String: Any] = [
             "rewardTitle": reward.title,
             "rewardDescription": reward.description,
             "rewardCategory": reward.category,
-            "imageName": reward.imageName ?? NSNull(),
             "targetType": targetType == .all ? "all" : "individual",
             "userIds": targetType == .individual ? Array(selectedUserIds) : []
         ]
+        
+        // Only include imageName if it exists
+        if let imageName = reward.imageName {
+            requestBody["imageName"] = imageName
+        }
         
         guard let url = URL(string: "\(Config.backendURL)/admin/rewards/gift") else {
             DispatchQueue.main.async {
@@ -688,10 +692,15 @@ class AdminSendRewardsViewModel: ObservableObject {
                     }
                     self?.showSuccessAlert = true
                 } else {
-                    if let data = data,
-                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let errorMsg = json["error"] as? String {
-                        self?.errorMessage = errorMsg
+                    if let data = data {
+                        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                           let errorMsg = json["error"] as? String {
+                            self?.errorMessage = errorMsg
+                        } else if let responseString = String(data: data, encoding: .utf8) {
+                            self?.errorMessage = "Failed to send reward (status: \(httpResponse.statusCode))\n\(responseString)"
+                        } else {
+                            self?.errorMessage = "Failed to send reward (status: \(httpResponse.statusCode))"
+                        }
                     } else {
                         self?.errorMessage = "Failed to send reward (status: \(httpResponse.statusCode))"
                     }
@@ -793,10 +802,15 @@ class AdminSendRewardsViewModel: ObservableObject {
                     }
                     self?.showSuccessAlert = true
                 } else {
-                    if let data = data,
-                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let errorMsg = json["error"] as? String {
-                        self?.errorMessage = errorMsg
+                    if let data = data {
+                        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                           let errorMsg = json["error"] as? String {
+                            self?.errorMessage = errorMsg
+                        } else if let responseString = String(data: data, encoding: .utf8) {
+                            self?.errorMessage = "Failed to send custom reward (status: \(httpResponse.statusCode))\n\(responseString)"
+                        } else {
+                            self?.errorMessage = "Failed to send custom reward (status: \(httpResponse.statusCode))"
+                        }
                     } else {
                         self?.errorMessage = "Failed to send custom reward (status: \(httpResponse.statusCode))"
                     }

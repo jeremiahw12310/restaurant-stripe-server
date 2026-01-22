@@ -4973,11 +4973,39 @@ IMPORTANT:
       // Get target users
       let targetUserIds = [];
       if (targetType === 'all') {
-        // Get all users (excluding employees, but including admins if they're customers)
-        const usersSnapshot = await db.collection('users')
-          .where('isEmployee', '==', false)
-          .get();
-        targetUserIds = usersSnapshot.docs.map(doc => doc.id);
+        // Get all users (excluding employees)
+        // Fetch all users and filter client-side to include those without isEmployee field
+        const pageSize = 500;
+        let lastDoc = null;
+        const allUserDocs = [];
+
+        while (true) {
+          let query = db.collection('users').limit(pageSize);
+          if (lastDoc) {
+            query = query.startAfter(lastDoc);
+          }
+
+          const pageSnapshot = await query.get();
+          if (pageSnapshot.empty) {
+            break;
+          }
+
+          // Filter to exclude employees (include if isEmployee is false or undefined)
+          for (const doc of pageSnapshot.docs) {
+            const userData = doc.data() || {};
+            if (userData.isEmployee !== true) {
+              allUserDocs.push(doc);
+            }
+          }
+
+          lastDoc = pageSnapshot.docs[pageSnapshot.docs.length - 1];
+          if (pageSnapshot.docs.length < pageSize) {
+            break;
+          }
+        }
+
+        targetUserIds = allUserDocs.map(doc => doc.id);
+        console.log(`📋 Found ${targetUserIds.length} eligible users (excluding employees)`);
       } else {
         targetUserIds = userIds;
       }
@@ -5052,16 +5080,21 @@ IMPORTANT:
 
       console.log(`✅ Gift reward sent: ${userDocs.length} notifications, ${fcmTokens.length} push notifications`);
 
+      // Return success even if no users found (gift is still created and available)
       res.json({
         success: true,
         giftedRewardId: giftedRewardRef.id,
         notificationCount: userDocs.length,
-        pushNotificationCount: fcmTokens.length
+        pushNotificationCount: fcmTokens.length,
+        message: userDocs.length === 0 
+          ? 'Gift reward created but no eligible users found. Users will see it when they open the app.'
+          : undefined
       });
 
     } catch (error) {
       console.error('❌ Error sending gift reward:', error);
-      res.status(500).json({ error: 'Failed to send gift reward' });
+      const errorMessage = error.message || error.toString();
+      res.status(500).json({ error: `Failed to send gift reward: ${errorMessage}` });
     }
   });
 
@@ -5193,10 +5226,38 @@ IMPORTANT:
       let targetUserIds = [];
       if (targetType === 'all') {
         // Get all users (excluding employees)
-        const usersSnapshot = await db.collection('users')
-          .where('isEmployee', '==', false)
-          .get();
-        targetUserIds = usersSnapshot.docs.map(doc => doc.id);
+        // Fetch all users and filter client-side to include those without isEmployee field
+        const pageSize = 500;
+        let lastDoc = null;
+        const allUserDocs = [];
+
+        while (true) {
+          let query = db.collection('users').limit(pageSize);
+          if (lastDoc) {
+            query = query.startAfter(lastDoc);
+          }
+
+          const pageSnapshot = await query.get();
+          if (pageSnapshot.empty) {
+            break;
+          }
+
+          // Filter to exclude employees (include if isEmployee is false or undefined)
+          for (const doc of pageSnapshot.docs) {
+            const userData = doc.data() || {};
+            if (userData.isEmployee !== true) {
+              allUserDocs.push(doc);
+            }
+          }
+
+          lastDoc = pageSnapshot.docs[pageSnapshot.docs.length - 1];
+          if (pageSnapshot.docs.length < pageSize) {
+            break;
+          }
+        }
+
+        targetUserIds = allUserDocs.map(doc => doc.id);
+        console.log(`📋 Found ${targetUserIds.length} eligible users (excluding employees)`);
       } else {
         targetUserIds = parsedUserIds;
       }
@@ -5271,12 +5332,16 @@ IMPORTANT:
 
       console.log(`✅ Custom gift reward sent: ${userDocs.length} notifications, ${fcmTokens.length} push notifications`);
 
+      // Return success even if no users found (gift is still created and available)
       res.json({
         success: true,
         giftedRewardId: giftedRewardRef.id,
         imageURL: imageURL,
         notificationCount: userDocs.length,
-        pushNotificationCount: fcmTokens.length
+        pushNotificationCount: fcmTokens.length,
+        message: userDocs.length === 0 
+          ? 'Custom gift reward created but no eligible users found. Users will see it when they open the app.'
+          : undefined
       });
 
     } catch (error) {
@@ -5285,7 +5350,8 @@ IMPORTANT:
       if (req.file && fs.existsSync(req.file.path)) {
         fs.unlinkSync(req.file.path);
       }
-      res.status(500).json({ error: 'Failed to send custom gift reward' });
+      const errorMessage = error.message || error.toString();
+      res.status(500).json({ error: `Failed to send custom gift reward: ${errorMessage}` });
     }
   });
 
