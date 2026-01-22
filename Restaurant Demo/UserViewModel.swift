@@ -1116,25 +1116,32 @@ class UserViewModel: ObservableObject {
                 completion(false)
                 return
             }
-            print("✅ Re-authenticated. Proceeding to delete Auth user…")
-            user.delete { deleteError in
-                if let deleteError = deleteError {
-                    print("❌ Error deleting Auth user: \(deleteError.localizedDescription)")
-                    completion(false)
-                    return
+            print("✅ Re-authenticated. Deleting Firestore data FIRST (while still authenticated)…")
+            
+            // IMPORTANT: Delete Firestore data FIRST while user is still authenticated
+            // Otherwise Firestore security rules will reject the deletion
+            let storage = Storage.storage()
+            self?.deleteUserDataFromFirestore(user: user, storage: storage) { firestoreSuccess in
+                if firestoreSuccess {
+                    print("✅ User data cleanup complete")
+                } else {
+                    print("⚠️ User data cleanup encountered errors (continuing with Auth deletion)")
                 }
-                print("✅ Auth user deleted. Cleaning up Firestore/Storage data…")
-                // Best-effort backend cleanup for associated user data
-                let storage = Storage.storage()
-                self?.deleteUserDataFromFirestore(user: user, storage: storage) { success in
-                    if success {
-                        print("✅ User data cleanup complete")
-                    } else {
-                        print("⚠️ User data cleanup encountered errors")
-                    }
+                
+                // NOW delete the Auth user after Firestore cleanup
+                print("🗑️ Now deleting Auth user…")
+                user.delete { deleteError in
                     DispatchQueue.main.async {
                         self?.pendingDeletionVerificationID = nil
                         self?.isAwaitingDeletionSMSCode = false
+                        
+                        if let deleteError = deleteError {
+                            print("❌ Error deleting Auth user: \(deleteError.localizedDescription)")
+                            // Firestore data was deleted but Auth failed - still consider partial success
+                            completion(false)
+                            return
+                        }
+                        print("✅ Auth user deleted successfully")
                         completion(true)
                     }
                 }
@@ -1154,9 +1161,19 @@ class UserViewModel: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "hasSeenWelcome_\(user.uid)")
         print("🧹 Cleared welcome popup flag for user: \(user.uid)")
 
-        // If the session is fresh, try to delete directly; otherwise, kick off the SMS reauth flow
-        user.getIDTokenResult(forcingRefresh: false) { [weak self] result, _ in
-            // Heuristic: attempt direct delete; if it fails with requires-recent-login, fall back to SMS flow
+        // IMPORTANT: Delete Firestore data FIRST while user is still authenticated
+        // Otherwise Firestore security rules will reject the deletion after Auth is deleted
+        print("🗑️ Deleting Firestore data FIRST (while still authenticated)…")
+        let storage = Storage.storage()
+        self.deleteUserDataFromFirestore(user: user, storage: storage) { [weak self] firestoreSuccess in
+            if firestoreSuccess {
+                print("✅ User data cleanup complete")
+            } else {
+                print("⚠️ User data cleanup encountered errors (continuing with Auth deletion)")
+            }
+            
+            // NOW delete the Auth user after Firestore cleanup
+            print("🗑️ Now attempting to delete Auth user…")
             user.delete { error in
                 if let error = error as NSError?, error.code == AuthErrorCode.requiresRecentLogin.rawValue {
                     print("ℹ️ Recent login required. Starting SMS re-auth flow…")
@@ -1167,14 +1184,12 @@ class UserViewModel: ObservableObject {
                 }
                 if let error = error {
                     print("❌ Error deleting Auth user: \(error.localizedDescription)")
+                    // Firestore data was already deleted, Auth deletion failed
                     completion(false)
                     return
                 }
-                print("✅ Auth user deleted without additional re-auth. Cleaning up user data…")
-                let storage = Storage.storage()
-                self?.deleteUserDataFromFirestore(user: user, storage: storage) { success in
-                    completion(success)
-                }
+                print("✅ Auth user deleted successfully")
+                completion(true)
             }
         }
     }
