@@ -5941,14 +5941,14 @@ IMPORTANT:
       const usersMap = {};
       if (userIds.size > 0) {
         const userIdArray = Array.from(userIds);
-        // Firestore 'in' queries are limited to 30 items, so batch them
+        // Firestore getAll() is limited to 30 items, so batch them
         const batchSize = 30;
         const userBatches = [];
         for (let i = 0; i < userIdArray.length; i += batchSize) {
           const batch = userIdArray.slice(i, i + batchSize);
           // Use getAll() for efficient batch reads (Admin SDK supports this)
           const userRefs = batch.map(userId => db.collection('users').doc(userId));
-          userBatches.push(admin.firestore().getAll(...userRefs));
+          userBatches.push(db.getAll(...userRefs));
         }
         
         const allUserDocs = await Promise.all(userBatches);
