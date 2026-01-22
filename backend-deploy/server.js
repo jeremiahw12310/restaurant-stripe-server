@@ -5616,10 +5616,51 @@ IMPORTANT:
         usedAt: null
       };
 
-      // Write both in a batch
+      // Build description for transaction (matching regular reward format)
+      let transactionDescription = `Redeemed gift: ${giftData.rewardTitle}`;
+      if (selectedItemName) {
+        transactionDescription = `Redeemed gift: ${selectedItemName}`;
+        if (selectedToppingName) {
+          transactionDescription += ` with ${selectedToppingName}`;
+        }
+        if (selectedItemName2) {
+          transactionDescription = `Redeemed gift: Half and Half: ${selectedItemName} + ${selectedItemName2}`;
+          if (cookingMethod) {
+            transactionDescription += ` (${cookingMethod})`;
+          }
+        } else if (cookingMethod) {
+          transactionDescription += ` (${cookingMethod})`;
+        }
+      }
+
+      // Create points transaction for history (amount 0 since it's a free gift)
+      const pointsTransactionId = `gift_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const pointsTransaction = {
+        id: pointsTransactionId,
+        userId: uid,
+        type: 'reward_redeemed',
+        amount: 0, // Free gift, no points deducted
+        description: transactionDescription,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        metadata: {
+          rewardTitle: giftData.rewardTitle,
+          isGiftedReward: true,
+          giftedRewardId: giftedRewardId,
+          redemptionCode: redemptionCode,
+          ...(selectedItemName && { selectedItemName }),
+          ...(selectedToppingName && { selectedToppingName }),
+          ...(selectedItemName2 && { selectedItemName2 }),
+          ...(cookingMethod && { cookingMethod }),
+          ...(drinkType && { drinkType }),
+          ...(selectedDrinkItemName && { selectedDrinkItemName })
+        }
+      };
+
+      // Write all three in a batch
       const batch = db.batch();
       batch.set(redeemedRewardRef, redeemedReward);
       batch.set(claimRef, claim);
+      batch.set(db.collection('pointsTransactions').doc(pointsTransactionId), pointsTransaction);
       await batch.commit();
 
       console.log(`✅ User ${uid} claimed gift reward ${giftedRewardId}, redemption code: ${redemptionCode}`);
@@ -6969,6 +7010,134 @@ IMPORTANT:
     } catch (error) {
       console.error('❌ Error banning user:', error);
       res.status(500).json({ error: 'Failed to ban user' });
+    }
+  });
+
+  /**
+   * POST /admin/ban-phone
+   * 
+   * Ban a phone number directly. Searches for existing accounts
+   * with this phone number and marks them as banned if found.
+   * 
+   * Body:
+   * {
+   *   phone: string,
+   *   reason: string (optional)
+   * }
+   * 
+   * Response:
+   * {
+   *   success: true,
+   *   phone: string,
+   *   existingAccountFound: boolean,
+   *   bannedUserId: string | null,
+   *   bannedUserName: string | null
+   * }
+   */
+  app.post('/admin/ban-phone', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const { phone, reason } = req.body;
+      if (!phone || typeof phone !== 'string') {
+        return res.status(400).json({ error: 'phone is required' });
+      }
+
+      const db = admin.firestore();
+      
+      // Normalize phone number to match iOS format: +1XXXXXXXXXX (12 characters)
+      let normalizedPhone = phone.trim();
+      const digits = normalizedPhone.replace(/[^\d]/g, '');
+      
+      // If it starts with +1, keep it; if it starts with 1, add +; if 10 digits, add +1
+      if (normalizedPhone.startsWith('+1') && digits.length === 11) {
+        // Already has +1 prefix with 11 digits (1 + 10)
+        normalizedPhone = normalizedPhone.substring(0, 12); // Ensure exactly 12 chars
+      } else if (normalizedPhone.startsWith('+') && digits.length === 11) {
+        // Has + but missing 1, add it
+        normalizedPhone = '+1' + digits.substring(1);
+      } else if (digits.length === 11 && digits.startsWith('1')) {
+        // 11 digits starting with 1, add +
+        normalizedPhone = '+' + digits;
+      } else if (digits.length === 10) {
+        // 10 digits, add +1
+        normalizedPhone = '+1' + digits;
+      } else {
+        // Try to fix: if it has + but wrong format, try to normalize
+        if (normalizedPhone.startsWith('+')) {
+          normalizedPhone = '+' + digits;
+        } else {
+          normalizedPhone = '+1' + digits;
+        }
+      }
+      
+      // Ensure exactly 12 characters
+      if (normalizedPhone.length !== 12 || !normalizedPhone.startsWith('+1')) {
+        if (digits.length >= 10) {
+          const last10 = digits.slice(-10);
+          normalizedPhone = '+1' + last10;
+        } else {
+          return res.status(400).json({ error: 'Invalid phone number format' });
+        }
+      }
+
+      // Check if already banned
+      const bannedDoc = await db.collection('bannedNumbers').doc(normalizedPhone).get();
+      if (bannedDoc.exists) {
+        return res.status(400).json({ error: 'This phone number is already banned' });
+      }
+
+      // Search for existing users with this phone number
+      const usersQuery = await db.collection('users')
+        .where('phone', '==', normalizedPhone)
+        .limit(1)
+        .get();
+
+      let existingAccountFound = false;
+      let bannedUserId = null;
+      let bannedUserName = null;
+
+      if (!usersQuery.empty) {
+        // Found existing account(s) - ban the first one (should only be one)
+        const userDoc = usersQuery.docs[0];
+        const userData = userDoc.data();
+        
+        bannedUserId = userDoc.id;
+        bannedUserName = userData.firstName || 'Unknown';
+        existingAccountFound = true;
+
+        // Mark user as banned
+        await db.collection('users').doc(bannedUserId).update({
+          isBanned: true
+        });
+      }
+
+      // Add to bannedNumbers collection
+      const bannedData = {
+        phone: normalizedPhone,
+        bannedAt: admin.firestore.FieldValue.serverTimestamp(),
+        bannedByUserId: adminContext.uid,
+        bannedByEmail: adminContext.email || '',
+        originalUserId: bannedUserId,
+        originalUserName: bannedUserName,
+        reason: reason || null
+      };
+
+      await db.collection('bannedNumbers').doc(normalizedPhone).set(bannedData);
+
+      console.log(`🚫 Phone number ${normalizedPhone} banned by ${adminContext.email}${existingAccountFound ? ` (existing account: ${bannedUserId})` : ' (no existing account)'}`);
+      
+      res.json({
+        success: true,
+        phone: normalizedPhone,
+        existingAccountFound,
+        bannedUserId,
+        bannedUserName
+      });
+    } catch (error) {
+      console.error('❌ Error banning phone number:', error);
+      res.status(500).json({ error: 'Failed to ban phone number' });
     }
   });
 
