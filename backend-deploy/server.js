@@ -5463,28 +5463,10 @@ IMPORTANT:
             type: targetType === 'all' ? 'admin_broadcast' : 'admin_individual',
             timestamp: new Date().toISOString()
           },
-          tokens: batchTokens,
-          // Add explicit APNs configuration for iOS
-          apns: {
-            headers: {
-              'apns-priority': '10',
-              'apns-topic': 'bytequack.dumplinghouse' // Must match iOS bundle ID
-            },
-            payload: {
-              aps: {
-                alert: {
-                  title: trimmedTitle,
-                  body: trimmedBody
-                },
-                sound: 'default',
-                badge: 1
-              }
-            }
-          }
+          tokens: batchTokens
         };
 
         try {
-          // Use Firebase Admin SDK messaging method (handles auth automatically)
           const response = await admin.messaging().sendEachForMulticast(message);
           successCount += response.successCount;
           failureCount += response.failureCount;
@@ -5494,10 +5476,6 @@ IMPORTANT:
             response.responses.forEach((resp, idx) => {
               if (!resp.success) {
                 console.warn(`❌ FCM send failed for token ${idx}: ${resp.error?.code || 'unknown'}`);
-                if (resp.error) {
-                  console.warn(`   - Error code: ${resp.error.code}`);
-                  console.warn(`   - Error message: ${resp.error.message}`);
-                }
               }
             });
           }
