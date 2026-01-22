@@ -5987,13 +5987,61 @@ IMPORTANT:
         return res.status(400).json({ error: 'Phone number is required' });
       }
 
-      // Normalize phone number (ensure it starts with +)
-      const normalizedPhone = phone.startsWith('+') ? phone : `+${phone}`;
+      // Normalize phone number to match iOS format: +1XXXXXXXXXX (12 characters)
+      // iOS sends: +1 + 10 digits = 12 characters
+      let normalizedPhone = phone.trim();
+      
+      // Remove all non-digit characters except leading +
+      const digits = normalizedPhone.replace(/[^\d]/g, '');
+      
+      // If it starts with +1, keep it; if it starts with 1, add +; if 10 digits, add +1
+      if (normalizedPhone.startsWith('+1') && digits.length === 11) {
+        // Already has +1 prefix with 11 digits (1 + 10)
+        normalizedPhone = normalizedPhone.substring(0, 12); // Ensure exactly 12 chars
+      } else if (normalizedPhone.startsWith('+') && digits.length === 11) {
+        // Has + but missing 1, add it
+        normalizedPhone = '+1' + digits.substring(1);
+      } else if (digits.length === 11 && digits.startsWith('1')) {
+        // 11 digits starting with 1, add +
+        normalizedPhone = '+' + digits;
+      } else if (digits.length === 10) {
+        // 10 digits, add +1
+        normalizedPhone = '+1' + digits;
+      } else {
+        // Try to fix: if it has + but wrong format, try to normalize
+        if (normalizedPhone.startsWith('+')) {
+          normalizedPhone = '+' + digits;
+        } else {
+          normalizedPhone = '+1' + digits;
+        }
+      }
+
+      // Ensure it's exactly 12 characters: +1XXXXXXXXXX
+      if (normalizedPhone.length !== 12 || !normalizedPhone.startsWith('+1')) {
+        console.warn(`⚠️ Phone normalization warning: ${phone} -> ${normalizedPhone} (expected +1XXXXXXXXXX)`);
+        // Try one more time with just digits
+        if (digits.length >= 10) {
+          const last10 = digits.slice(-10); // Take last 10 digits
+          normalizedPhone = '+1' + last10;
+        }
+      }
 
       const db = admin.firestore();
+      
+      // Check bannedNumbers collection
       const bannedDoc = await db.collection('bannedNumbers').doc(normalizedPhone).get();
+      
+      // Also check alternative formats (in case phone was stored differently)
+      let isBanned = bannedDoc.exists;
+      
+      if (!isBanned) {
+        // Try checking with just digits (no +)
+        const digitsOnly = normalizedPhone.replace('+', '');
+        const altBannedDoc = await db.collection('bannedNumbers').doc(digitsOnly).get();
+        isBanned = altBannedDoc.exists;
+      }
 
-      res.json({ isBanned: bannedDoc.exists });
+      res.json({ isBanned });
     } catch (error) {
       console.error('❌ Error checking ban status:', error);
       res.status(500).json({ error: 'Failed to check ban status' });
@@ -6043,8 +6091,29 @@ IMPORTANT:
         return res.status(400).json({ error: 'User does not have a phone number' });
       }
 
-      // Normalize phone number
-      const normalizedPhone = phone.startsWith('+') ? phone : `+${phone}`;
+      // Normalize phone number to match iOS format: +1XXXXXXXXXX (12 characters)
+      let normalizedPhone = phone.trim();
+      const digits = normalizedPhone.replace(/[^\d]/g, '');
+      
+      if (normalizedPhone.startsWith('+1') && digits.length === 11) {
+        normalizedPhone = normalizedPhone.substring(0, 12);
+      } else if (digits.length === 11 && digits.startsWith('1')) {
+        normalizedPhone = '+' + digits;
+      } else if (digits.length === 10) {
+        normalizedPhone = '+1' + digits;
+      } else if (normalizedPhone.startsWith('+')) {
+        normalizedPhone = '+' + digits;
+      } else {
+        normalizedPhone = '+1' + digits;
+      }
+      
+      // Ensure exactly 12 characters
+      if (normalizedPhone.length !== 12 || !normalizedPhone.startsWith('+1')) {
+        if (digits.length >= 10) {
+          const last10 = digits.slice(-10);
+          normalizedPhone = '+1' + last10;
+        }
+      }
 
       // Check if already banned
       const bannedDoc = await db.collection('bannedNumbers').doc(normalizedPhone).get();

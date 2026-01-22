@@ -470,6 +470,13 @@ struct EnterPhoneView: View {
                 phoneFocused = true
             }
         }
+        .alert("Account Banned", isPresented: $authVM.showBanAlert) {
+            Button("OK", role: .cancel) {
+                authVM.showBanAlert = false
+            }
+        } message: {
+            Text("This phone number cannot be used to create an account. Please contact support if you believe this is an error.")
+        }
     }
 
     private func openLegal(title: String, url: URL?) {
@@ -719,6 +726,13 @@ struct EnterCodeView: View {
         }
         .onDisappear {
             timer?.invalidate()
+        }
+        .alert("Account Banned", isPresented: $authVM.showBanAlert) {
+            Button("OK", role: .cancel) {
+                authVM.showBanAlert = false
+            }
+        } message: {
+            Text("This phone number cannot be used to create an account. Please contact support if you believe this is an error.")
         }
     }
     

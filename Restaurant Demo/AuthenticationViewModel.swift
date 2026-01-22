@@ -25,6 +25,7 @@ class AuthenticationViewModel: ObservableObject {
     // MARK: - State Properties
     @Published var isLoading = false
     @Published var errorMessage = ""
+    @Published var showBanAlert = false
     @Published var accountExists: Bool?
     @Published private(set) var userDocumentID: String?
     
@@ -56,31 +57,53 @@ class AuthenticationViewModel: ObservableObject {
         isLoading = true; errorMessage = ""
         
         // Check if phone number is banned before sending SMS
+        // FAIL-CLOSED: If check fails, do NOT send SMS
         Task {
             do {
                 guard let url = URL(string: "\(Config.backendURL)/check-ban-status?phone=\(formattedPhoneNumber.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")") else {
                     await MainActor.run {
                         self.isLoading = false
-                        self.errorMessage = "Invalid server URL"
+                        self.errorMessage = "Invalid server URL. Please try again."
                     }
                     return
                 }
                 
                 let (data, response) = try await URLSession.shared.data(for: URLRequest(url: url))
-                guard let http = response as? HTTPURLResponse,
-                      (200..<300).contains(http.statusCode) else {
+                guard let http = response as? HTTPURLResponse else {
+                    // Network error or invalid response - FAIL CLOSED
                     await MainActor.run {
                         self.isLoading = false
-                        self.errorMessage = "Failed to verify phone number"
+                        self.errorMessage = "Unable to verify phone number. Please check your connection and try again."
                     }
                     return
                 }
                 
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let isBanned = json["isBanned"] as? Bool, isBanned {
+                // If server error, fail closed - don't send SMS
+                guard (200..<300).contains(http.statusCode) else {
                     await MainActor.run {
                         self.isLoading = false
-                        self.errorMessage = "This phone number cannot be used to create an account. Please contact support if you believe this is an error."
+                        self.errorMessage = "Unable to verify phone number. Please try again or contact support."
+                    }
+                    return
+                }
+                
+                // Parse response
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let isBanned = json["isBanned"] as? Bool else {
+                    // Invalid response - FAIL CLOSED
+                    await MainActor.run {
+                        self.isLoading = false
+                        self.errorMessage = "Unable to verify phone number. Please try again or contact support."
+                    }
+                    return
+                }
+                
+                // If banned, show alert and stop
+                if isBanned {
+                    await MainActor.run {
+                        self.isLoading = false
+                        self.showBanAlert = true
+                        self.errorMessage = "" // Clear error message, alert will show
                     }
                     return
                 }
@@ -98,9 +121,10 @@ class AuthenticationViewModel: ObservableObject {
                     }
                 }
             } catch {
+                // Any error - FAIL CLOSED, don't send SMS
                 await MainActor.run {
                     self.isLoading = false
-                    self.errorMessage = "Failed to verify phone number: \(error.localizedDescription)"
+                    self.errorMessage = "Unable to verify phone number. Please check your connection and try again."
                 }
             }
         }
@@ -140,32 +164,86 @@ class AuthenticationViewModel: ObservableObject {
     private func checkIfUserExists(uid: String) {
         isLoading = true
         db.collection("users").document(uid).getDocument { [weak self] snapshot, error in
+            guard let self = self else { return }
+            
             DispatchQueue.main.async {
-                self?.isLoading = false
+                self.isLoading = false
                 if let error = error {
-                    self?.errorMessage = "Error: \(error.localizedDescription)"; return
+                    self.errorMessage = "Error: \(error.localizedDescription)"; return
                 }
                 if let data = snapshot?.data(), !data.isEmpty {
-                    // Check if user is banned before allowing authentication
+                    // Final ban check after sign-in - check both isBanned field and bannedNumbers collection
                     let isBanned = data["isBanned"] as? Bool ?? false
-                    if isBanned {
-                        // Sign out immediately
-                        do {
-                            try Auth.auth().signOut()
-                        } catch {
-                            print("Error signing out banned user: \(error)")
-                        }
-                        self?.errorMessage = "This account has been banned. Please contact support if you believe this is an error."
-                        return
-                    }
                     
-                    self?.didAuthenticate = true
-                    // Pre-load referral code for instant access when user opens Referral screen
-                    self?.preloadReferralCode()
+                    // Also check bannedNumbers collection using phone number
+                    if let phone = data["phone"] as? String, !phone.isEmpty {
+                        let normalizedPhone = self.normalizePhoneNumber(phone)
+                        
+                        Task {
+                            let isBannedByPhone = await self.checkPhoneBanned(normalizedPhone)
+                            
+                            if isBanned || isBannedByPhone {
+                                // Sign out immediately
+                                do {
+                                    try Auth.auth().signOut()
+                                } catch {
+                                    print("Error signing out banned user: \(error)")
+                                }
+                                await MainActor.run {
+                                    self.showBanAlert = true
+                                    self.errorMessage = ""
+                                }
+                                return
+                            }
+                            
+                            // Not banned, proceed
+                            await MainActor.run {
+                                self.didAuthenticate = true
+                                self.preloadReferralCode()
+                            }
+                        }
+                    } else {
+                        // No phone number, just check isBanned field
+                        if isBanned {
+                            // Sign out immediately
+                            do {
+                                try Auth.auth().signOut()
+                            } catch {
+                                print("Error signing out banned user: \(error)")
+                            }
+                            self.showBanAlert = true
+                            self.errorMessage = ""
+                            return
+                        }
+                        
+                        self.didAuthenticate = true
+                        self.preloadReferralCode()
+                    }
                 } else {
-                    self?.shouldNavigateToUserDetails = true
+                    self.shouldNavigateToUserDetails = true
                 }
             }
+        }
+    }
+    
+    // Helper to check if phone is banned
+    private func checkPhoneBanned(_ phone: String) async -> Bool {
+        do {
+            guard let url = URL(string: "\(Config.backendURL)/check-ban-status?phone=\(phone.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")") else {
+                return false
+            }
+            
+            let (data, response) = try await URLSession.shared.data(for: URLRequest(url: url))
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let isBanned = json["isBanned"] as? Bool else {
+                return false
+            }
+            
+            return isBanned
+        } catch {
+            return false
         }
     }
     
