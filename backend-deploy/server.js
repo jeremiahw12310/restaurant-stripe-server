@@ -5051,8 +5051,7 @@ IMPORTANT:
       // Send FCM push notifications
       if (fcmTokens.length > 0) {
         const messaging = admin.messaging();
-        const messages = fcmTokens.map(token => ({
-          token,
+        const message = {
           notification: {
             title: "You've received a gift!",
             body: `Dumpling House sent you a free ${trimmedTitle}. Tap to claim!`
@@ -5061,13 +5060,16 @@ IMPORTANT:
             type: 'reward_gift',
             giftedRewardId: giftedRewardRef.id
           }
-        }));
+        };
 
         // Send in batches (FCM allows up to 500 per batch)
         const fcmBatchSize = 500;
-        for (let i = 0; i < messages.length; i += fcmBatchSize) {
-          const batch = messages.slice(i, i + fcmBatchSize);
-          messaging.sendAll(batch).catch(err => {
+        for (let i = 0; i < fcmTokens.length; i += fcmBatchSize) {
+          const batchTokens = fcmTokens.slice(i, i + fcmBatchSize);
+          messaging.sendEachForMulticast({
+            ...message,
+            tokens: batchTokens
+          }).catch(err => {
             console.warn('⚠️ Some FCM notifications failed:', err);
           });
         }
@@ -5303,8 +5305,7 @@ IMPORTANT:
       // Send FCM push notifications
       if (fcmTokens.length > 0) {
         const messaging = admin.messaging();
-        const messages = fcmTokens.map(token => ({
-          token,
+        const message = {
           notification: {
             title: "You've received a gift!",
             body: `Dumpling House sent you a free ${trimmedTitle}. Tap to claim!`
@@ -5313,13 +5314,16 @@ IMPORTANT:
             type: 'reward_gift',
             giftedRewardId: giftedRewardRef.id
           }
-        }));
+        };
 
         // Send in batches (FCM allows up to 500 per batch)
         const fcmBatchSize = 500;
-        for (let i = 0; i < messages.length; i += fcmBatchSize) {
-          const batch = messages.slice(i, i + fcmBatchSize);
-          messaging.sendAll(batch).catch(err => {
+        for (let i = 0; i < fcmTokens.length; i += fcmBatchSize) {
+          const batchTokens = fcmTokens.slice(i, i + fcmBatchSize);
+          messaging.sendEachForMulticast({
+            ...message,
+            tokens: batchTokens
+          }).catch(err => {
             console.warn('⚠️ Some FCM notifications failed:', err);
           });
         }
