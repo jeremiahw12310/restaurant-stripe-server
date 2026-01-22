@@ -5895,6 +5895,7 @@ IMPORTANT:
       }
 
       const snapshot = await query.get();
+      console.log(`📋 Admin receipts query returned ${snapshot.size} documents`);
 
       const receipts = [];
       const userIds = new Set();
