@@ -5646,6 +5646,124 @@ IMPORTANT:
       res.status(500).json({ error: 'Failed to fetch notification history' });
     }
   });
+
+  /**
+   * GET /admin/stats
+   * 
+   * Get aggregated statistics for admin overview dashboard.
+   * Returns counts of users, receipts, rewards, and points.
+   * 
+   * Response:
+   * {
+   *   totalUsers: number,
+   *   newUsersToday: number,
+   *   newUsersThisWeek: number,
+   *   totalReceipts: number,
+   *   receiptsToday: number,
+   *   receiptsThisWeek: number,
+   *   totalRewardsRedeemed: number,
+   *   rewardsRedeemedToday: number,
+   *   totalPointsDistributed: number
+   * }
+   */
+  app.get('/admin/stats', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const db = admin.firestore();
+      
+      // Calculate date boundaries
+      const now = new Date();
+      const todayStart = new Date(now);
+      todayStart.setHours(0, 0, 0, 0);
+      
+      const weekAgo = new Date(now);
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      weekAgo.setHours(0, 0, 0, 0);
+
+      // Run all queries in parallel for efficiency
+      const [
+        usersSnapshot,
+        usersTodaySnapshot,
+        usersWeekSnapshot,
+        receiptsSnapshot,
+        receiptsTodaySnapshot,
+        receiptsWeekSnapshot,
+        rewardsSnapshot,
+        rewardsTodaySnapshot,
+        pointsSnapshot
+      ] = await Promise.all([
+        // Total users count
+        db.collection('users').count().get(),
+        
+        // New users today (check both accountCreatedDate and createdAt for compatibility)
+        db.collection('users')
+          .where('accountCreatedDate', '>=', todayStart)
+          .count().get(),
+        
+        // New users this week
+        db.collection('users')
+          .where('accountCreatedDate', '>=', weekAgo)
+          .count().get(),
+        
+        // Total receipts scanned
+        db.collection('usedReceipts').count().get(),
+        
+        // Receipts scanned today
+        db.collection('usedReceipts')
+          .where('timestamp', '>=', todayStart)
+          .count().get(),
+        
+        // Receipts scanned this week
+        db.collection('usedReceipts')
+          .where('timestamp', '>=', weekAgo)
+          .count().get(),
+        
+        // Total rewards redeemed (isUsed = true)
+        db.collection('redeemedRewards')
+          .where('isUsed', '==', true)
+          .count().get(),
+        
+        // Rewards redeemed today
+        db.collection('redeemedRewards')
+          .where('isUsed', '==', true)
+          .where('usedAt', '>=', todayStart)
+          .count().get(),
+        
+        // Get aggregate points from users collection
+        db.collection('users').select('lifetimePoints').get()
+      ]);
+
+      // Calculate total points distributed from all users' lifetime points
+      let totalPointsDistributed = 0;
+      pointsSnapshot.forEach(doc => {
+        const data = doc.data();
+        if (typeof data.lifetimePoints === 'number') {
+          totalPointsDistributed += data.lifetimePoints;
+        }
+      });
+
+      const stats = {
+        totalUsers: usersSnapshot.data().count || 0,
+        newUsersToday: usersTodaySnapshot.data().count || 0,
+        newUsersThisWeek: usersWeekSnapshot.data().count || 0,
+        totalReceipts: receiptsSnapshot.data().count || 0,
+        receiptsToday: receiptsTodaySnapshot.data().count || 0,
+        receiptsThisWeek: receiptsWeekSnapshot.data().count || 0,
+        totalRewardsRedeemed: rewardsSnapshot.data().count || 0,
+        rewardsRedeemedToday: rewardsTodaySnapshot.data().count || 0,
+        totalPointsDistributed
+      };
+
+      console.log('📊 Admin stats fetched:', stats);
+      res.json(stats);
+
+    } catch (error) {
+      console.error('❌ Error fetching admin stats:', error);
+      res.status(500).json({ error: 'Failed to fetch admin statistics' });
+    }
+  });
 }
 
 // Force production environment

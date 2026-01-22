@@ -151,28 +151,28 @@ struct AdminOverviewView: View {
                 GridItem(.flexible(), spacing: 12),
                 GridItem(.flexible(), spacing: 12)
             ], spacing: 12) {
-                StatCard(
+                AdminStatCard(
                     title: "Total Users",
                     value: "\(stats.totalUsers)",
                     icon: "person.fill",
                     color: .blue
                 )
                 
-                StatCard(
+                AdminStatCard(
                     title: "New Today",
                     value: "\(stats.newUsersToday)",
                     icon: "person.badge.plus",
                     color: .green
                 )
                 
-                StatCard(
+                AdminStatCard(
                     title: "New This Week",
                     value: "\(stats.newUsersThisWeek)",
                     icon: "calendar",
                     color: .purple
                 )
                 
-                StatCard(
+                AdminStatCard(
                     title: "Points Given",
                     value: formatNumber(stats.totalPointsDistributed),
                     icon: "star.fill",
@@ -187,21 +187,21 @@ struct AdminOverviewView: View {
                 GridItem(.flexible(), spacing: 12),
                 GridItem(.flexible(), spacing: 12)
             ], spacing: 12) {
-                StatCard(
+                AdminStatCard(
                     title: "Total Scanned",
                     value: "\(stats.totalReceipts)",
                     icon: "doc.text.fill",
                     color: .green
                 )
                 
-                StatCard(
+                AdminStatCard(
                     title: "Scanned Today",
                     value: "\(stats.receiptsToday)",
                     icon: "clock.fill",
                     color: .teal
                 )
                 
-                StatCard(
+                AdminStatCard(
                     title: "This Week",
                     value: "\(stats.receiptsThisWeek)",
                     icon: "calendar.badge.clock",
@@ -216,14 +216,14 @@ struct AdminOverviewView: View {
                 GridItem(.flexible(), spacing: 12),
                 GridItem(.flexible(), spacing: 12)
             ], spacing: 12) {
-                StatCard(
+                AdminStatCard(
                     title: "Total Redeemed",
                     value: "\(stats.totalRewardsRedeemed)",
                     icon: "gift.fill",
                     color: .purple
                 )
                 
-                StatCard(
+                AdminStatCard(
                     title: "Redeemed Today",
                     value: "\(stats.rewardsRedeemedToday)",
                     icon: "sparkles",
@@ -318,7 +318,7 @@ struct AdminOverviewView: View {
 
 // MARK: - Stat Card Component
 
-struct StatCard: View {
+struct AdminStatCard: View {
     let title: String
     let value: String
     let icon: String
