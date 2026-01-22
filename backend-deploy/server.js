@@ -5670,6 +5670,252 @@ IMPORTANT:
       res.status(500).json({ error: 'Failed to fetch admin statistics' });
     }
   });
+
+  /**
+   * GET /admin/rewards/history/months
+   * 
+   * Get list of available months with reward counts for the month picker.
+   * Returns months in descending order (most recent first).
+   * 
+   * Response:
+   * {
+   *   months: [
+   *     { month: "2026-01", count: 142 },
+   *     { month: "2025-12", count: 98 }
+   *   ]
+   * }
+   */
+  
+  // Cache for months list (5 minute TTL)
+  const rewardHistoryMonthsCache = {
+    data: null,
+    timestamp: null,
+    ttl: 5 * 60 * 1000 // 5 minutes in milliseconds
+  };
+
+  app.get('/admin/rewards/history/months', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      // Check cache first
+      const cacheNow = Date.now();
+      if (rewardHistoryMonthsCache.data && rewardHistoryMonthsCache.timestamp && 
+          (cacheNow - rewardHistoryMonthsCache.timestamp) < rewardHistoryMonthsCache.ttl) {
+        console.log('📅 Reward history months served from cache');
+        return res.json(rewardHistoryMonthsCache.data);
+      }
+
+      const db = admin.firestore();
+      
+      // Get all used rewards, grouped by month
+      const rewardsSnapshot = await db.collection('redeemedRewards')
+        .where('isUsed', '==', true)
+        .orderBy('usedAt', 'desc')
+        .get();
+
+      // Group by month (YYYY-MM format)
+      const monthMap = new Map();
+      
+      rewardsSnapshot.forEach(doc => {
+        const data = doc.data();
+        const usedAt = data.usedAt;
+        
+        if (usedAt && usedAt.toDate) {
+          const date = usedAt.toDate();
+          const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+          monthMap.set(monthKey, (monthMap.get(monthKey) || 0) + 1);
+        }
+      });
+
+      // Convert to array and sort by month descending
+      const months = Array.from(monthMap.entries())
+        .map(([month, count]) => ({ month, count }))
+        .sort((a, b) => b.month.localeCompare(a.month));
+
+      const result = { months };
+
+      // Update cache
+      rewardHistoryMonthsCache.data = result;
+      rewardHistoryMonthsCache.timestamp = cacheNow;
+
+      console.log(`📅 Found ${months.length} months with redeemed rewards`);
+      res.json(result);
+
+    } catch (error) {
+      console.error('❌ Error fetching reward history months:', error);
+      res.status(500).json({ error: 'Failed to fetch reward history months' });
+    }
+  });
+
+  /**
+   * GET /admin/rewards/history
+   * 
+   * Get paginated list of redeemed rewards for a specific month.
+   * Includes user first names and summary statistics.
+   * 
+   * Query params:
+   * - month: YYYY-MM format (required)
+   * - limit: number of items per page (default: 50)
+   * - startAfter: document ID for pagination cursor (optional)
+   * 
+   * Response:
+   * {
+   *   month: "2026-01",
+   *   summary: {
+   *     totalRewards: 142,
+   *     totalPointsRedeemed: 28400,
+   *     uniqueUsers: 87
+   *   },
+   *   rewards: [
+   *     {
+   *       id: "...",
+   *       userFirstName: "John",
+   *       rewardTitle: "Free Dumpling",
+   *       selectedItemName: "Pork Dumpling",
+   *       cookingMethod: "Steamed",
+   *       pointsRequired: 200,
+   *       usedAt: "2026-01-15T14:30:00Z"
+   *     }
+   *   ],
+   *   hasMore: true,
+   *   nextCursor: "doc_id_123"
+   * }
+   */
+  
+  app.get('/admin/rewards/history', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const month = req.query.month;
+      if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+        return res.status(400).json({ error: 'Invalid month format. Expected YYYY-MM' });
+      }
+
+      const limit = parseInt(req.query.limit) || 50;
+      const startAfter = req.query.startAfter;
+
+      const db = admin.firestore();
+
+      // Parse month boundaries
+      const [year, monthNum] = month.split('-').map(Number);
+      const monthStart = new Date(year, monthNum - 1, 1, 0, 0, 0, 0);
+      const monthEnd = new Date(year, monthNum, 1, 0, 0, 0, 0); // First day of next month
+
+      // Build query
+      let query = db.collection('redeemedRewards')
+        .where('isUsed', '==', true)
+        .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
+        .where('usedAt', '<', admin.firestore.Timestamp.fromDate(monthEnd))
+        .orderBy('usedAt', 'desc')
+        .limit(limit + 1); // Fetch one extra to check if there's more
+
+      // Apply pagination cursor if provided
+      if (startAfter) {
+        const cursorDoc = await db.collection('redeemedRewards').doc(startAfter).get();
+        if (cursorDoc.exists) {
+          query = query.startAfter(cursorDoc);
+        }
+      }
+
+      const rewardsSnapshot = await query.get();
+      const hasMore = rewardsSnapshot.size > limit;
+      const rewardsDocs = hasMore ? rewardsSnapshot.docs.slice(0, limit) : rewardsSnapshot.docs;
+
+      // Get all unique user IDs
+      const userIds = [...new Set(rewardsDocs.map(doc => doc.data().userId).filter(Boolean))];
+
+      // Batch fetch user first names (Firestore 'in' queries support up to 10 items)
+      const userNamesMap = new Map();
+      if (userIds.length > 0) {
+        const batchSize = 10;
+        for (let i = 0; i < userIds.length; i += batchSize) {
+          const batch = userIds.slice(i, i + batchSize);
+          const usersSnapshot = await db.collection('users')
+            .where(admin.firestore.FieldPath.documentId(), 'in', batch)
+            .get();
+          
+          usersSnapshot.forEach(userDoc => {
+            const userData = userDoc.data();
+            const firstName = userData.firstName || userData.name?.split(' ')[0] || 'Unknown';
+            userNamesMap.set(userDoc.id, firstName);
+          });
+        }
+      }
+
+      // Get summary statistics for the month (total count, points, unique users)
+      const [summarySnapshot, pointsSnapshot] = await Promise.all([
+        db.collection('redeemedRewards')
+          .where('isUsed', '==', true)
+          .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
+          .where('usedAt', '<', admin.firestore.Timestamp.fromDate(monthEnd))
+          .get(),
+        db.collection('redeemedRewards')
+          .where('isUsed', '==', true)
+          .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
+          .where('usedAt', '<', admin.firestore.Timestamp.fromDate(monthEnd))
+          .select('pointsRequired', 'userId')
+          .get()
+      ]);
+
+      // Calculate summary
+      let totalPointsRedeemed = 0;
+      const uniqueUserIds = new Set();
+      
+      pointsSnapshot.forEach(doc => {
+        const data = doc.data();
+        if (typeof data.pointsRequired === 'number') {
+          totalPointsRedeemed += data.pointsRequired;
+        }
+        if (data.userId) {
+          uniqueUserIds.add(data.userId);
+        }
+      });
+
+      // Format rewards with user names
+      const rewards = rewardsDocs.map(doc => {
+        const data = doc.data();
+        const userId = data.userId;
+        const userFirstName = userId ? (userNamesMap.get(userId) || 'Unknown') : 'Unknown';
+        
+        return {
+          id: doc.id,
+          userFirstName,
+          rewardTitle: data.rewardTitle || 'Reward',
+          rewardDescription: data.rewardDescription || '',
+          rewardCategory: data.rewardCategory || '',
+          selectedItemName: data.selectedItemName || null,
+          selectedItemName2: data.selectedItemName2 || null,
+          selectedToppingName: data.selectedToppingName || null,
+          cookingMethod: data.cookingMethod || null,
+          drinkType: data.drinkType || null,
+          pointsRequired: data.pointsRequired || 0,
+          redemptionCode: data.redemptionCode || '',
+          usedAt: data.usedAt?.toDate?.().toISOString() || null
+        };
+      });
+
+      const result = {
+        month,
+        summary: {
+          totalRewards: summarySnapshot.size,
+          totalPointsRedeemed,
+          uniqueUsers: uniqueUserIds.size
+        },
+        rewards,
+        hasMore,
+        nextCursor: hasMore && rewardsDocs.length > 0 ? rewardsDocs[rewardsDocs.length - 1].id : null
+      };
+
+      console.log(`📊 Fetched ${rewards.length} rewards for ${month} (hasMore: ${hasMore})`);
+      res.json(result);
+
+    } catch (error) {
+      console.error('❌ Error fetching reward history:', error);
+      res.status(500).json({ error: 'Failed to fetch reward history' });
+    }
+  });
 }
 
 // Force production environment

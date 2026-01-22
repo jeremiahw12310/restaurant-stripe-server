@@ -10,6 +10,7 @@ struct AdminOverviewView: View {
     @State private var showRewardsScan = false
     @State private var showRewardTierAdmin = false
     @State private var showNotifications = false
+    @State private var showRewardHistory = false
     
     var body: some View {
         NavigationStack {
@@ -64,6 +65,9 @@ struct AdminOverviewView: View {
             }
             .sheet(isPresented: $showNotifications) {
                 AdminNotificationsView()
+            }
+            .sheet(isPresented: $showRewardHistory) {
+                AdminRewardHistoryView()
             }
         }
     }
@@ -311,6 +315,16 @@ struct AdminOverviewView: View {
                 gradient: [.indigo, .purple]
             ) {
                 showNotifications = true
+            }
+            
+            // Reward History
+            ActionButton(
+                title: "Reward History",
+                subtitle: "View monthly redemption activity",
+                icon: "clock.arrow.circlepath",
+                gradient: [.teal, .cyan]
+            ) {
+                showRewardHistory = true
             }
         }
     }
