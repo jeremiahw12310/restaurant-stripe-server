@@ -115,7 +115,12 @@ struct RewardVerificationView: View {
         guard let reward = redeemedReward else { return }
         isConfirming = true
         let db = Firestore.firestore()
-        db.collection("redeemedRewards").document(reward.id).updateData(["isUsed": true]) { error in
+        // Set both isUsed and usedAt to ensure data consistency
+        // usedAt is required for accurate admin stats and history queries
+        db.collection("redeemedRewards").document(reward.id).updateData([
+            "isUsed": true,
+            "usedAt": FieldValue.serverTimestamp()
+        ]) { error in
             DispatchQueue.main.async {
                 isConfirming = false
                 if let error = error {

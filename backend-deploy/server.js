@@ -6958,6 +6958,8 @@ IMPORTANT:
       // Calculate date boundaries in UTC to match Firestore timestamps
       const now = new Date();
       const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+      const tomorrowStart = new Date(todayStart);
+      tomorrowStart.setUTCDate(tomorrowStart.getUTCDate() + 1);
       
       const weekAgo = new Date(todayStart);
       weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
@@ -7017,12 +7019,18 @@ IMPORTANT:
           .then(snap => snap.data().count),
         
         // Rewards redeemed today - only verified rewards scanned today
+        // Use both lower and upper bounds to ensure we only count rewards within the current UTC day
         db.collection('redeemedRewards')
           .where('isUsed', '==', true)
           .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(todayStart))
+          .where('usedAt', '<', admin.firestore.Timestamp.fromDate(tomorrowStart))
           .count()
           .get()
-          .then(snap => snap.data().count),
+          .then(snap => {
+            const count = snap.data().count;
+            console.log(`📊 Rewards redeemed today query: found ${count} rewards (between ${todayStart.toISOString()} and ${tomorrowStart.toISOString()})`);
+            return count;
+          }),
         
         // Get aggregate points from users collection (still need full docs for sum)
         db.collection('users').select('lifetimePoints').get()
