@@ -17,6 +17,38 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "redeemedRewards",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "isUsed",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "pointsRefunded",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "redeemedRewards",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "redeemedAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isUsed",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "pointsRefunded",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []
