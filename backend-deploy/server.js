@@ -262,6 +262,26 @@ app.post('/referrals/accept', async (req, res) => {
     }
 
     const db = admin.firestore();
+    const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
+    
+    // Extract device fingerprint if provided
+    let deviceInfo = null;
+    const fingerprintHeader = req.headers['x-device-fingerprint'];
+    if (fingerprintHeader) {
+      try {
+        deviceInfo = JSON.parse(fingerprintHeader);
+      } catch (e) {
+        console.warn('⚠️ Failed to parse device fingerprint:', e);
+      }
+    }
+    
+    // Record device fingerprint for multi-account detection (async, don't block)
+    if (deviceInfo) {
+      const service = new SuspiciousBehaviorService(db);
+      service.recordDeviceFingerprint(uid, deviceInfo, ipAddress).catch(err => {
+        console.error('❌ Error recording device fingerprint (non-blocking):', err);
+      });
+    }
     const userRef = db.collection('users').doc(uid);
     const userDoc = await userRef.get();
 
@@ -304,6 +324,19 @@ app.post('/referrals/accept', async (req, res) => {
       referredBy: referrerId,
       referralId: referralRef.id
     });
+
+    // Check for suspicious referral patterns (async, don't block response)
+    try {
+      const service = new SuspiciousBehaviorService(db);
+      await service.checkReferralPatterns(uid, {
+        referrerId,
+        referralId: referralRef.id
+      });
+      // Also check for new account bonus pattern
+      await service.checkNewAccountBonusPattern(uid);
+    } catch (detectionError) {
+      console.error('❌ Error in referral pattern detection (non-blocking):', detectionError);
+    }
 
     res.json({
       success: true,
@@ -678,6 +711,19 @@ app.post('/referrals/award-check', async (req, res) => {
     Promise.all(notificationPromises).catch(err => {
       console.warn('⚠️ Failed to create notification documents:', err);
     });
+
+    // Check for suspicious referral patterns (async, don't block response)
+    try {
+      const service = new SuspiciousBehaviorService(db);
+      // Check timing - how fast did user reach 50 points?
+      await service.checkReferralPatterns(uid, {
+        referrerId,
+        referralId,
+        pointsReached: referredUserPoints
+      });
+    } catch (detectionError) {
+      console.error('❌ Error in referral pattern detection (non-blocking):', detectionError);
+    }
 
     return res.json({
       status: 'awarded',
@@ -2024,6 +2070,25 @@ If a field is missing, use null.`;
       const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
       const db = admin.firestore();
       const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
+      
+      // Extract device fingerprint if provided
+      let deviceInfo = null;
+      const fingerprintHeader = req.headers['x-device-fingerprint'];
+      if (fingerprintHeader) {
+        try {
+          deviceInfo = JSON.parse(fingerprintHeader);
+        } catch (e) {
+          console.warn('⚠️ Failed to parse device fingerprint:', e);
+        }
+      }
+      
+      // Record device fingerprint for multi-account detection (async, don't block)
+      if (deviceInfo) {
+        const service = new SuspiciousBehaviorService(db);
+        service.recordDeviceFingerprint(uid, deviceInfo, ipAddress).catch(err => {
+          console.error('❌ Error recording device fingerprint (non-blocking):', err);
+        });
+      }
 
       // Check rate limit BEFORE making OpenAI API calls (cost savings)
       const rateLimitCheck = await checkReceiptScanRateLimit(uid, db);
@@ -2466,6 +2531,20 @@ If a field is missing, use null.`;
 
       // Log successful scan
       await logReceiptScanAttempt(uid, true, null, db, ipAddress);
+
+      // Check for suspicious receipt patterns (async, don't block response)
+      try {
+        const service = new SuspiciousBehaviorService(db);
+        await service.checkReceiptPatterns(uid, {
+          orderNumber: String(data.orderNumber),
+          orderTotal: orderTotal,
+          orderDate: data.orderDate,
+          orderTime: data.orderTime,
+          createdAt: new Date()
+        });
+      } catch (detectionError) {
+        console.error('❌ Error in receipt pattern detection (non-blocking):', detectionError);
+      }
 
       return res.json({
         success: true,
@@ -6448,14 +6527,15 @@ IMPORTANT:
         const data = doc.data() || {};
         const userInfo = data.userId ? (usersMap[data.userId] || {}) : {};
 
+        // Use stored userName/userPhone if present (for deleted users), otherwise lookup from user
         receipts.push({
           id: doc.id,
           orderNumber: data.orderNumber || null,
           orderDate: data.orderDate || null,
           timestamp: data.createdAt ? data.createdAt.toDate().toISOString() : null,
           userId: data.userId || null,
-          userName: userInfo.firstName || userInfo.name || null,
-          userPhone: userInfo.phone || null
+          userName: data.userName || userInfo.firstName || userInfo.name || null,
+          userPhone: data.userPhone || userInfo.phone || null
         });
       });
 
@@ -7733,6 +7813,827 @@ IMPORTANT:
       res.status(500).json({ error: 'Failed to fetch banned numbers' });
     }
   });
+
+  /**
+   * GET /admin/suspicious-flags
+   * 
+   * Get paginated list of suspicious behavior flags.
+   * 
+   * Query params:
+   * - limit: number of items per page (default: 50)
+   * - startAfter: cursor for pagination
+   * - status: filter by status (pending, reviewed, dismissed, action_taken)
+   * - severity: filter by severity (low, medium, high, critical)
+   * - flagType: filter by flag type
+   */
+  app.get('/admin/suspicious-flags', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const db = admin.firestore();
+      const limit = parseInt(req.query.limit) || 50;
+      const status = req.query.status;
+      const severity = req.query.severity;
+      const flagType = req.query.flagType;
+
+      let query = db.collection('suspiciousFlags').orderBy('createdAt', 'desc');
+
+      if (status) {
+        query = query.where('status', '==', status);
+      }
+      if (severity) {
+        query = query.where('severity', '==', severity);
+      }
+      if (flagType) {
+        query = query.where('flagType', '==', flagType);
+      }
+
+      // Pagination
+      if (req.query.startAfter) {
+        const cursorDoc = await db.collection('suspiciousFlags').doc(req.query.startAfter).get();
+        if (cursorDoc.exists) {
+          query = query.startAfter(cursorDoc);
+        }
+      }
+
+      const snapshot = await query.limit(limit + 1).get();
+      const hasMore = snapshot.size > limit;
+      const flagDocs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
+
+      // Get user details for each flag
+      const flags = await Promise.all(flagDocs.map(async (doc) => {
+        const data = doc.data();
+        const userId = data.userId;
+        
+        // Get user info
+        let userInfo = null;
+        if (userId) {
+          try {
+            const userDoc = await db.collection('users').doc(userId).get();
+            if (userDoc.exists) {
+              const userData = userDoc.data();
+              userInfo = {
+                id: userId,
+                firstName: userData.firstName || '',
+                lastName: userData.lastName || '',
+                phone: userData.phone || '',
+                email: userData.email || '',
+                points: userData.points || 0
+              };
+            }
+          } catch (err) {
+            console.error(`Error fetching user ${userId}:`, err);
+          }
+        }
+
+        return {
+          id: doc.id,
+          userId,
+          flagType: data.flagType,
+          severity: data.severity,
+          riskScore: data.riskScore,
+          description: data.description,
+          evidence: data.evidence || {},
+          createdAt: data.createdAt?.toDate?.().toISOString() || null,
+          status: data.status,
+          reviewedBy: data.reviewedBy || null,
+          reviewedAt: data.reviewedAt?.toDate?.().toISOString() || null,
+          reviewNotes: data.reviewNotes || null,
+          actionTaken: data.actionTaken || null,
+          userInfo
+        };
+      }));
+
+      const result = {
+        flags,
+        hasMore,
+        nextCursor: hasMore && flagDocs.length > 0 ? flagDocs[flagDocs.length - 1].id : null
+      };
+
+      console.log(`📋 Fetched ${flags.length} suspicious flags (hasMore: ${hasMore})`);
+      res.json(result);
+    } catch (error) {
+      console.error('❌ Error fetching suspicious flags:', error);
+      res.status(500).json({ error: 'Failed to fetch suspicious flags' });
+    }
+  });
+
+  /**
+   * POST /admin/suspicious-flags/:id/review
+   * 
+   * Review a suspicious flag and take action.
+   * 
+   * Body:
+   * - action: 'dismiss' | 'watch' | 'restrict' | 'ban'
+   * - notes: optional review notes
+   */
+  app.post('/admin/suspicious-flags/:id/review', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const { id } = req.params;
+      const { action, notes } = req.body;
+
+      if (!['dismiss', 'watch', 'restrict', 'ban'].includes(action)) {
+        return res.status(400).json({ error: 'Invalid action. Must be: dismiss, watch, restrict, or ban' });
+      }
+
+      const db = admin.firestore();
+      const flagRef = db.collection('suspiciousFlags').doc(id);
+      const flagDoc = await flagRef.get();
+
+      if (!flagDoc.exists) {
+        return res.status(404).json({ error: 'Flag not found' });
+      }
+
+      const flagData = flagDoc.data();
+      const userId = flagData.userId;
+
+      const updateData = {
+        status: action === 'dismiss' ? 'dismissed' : 'action_taken',
+        reviewedBy: adminContext.uid,
+        reviewedAt: admin.firestore.FieldValue.serverTimestamp(),
+        reviewNotes: notes || null,
+        actionTaken: action
+      };
+
+      await flagRef.update(updateData);
+
+      // Take action based on review decision
+      if (action === 'watch') {
+        // Update user risk score watch status
+        await db.collection('userRiskScores').doc(userId).set({
+          watchStatus: 'watching'
+        }, { merge: true });
+      } else if (action === 'restrict') {
+        // Mark user as restricted (can be used to limit earning)
+        await db.collection('userRiskScores').doc(userId).set({
+          watchStatus: 'restricted'
+        }, { merge: true });
+      } else if (action === 'ban') {
+        // Ban the user
+        const userDoc = await db.collection('users').doc(userId).get();
+        if (userDoc.exists) {
+          const userData = userDoc.data();
+          const phone = userData.phone;
+          
+          if (phone) {
+            // Ban the phone number
+            await db.collection('bannedNumbers').doc(phone).set({
+              phone,
+              bannedAt: admin.firestore.FieldValue.serverTimestamp(),
+              bannedByEmail: adminContext.userData.email || 'admin',
+              originalUserId: userId,
+              originalUserName: `${userData.firstName || ''} ${userData.lastName || ''}`.trim() || 'Unknown',
+              reason: `Flagged for suspicious behavior: ${flagData.flagType}`
+            });
+          }
+        }
+      }
+
+      // Update risk score after action
+      const service = new SuspiciousBehaviorService(db);
+      await service.updateUserRiskScore(userId);
+
+      console.log(`✅ Admin ${adminContext.uid} reviewed flag ${id} with action: ${action}`);
+      res.json({ success: true, message: `Flag ${action}ed successfully` });
+    } catch (error) {
+      console.error('❌ Error reviewing flag:', error);
+      res.status(500).json({ error: 'Failed to review flag' });
+    }
+  });
+
+  /**
+   * GET /admin/user-risk-score/:userId
+   * 
+   * Get user's risk profile including risk score and flag history.
+   */
+  app.get('/admin/user-risk-score/:userId', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const { userId } = req.params;
+      const db = admin.firestore();
+      const service = new SuspiciousBehaviorService(db);
+
+      const profile = await service.getUserRiskProfile(userId);
+
+      if (!profile) {
+        return res.status(404).json({ error: 'User risk profile not found' });
+      }
+
+      res.json(profile);
+    } catch (error) {
+      console.error('❌ Error fetching user risk score:', error);
+      res.status(500).json({ error: 'Failed to fetch user risk score' });
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Suspicious Behavior Detection Service
+// ---------------------------------------------------------------------------
+
+class SuspiciousBehaviorService {
+  constructor(db) {
+    this.db = db;
+  }
+
+  /**
+   * Create a device fingerprint hash from device info
+   */
+  createDeviceFingerprint(deviceInfo) {
+    const crypto = require('crypto');
+    const data = JSON.stringify({
+      vendorId: deviceInfo.vendorId || '',
+      platform: deviceInfo.platform || '',
+      model: deviceInfo.model || '',
+      screenWidth: deviceInfo.screenWidth || 0,
+      screenHeight: deviceInfo.screenHeight || 0,
+      timezone: deviceInfo.timezone || ''
+    });
+    return crypto.createHash('sha256').update(data).digest('hex');
+  }
+
+  /**
+   * Store device fingerprint and check for multi-account abuse
+   */
+  async recordDeviceFingerprint(userId, deviceInfo, ipAddress = null) {
+    try {
+      const fingerprintHash = this.createDeviceFingerprint(deviceInfo);
+      const fingerprintRef = this.db.collection('deviceFingerprints').doc(fingerprintHash);
+      
+      const fingerprintDoc = await fingerprintRef.get();
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      
+      if (fingerprintDoc.exists) {
+        const data = fingerprintDoc.data();
+        const associatedUserIds = data.associatedUserIds || [];
+        
+        // Check if this user is already associated
+        if (!associatedUserIds.includes(userId)) {
+          // New user on same device - potential multi-account
+          associatedUserIds.push(userId);
+          
+          await fingerprintRef.update({
+            associatedUserIds,
+            lastSeen: now,
+            lastIp: ipAddress
+          });
+          
+          // Flag if multiple users on same device
+          if (associatedUserIds.length >= 2) {
+            await this.flagSuspiciousBehavior(userId, {
+              flagType: 'device_reuse',
+              severity: associatedUserIds.length >= 3 ? 'critical' : 'high',
+              description: `Device fingerprint shared with ${associatedUserIds.length - 1} other account(s)`,
+              evidence: {
+                fingerprintHash,
+                associatedUserIds: associatedUserIds.filter(id => id !== userId),
+                deviceInfo
+              }
+            });
+          }
+        } else {
+          // Update last seen
+          await fingerprintRef.update({
+            lastSeen: now,
+            lastIp: ipAddress
+          });
+        }
+      } else {
+        // First time seeing this device
+        await fingerprintRef.set({
+          hash: fingerprintHash,
+          associatedUserIds: [userId],
+          firstSeen: now,
+          lastSeen: now,
+          platform: deviceInfo.platform || 'unknown',
+          deviceModel: deviceInfo.model || 'unknown',
+          lastIp: ipAddress
+        });
+      }
+      
+      return fingerprintHash;
+    } catch (error) {
+      console.error('❌ Error recording device fingerprint:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Check receipt velocity and patterns
+   */
+  async checkReceiptPatterns(userId, receiptData) {
+    try {
+      const now = new Date();
+      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      
+      // Get recent receipts
+      const recentReceipts = await this.db.collection('receipts')
+        .where('userId', '==', userId)
+        .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(sevenDaysAgo))
+        .orderBy('createdAt', 'desc')
+        .get();
+      
+      const receipts = recentReceipts.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate()
+      }));
+      
+      // Check velocity (receipts in last 24 hours)
+      const receiptsLast24h = receipts.filter(r => r.createdAt >= oneDayAgo);
+      if (receiptsLast24h.length > 3) {
+        await this.flagSuspiciousBehavior(userId, {
+          flagType: 'receipt_velocity',
+          severity: receiptsLast24h.length > 5 ? 'high' : 'medium',
+          description: `${receiptsLast24h.length} receipts submitted in last 24 hours`,
+          evidence: {
+            count: receiptsLast24h.length,
+            receipts: receiptsLast24h.map(r => ({
+              orderNumber: r.orderNumber,
+              orderTotal: r.orderTotal,
+              createdAt: r.createdAt?.toISOString()
+            }))
+          }
+        });
+      }
+      
+      // Check sequential order numbers (same day)
+      const todayReceipts = receipts.filter(r => {
+        const receiptDate = r.createdAt;
+        return receiptDate && receiptDate.toDateString() === now.toDateString();
+      });
+      
+      if (todayReceipts.length >= 2) {
+        const orderNumbers = todayReceipts
+          .map(r => parseInt(r.orderNumber))
+          .filter(n => !isNaN(n))
+          .sort((a, b) => a - b);
+        
+        // Check if order numbers are suspiciously close
+        for (let i = 0; i < orderNumbers.length - 1; i++) {
+          if (orderNumbers[i + 1] - orderNumbers[i] <= 5) {
+            await this.flagSuspiciousBehavior(userId, {
+              flagType: 'receipt_pattern',
+              severity: 'medium',
+              description: 'Sequential order numbers detected on same day',
+              evidence: {
+                orderNumbers,
+                receipts: todayReceipts.map(r => ({
+                  orderNumber: r.orderNumber,
+                  orderTotal: r.orderTotal
+                }))
+              }
+            });
+            break;
+          }
+        }
+      }
+      
+      // Check for same total amounts (potential duplicate pattern)
+      const totalCounts = {};
+      receipts.forEach(r => {
+        const total = r.orderTotal;
+        totalCounts[total] = (totalCounts[total] || 0) + 1;
+      });
+      
+      for (const [total, count] of Object.entries(totalCounts)) {
+        if (count >= 3) {
+          await this.flagSuspiciousBehavior(userId, {
+            flagType: 'receipt_pattern',
+            severity: 'low',
+            description: `Same receipt total ($${total}) appears ${count} times`,
+            evidence: {
+              total: parseFloat(total),
+              count
+            }
+          });
+          break;
+        }
+      }
+      
+      // Check for edge-case timing (consistently at 48-hour boundary)
+      if (receipts.length >= 3) {
+        const submissionTimes = receipts.map(r => r.createdAt?.getHours() || 0);
+        const avgHour = submissionTimes.reduce((a, b) => a + b, 0) / submissionTimes.length;
+        // If all receipts submitted at similar times, could indicate gaming the system
+        const variance = submissionTimes.reduce((sum, h) => sum + Math.pow(h - avgHour, 2), 0) / submissionTimes.length;
+        if (variance < 2 && receipts.length >= 3) {
+          await this.flagSuspiciousBehavior(userId, {
+            flagType: 'receipt_pattern',
+            severity: 'low',
+            description: 'Receipts submitted at consistent times (potential automation)',
+            evidence: {
+              averageHour: avgHour,
+              variance,
+              count: receipts.length
+            }
+          });
+        }
+      }
+      
+      // Check rejection rate
+      const scanAttempts = await this.db.collection('receiptScanAttempts')
+        .where('userId', '==', userId)
+        .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(sevenDaysAgo))
+        .get();
+      
+      const attempts = scanAttempts.docs.map(doc => doc.data());
+      const failures = attempts.filter(a => !a.success).length;
+      const totalAttempts = attempts.length;
+      
+      if (totalAttempts > 0 && failures >= 2 && (failures / totalAttempts) > 0.3) {
+        await this.flagSuspiciousBehavior(userId, {
+          flagType: 'receipt_pattern',
+          severity: 'high',
+          description: `High rejection rate: ${failures}/${totalAttempts} failed attempts in last 7 days`,
+          evidence: {
+            failures,
+            totalAttempts,
+            rejectionRate: (failures / totalAttempts).toFixed(2)
+          }
+        });
+      }
+      
+    } catch (error) {
+      console.error('❌ Error checking receipt patterns:', error);
+    }
+  }
+
+  /**
+   * Check referral abuse patterns
+   */
+  async checkReferralPatterns(userId, referralData) {
+    try {
+      const now = new Date();
+      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      
+      // Check referral velocity (accepting multiple referrals)
+      const recentReferrals = await this.db.collection('referrals')
+        .where('referredUserId', '==', userId)
+        .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(oneDayAgo))
+        .get();
+      
+      if (recentReferrals.size > 1) {
+        await this.flagSuspiciousBehavior(userId, {
+          flagType: 'referral_abuse',
+          severity: 'high',
+          description: `Multiple referrals accepted in 24 hours (should only be one)`,
+          evidence: {
+            count: recentReferrals.size,
+            referrals: recentReferrals.docs.map(doc => ({
+              id: doc.id,
+              referrerId: doc.data().referrerUserId,
+              createdAt: doc.data().createdAt?.toDate()?.toISOString()
+            }))
+          }
+        });
+      }
+      
+      // Check for circular referral patterns
+      const userReferral = await this.db.collection('referrals')
+        .where('referredUserId', '==', userId)
+        .limit(1)
+        .get();
+      
+      if (!userReferral.empty) {
+        const referrerId = userReferral.docs[0].data().referrerUserId;
+        
+        // Check if referrer was referred by this user (circular)
+        const circularCheck = await this.db.collection('referrals')
+          .where('referrerUserId', '==', userId)
+          .where('referredUserId', '==', referrerId)
+          .limit(1)
+          .get();
+        
+        if (!circularCheck.empty) {
+          await this.flagSuspiciousBehavior(userId, {
+            flagType: 'referral_abuse',
+            severity: 'critical',
+            description: 'Circular referral pattern detected',
+            evidence: {
+              referrerId,
+              pattern: 'circular'
+            }
+          });
+        }
+      }
+      
+      // Check if user hit 50 points threshold suspiciously fast
+      const userDoc = await this.db.collection('users').doc(userId).get();
+      if (userDoc.exists) {
+        const userData = userDoc.data();
+        const accountCreated = userData.createdAt?.toDate();
+        const points = userData.points || 0;
+        
+        if (accountCreated && points >= 50) {
+          const timeToThreshold = (now - accountCreated) / (1000 * 60 * 60); // hours
+          if (timeToThreshold < 1) {
+            await this.flagSuspiciousBehavior(userId, {
+              flagType: 'referral_abuse',
+              severity: 'high',
+              description: 'Reached 50 point threshold within 1 hour of account creation',
+              evidence: {
+                points,
+                hoursToThreshold: timeToThreshold.toFixed(2),
+                accountCreated: accountCreated.toISOString()
+              }
+            });
+          }
+        }
+      }
+      
+      // Check referrer pattern (user referring many people)
+      const referralsByUser = await this.db.collection('referrals')
+        .where('referrerUserId', '==', userId)
+        .get();
+      
+      if (referralsByUser.size > 10) {
+        // Check how many reached threshold
+        const awardedCount = referralsByUser.docs.filter(doc => 
+          doc.data().status === 'awarded'
+        ).length;
+        
+        const thresholdRate = awardedCount / referralsByUser.size;
+        if (thresholdRate > 0.5) {
+          await this.flagSuspiciousBehavior(userId, {
+            flagType: 'referral_abuse',
+            severity: 'medium',
+            description: `High referral success rate: ${awardedCount}/${referralsByUser.size} reached threshold`,
+            evidence: {
+              totalReferrals: referralsByUser.size,
+              awardedCount,
+              thresholdRate: thresholdRate.toFixed(2)
+            }
+          });
+        }
+      }
+      
+    } catch (error) {
+      console.error('❌ Error checking referral patterns:', error);
+    }
+  }
+
+  /**
+   * Check for new account bonus abuse (welcome + referral + receipt all within 1 hour)
+   */
+  async checkNewAccountBonusPattern(userId) {
+    try {
+      const userDoc = await this.db.collection('users').doc(userId).get();
+      if (!userDoc.exists) return;
+      
+      const userData = userDoc.data();
+      const accountCreated = userData.createdAt?.toDate();
+      if (!accountCreated) return;
+      
+      const oneHourAfterCreation = new Date(accountCreated.getTime() + 60 * 60 * 1000);
+      const now = new Date();
+      
+      if (now > oneHourAfterCreation) return; // Only check new accounts
+      
+      // Check if user claimed welcome points
+      const hasWelcomePoints = userData.hasReceivedWelcomePoints === true;
+      
+      // Check if user accepted referral
+      const referral = await this.db.collection('referrals')
+        .where('referredUserId', '==', userId)
+        .limit(1)
+        .get();
+      const hasReferral = !referral.empty;
+      
+      // Check if user submitted receipt
+      const receipts = await this.db.collection('receipts')
+        .where('userId', '==', userId)
+        .get();
+      const hasReceipt = !receipts.empty;
+      
+      if (hasWelcomePoints && hasReferral && hasReceipt) {
+        await this.flagSuspiciousBehavior(userId, {
+          flagType: 'referral_abuse',
+          severity: 'medium',
+          description: 'New account claimed welcome bonus, referral, and receipt all within 1 hour',
+          evidence: {
+            hasWelcomePoints,
+            hasReferral,
+            hasReceipt,
+            accountAge: ((now - accountCreated) / (1000 * 60)).toFixed(2) + ' minutes'
+          }
+        });
+      }
+      
+    } catch (error) {
+      console.error('❌ Error checking new account bonus pattern:', error);
+    }
+  }
+
+  /**
+   * Create a suspicious behavior flag
+   */
+  async flagSuspiciousBehavior(userId, flagData) {
+    try {
+      // Check if similar flag already exists (avoid duplicates)
+      const existingFlags = await this.db.collection('suspiciousFlags')
+        .where('userId', '==', userId)
+        .where('flagType', '==', flagData.flagType)
+        .where('status', '==', 'pending')
+        .limit(1)
+        .get();
+      
+      if (!existingFlags.empty) {
+        console.log(`⚠️ Similar flag already exists for user ${userId}, type: ${flagData.flagType}`);
+        return existingFlags.docs[0].id;
+      }
+      
+      // Calculate risk score
+      const riskScore = this.calculateRiskScore(flagData.severity, flagData.evidence);
+      
+      const flag = {
+        userId,
+        flagType: flagData.flagType,
+        severity: flagData.severity || 'medium',
+        riskScore,
+        description: flagData.description,
+        evidence: flagData.evidence || {},
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        status: 'pending',
+        reviewedBy: null,
+        reviewedAt: null,
+        reviewNotes: null,
+        actionTaken: null
+      };
+      
+      const flagRef = await this.db.collection('suspiciousFlags').add(flag);
+      
+      // Update user risk score
+      await this.updateUserRiskScore(userId);
+      
+      console.log(`🚩 Flagged user ${userId} for ${flagData.flagType} (severity: ${flagData.severity})`);
+      
+      return flagRef.id;
+    } catch (error) {
+      console.error('❌ Error flagging suspicious behavior:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Calculate risk score based on severity and evidence
+   */
+  calculateRiskScore(severity, evidence) {
+    let baseScore = 0;
+    
+    switch (severity) {
+      case 'critical': baseScore = 90; break;
+      case 'high': baseScore = 70; break;
+      case 'medium': baseScore = 50; break;
+      case 'low': baseScore = 30; break;
+      default: baseScore = 40;
+    }
+    
+    // Adjust based on evidence
+    if (evidence) {
+      if (evidence.count && evidence.count > 5) baseScore += 10;
+      if (evidence.rejectionRate && evidence.rejectionRate > 0.5) baseScore += 15;
+      if (evidence.associatedUserIds && evidence.associatedUserIds.length > 2) baseScore += 10;
+    }
+    
+    return Math.min(100, baseScore);
+  }
+
+  /**
+   * Update user's overall risk score
+   */
+  async updateUserRiskScore(userId) {
+    try {
+      // Get all active flags
+      const activeFlags = await this.db.collection('suspiciousFlags')
+        .where('userId', '==', userId)
+        .where('status', '==', 'pending')
+        .get();
+      
+      // Get all flags (for total count)
+      const allFlags = await this.db.collection('suspiciousFlags')
+        .where('userId', '==', userId)
+        .get();
+      
+      // Calculate factors
+      const now = new Date();
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      
+      // Receipt velocity factor
+      const recentReceipts = await this.db.collection('receipts')
+        .where('userId', '==', userId)
+        .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(sevenDaysAgo))
+        .get();
+      const receiptVelocity = Math.min(100, (recentReceipts.size / 3) * 20);
+      
+      // Receipt rejection rate
+      const scanAttempts = await this.db.collection('receiptScanAttempts')
+        .where('userId', '==', userId)
+        .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(sevenDaysAgo))
+        .get();
+      const attempts = scanAttempts.docs.map(d => d.data());
+      const failures = attempts.filter(a => !a.success).length;
+      const rejectionRate = attempts.length > 0 ? (failures / attempts.length) * 100 : 0;
+      
+      // Referral anomalies
+      const referrals = await this.db.collection('referrals')
+        .where('referredUserId', '==', userId)
+        .get();
+      const referralAnomalies = referrals.size > 1 ? 50 : 0;
+      
+      // Device reuse
+      const deviceFlags = activeFlags.docs.filter(d => d.data().flagType === 'device_reuse');
+      const deviceReuse = deviceFlags.length > 0 ? 80 : 0;
+      
+      // Account age penalty (newer accounts are riskier)
+      const userDoc = await this.db.collection('users').doc(userId).get();
+      let accountAge = 0;
+      if (userDoc.exists) {
+        const createdAt = userDoc.data().createdAt?.toDate();
+        if (createdAt) {
+          const daysOld = (now - createdAt) / (1000 * 60 * 60 * 24);
+          accountAge = daysOld < 7 ? (7 - daysOld) * 5 : 0; // Penalty for accounts < 7 days old
+        }
+      }
+      
+      // Behavior patterns (from active flags)
+      const behaviorPatterns = activeFlags.size * 10;
+      
+      // Calculate overall score
+      const overallScore = Math.min(100, Math.round(
+        receiptVelocity * 0.20 +
+        rejectionRate * 0.25 +
+        referralAnomalies * 0.20 +
+        deviceReuse * 0.25 +
+        accountAge * 0.05 +
+        behaviorPatterns * 0.05
+      ));
+      
+      // Determine watch status
+      let watchStatus = 'normal';
+      if (overallScore >= 81) watchStatus = 'restricted';
+      else if (overallScore >= 61) watchStatus = 'watching';
+      else if (overallScore >= 31) watchStatus = 'watching';
+      
+      const riskScoreDoc = {
+        userId,
+        overallScore,
+        factors: {
+          receiptVelocity,
+          receiptRejectionRate: rejectionRate,
+          referralAnomalies,
+          deviceReuse,
+          accountAge,
+          behaviorPatterns
+        },
+        activeFlags: activeFlags.size,
+        totalFlags: allFlags.size,
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+        watchStatus
+      };
+      
+      await this.db.collection('userRiskScores').doc(userId).set(riskScoreDoc, { merge: true });
+      
+      return riskScoreDoc;
+    } catch (error) {
+      console.error('❌ Error updating user risk score:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get user's risk profile
+   */
+  async getUserRiskProfile(userId) {
+    try {
+      const riskScoreDoc = await this.db.collection('userRiskScores').doc(userId).get();
+      const flags = await this.db.collection('suspiciousFlags')
+        .where('userId', '==', userId)
+        .orderBy('createdAt', 'desc')
+        .limit(20)
+        .get();
+      
+      return {
+        riskScore: riskScoreDoc.exists ? riskScoreDoc.data() : null,
+        flags: flags.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          createdAt: doc.data().createdAt?.toDate()?.toISOString(),
+          reviewedAt: doc.data().reviewedAt?.toDate()?.toISOString()
+        }))
+      };
+    } catch (error) {
+      console.error('❌ Error getting user risk profile:', error);
+      return null;
+    }
+  }
 }
 
 // Force production environment

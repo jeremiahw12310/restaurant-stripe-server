@@ -236,24 +236,22 @@ class UserDetailViewModel: ObservableObject {
         
         isLoading = true
         
-        // Delete user data from Firestore
-        db.collection("users").document(user.id).delete { [weak self] error in
+        // Use centralized deletion service for comprehensive cleanup
+        AccountDeletionService.shared.deleteAccount(
+            uid: user.id,
+            profilePhotoURL: user.profilePhotoURL
+        ) { [weak self] success in
             DispatchQueue.main.async {
                 self?.isLoading = false
                 
-                if let error = error {
-                    self?.showError(message: "Failed to delete user: \(error.localizedDescription)")
-                } else {
-                    // Delete profile photo from Storage if exists
-                    if let photoURL = user.profilePhotoURL {
-                        self?.removePhotoFromStorage(photoURL)
-                    }
-                    
-                    // Note: We don't delete the Firebase Auth user here as that requires admin privileges
-                    // The user will need to be deleted manually from the Firebase Console
-                    
-                    completion()
+                if !success {
+                    self?.showError(message: "Account deletion completed with some errors. Some data may remain.")
                 }
+                
+                // Note: We don't delete the Firebase Auth user here as that requires admin privileges
+                // The user will need to be deleted manually from the Firebase Console
+                
+                completion()
             }
         }
     }

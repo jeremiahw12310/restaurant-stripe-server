@@ -1213,86 +1213,12 @@ class UserViewModel: ObservableObject {
     }
     
     private func deleteUserDataFromFirestore(user: User, storage: Storage, completion: @escaping (Bool) -> Void) {
-        let db = Firestore.firestore()
-        let uid = user.uid
-
-        // Best-effort cleanup of user-associated documents.
-        // Note: Community content deletion (posts/replies) would be handled separately if needed.
-        let group = DispatchGroup()
-        var didFail = false
-
-        func deleteWhereUserIdEquals(_ collection: String) {
-            group.enter()
-            db.collection(collection)
-                .whereField("userId", isEqualTo: uid)
-                .getDocuments { snapshot, error in
-                    if let error = error {
-                        print("⚠️ Could not query \(collection) for deletion: \(error.localizedDescription)")
-                        didFail = true
-                        group.leave()
-                        return
-                    }
-                    let docs = snapshot?.documents ?? []
-                    guard !docs.isEmpty else {
-                        group.leave()
-                        return
-                    }
-
-                    // Batch delete for efficiency (<= 500 ops). If you ever exceed, split into chunks.
-                    let batch = db.batch()
-                    for d in docs.prefix(450) {
-                        batch.deleteDocument(d.reference)
-                    }
-                    batch.commit { batchError in
-                        if let batchError = batchError {
-                            print("⚠️ Failed deleting \(collection) docs: \(batchError.localizedDescription)")
-                            didFail = true
-                        } else {
-                            print("✅ Deleted \(min(docs.count, 450)) docs from \(collection)")
-                            if docs.count > 450 {
-                                print("⚠️ More than 450 docs in \(collection); additional docs were not deleted in this pass.")
-                                didFail = true
-                            }
-                        }
-                        group.leave()
-                    }
-                }
-        }
-
-        // Delete per-user secondary data that commonly contains personal history
-        deleteWhereUserIdEquals("pointsTransactions")
-        deleteWhereUserIdEquals("redeemedRewards")
-
-        // Delete the primary user profile document
-        group.enter()
-        db.collection("users").document(uid).delete { error in
-            if let error = error {
-                print("❌ Error deleting user data from Firestore: \(error.localizedDescription)")
-                didFail = true
-            } else {
-                print("✅ User document deleted from Firestore")
-            }
-            group.leave()
-        }
-
-        // Delete profile photo from Storage if exists (best-effort)
-        if let photoURL = self.profilePhotoURL {
-            group.enter()
-            let storageRef = storage.reference(forURL: photoURL)
-            storageRef.delete { error in
-                if let error = error {
-                    print("⚠️ Warning: Could not delete profile photo from Storage: \(error.localizedDescription)")
-                    didFail = true
-                } else {
-                    print("✅ Profile photo deleted from Storage")
-                }
-                group.leave()
-            }
-        }
-
-        group.notify(queue: .main) {
-            completion(!didFail)
-        }
+        // Use centralized deletion service for comprehensive cleanup
+        AccountDeletionService.shared.deleteAccount(
+            uid: user.uid,
+            profilePhotoURL: self.profilePhotoURL,
+            completion: completion
+        )
     }
     
     // MARK: - Testing Helper
