@@ -170,6 +170,8 @@ struct ReceiptResultView: View {
             return AnyView(systemHero("bolt.horizontal.circle.fill"))
         case .suspicious:
             return AnyView(systemHero("shield.lefthalf.filled"))
+        case .rateLimited:
+            return AnyView(systemHero("clock.fill"))
         }
     }
 
@@ -194,7 +196,8 @@ struct ReceiptResultView: View {
         case .mismatch: return "Data Mismatch"
         case .network: return "Connection Issue"
         case .server: return "Server Issue"
-        case .suspicious: return "Review Pending"
+        case .suspicious: return "Not Accepted"
+        case .rateLimited: return "Rate Limited"
         case .success: return nil
         }
     }
@@ -211,7 +214,8 @@ struct ReceiptResultView: View {
         case .mismatch: return "We couldn’t match totals. Check your photo and try again."
         case .network: return "You can retry in a moment."
         case .server: return "Please try again shortly."
-        case .suspicious: return "Support may reach out if needed."
+        case .suspicious: return "This receipt cannot be processed at this time."
+        case .rateLimited: return "Please wait a while and try again."
         case .success: return nil
         }
     }
@@ -219,14 +223,15 @@ struct ReceiptResultView: View {
     private var primaryButtonTitle: String? {
         switch outcome {
         case .success: return "View Rewards"
-        case .duplicate: return "View Receipt History"
-        case .notFromRestaurant: return "See Accepted Receipts"
-        case .unreadable: return "Tips to Rescan"
-        case .tooOld: return "Program Rules"
-        case .mismatch: return "Tips"
+        case .duplicate: return "View History"
+        case .notFromRestaurant: return "Got It"
+        case .unreadable: return "Got It"
+        case .tooOld: return "Got It"
+        case .mismatch: return "Got It"
         case .network: return "Retry"
         case .server: return "Retry"
-        case .suspicious: return "Contact Support"
+        case .suspicious: return "Got It"
+        case .rateLimited: return "Got It"
         }
     }
 
@@ -268,7 +273,8 @@ struct ReceiptResultView: View {
         case .mismatch: return "Totals mismatch"
         case .network: return "Network issue"
         case .server: return "Server issue"
-        case .suspicious: return "Under review"
+        case .suspicious: return "Receipt not accepted"
+        case .rateLimited: return "Rate limited"
         }
     }
 

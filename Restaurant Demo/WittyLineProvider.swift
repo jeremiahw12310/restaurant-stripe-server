@@ -16,7 +16,7 @@ final class WittyLineProvider {
         case .duplicate:
             return pick([
                 "Been there, scanned that.",
-                "We’ve seen this one.",
+                "We've seen this one.",
                 "Already cashed this receipt.",
                 "Deja scan."
             ])
@@ -40,8 +40,8 @@ final class WittyLineProvider {
             ])
         case .mismatch:
             return pick([
-                "Something doesn’t add up.",
-                "Totals won’t reconcile.",
+                "Something doesn't add up.",
+                "Totals won't reconcile.",
                 "Numbers are not vibing."
             ])
         case .network:
@@ -52,34 +52,24 @@ final class WittyLineProvider {
             ])
         case .server:
             return pick([
-                "Kitchen’s a bit busy.",
+                "Kitchen's a bit busy.",
                 "Server needs a breather.",
-                "We’re cooking a fix."
+                "We're cooking a fix."
             ])
         case .suspicious:
             return pick([
-                "We’re double-checking this one.",
-                "Needs a quick review.",
-                "Hold tight — verifying."
+                "This one didn't go through.",
+                "We can't process this receipt.",
+                "This receipt can't be accepted right now."
+            ])
+        case .rateLimited:
+            return pick([
+                "Take a quick break.",
+                "Slow down there, speedster.",
+                "Hold up — try again in a bit."
             ])
         }
     }
 
     private func pick(_ options: [String]) -> String { options.randomElement() ?? options.first! }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

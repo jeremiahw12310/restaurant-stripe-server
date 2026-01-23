@@ -48,6 +48,10 @@ struct ReceiptScanView: View {
     @State private var receiptPassedValidation = false
     @State private var pendingPoints: Int = 0
     @State private var pendingTotal: Double = 0.0
+    // Store pending error outcome if validation fails during interstitial
+    @State private var pendingErrorOutcome: ReceiptScanOutcome? = nil
+    // Store last captured image for retry functionality
+    @State private var lastCapturedImage: UIImage? = nil
     // Admin debug: save preprocessed receipt images to Photos
     @State private var savePreprocessedReceiptToPhotosDebug = false
     
@@ -522,6 +526,11 @@ struct ReceiptScanView: View {
         receiptPassedValidation = false
         pendingPoints = 0
         pendingTotal = 0.0
+        pendingErrorOutcome = nil
+        lastOrderNumber = nil
+        lastOrderDate = nil
+        // Store image for potential retry
+        lastCapturedImage = image
         let currentPoints = userVM.points
 
         // Preprocess (crop/perspective-correct) ONLY for receipt scanning to reduce distractions.
@@ -534,9 +543,17 @@ struct ReceiptScanView: View {
                     // Check if the response contains an error
                     if let errorMessage = json["error"] as? String {
                         let errorCode = json["errorCode"] as? String
-                        self.showLoadingOverlay = false
+                        let errorOutcome = mapErrorToOutcome(errorCode: errorCode, message: errorMessage)
                         self.errorMessage = errorMessage
-                        presentOutcome(mapErrorToOutcome(errorCode: errorCode, message: errorMessage))
+                        // If interstitial is still showing, store the error to show when it finishes
+                        if self.showLoadingOverlay {
+                            self.pendingErrorOutcome = errorOutcome
+                            // Don't hide overlay yet - let interstitial finish, then show error
+                        } else {
+                            // Interstitial already finished, show error immediately
+                            self.showLoadingOverlay = false
+                            presentOutcome(errorOutcome)
+                        }
                         return
                     }
 
@@ -567,22 +584,35 @@ struct ReceiptScanView: View {
 
                         print("✅ Server awarded receipt points: \(self.pointsEarned), Total: \(self.receiptTotal)")
                     } else {
-                        self.showLoadingOverlay = false
                         self.errorMessage = "Unexpected server response. Please try again."
-                        presentOutcome(.server)
+                        let errorOutcome: ReceiptScanOutcome = .server
+                        // If interstitial is still showing, store the error to show when it finishes
+                        if self.showLoadingOverlay {
+                            self.pendingErrorOutcome = errorOutcome
+                        } else {
+                            self.showLoadingOverlay = false
+                            presentOutcome(errorOutcome)
+                        }
                     }
                 case .failure(let error):
-                    self.showLoadingOverlay = false
                     self.errorMessage = "Upload failed: \(error.localizedDescription)"
+                    let errorOutcome: ReceiptScanOutcome
                     if let urlError = error as? URLError {
                         switch urlError.code {
                         case .notConnectedToInternet, .timedOut, .networkConnectionLost, .dataNotAllowed:
-                            presentOutcome(.network)
+                            errorOutcome = .network
                         default:
-                            presentOutcome(.server)
+                            errorOutcome = .server
                         }
                     } else {
-                        presentOutcome(.server)
+                        errorOutcome = .server
+                    }
+                    // If interstitial is still showing, store the error to show when it finishes
+                    if self.showLoadingOverlay {
+                        self.pendingErrorOutcome = errorOutcome
+                    } else {
+                        self.showLoadingOverlay = false
+                        presentOutcome(errorOutcome)
                     }
                 }
             }
@@ -595,9 +625,20 @@ struct ReceiptScanView: View {
         // Immediately hide overlay to prevent video restart
         DispatchQueue.main.async {
             self.showLoadingOverlay = false
+            
+            // Check if there's a pending error outcome (validation failed during interstitial)
+            if let errorOutcome = self.pendingErrorOutcome {
+                print("⚠️ Interstitial finished - showing error outcome that occurred during processing")
+                self.pendingErrorOutcome = nil
+                self.presentOutcome(errorOutcome)
+                return
+            }
+            
             // 🛡️ CRITICAL: Only show success if validation actually passed
             guard self.receiptPassedValidation else {
-                print("⚠️ Interstitial finished but validation didn't pass - not showing success")
+                print("⚠️ Interstitial finished but validation didn't pass - no error outcome stored, showing server error")
+                // Fallback: if somehow we don't have an error outcome, show server error
+                self.presentOutcome(.server)
                 return
             }
             // Present success once interstitial completes
@@ -695,6 +736,8 @@ struct ReceiptScanView: View {
             // Server/auth errors
             case "UNAUTHENTICATED", "USER_NOT_FOUND":
                 return .server
+            case "RATE_LIMITED":
+                return .rateLimited
             case let c where c.hasPrefix("SERVER_"):
                 return .server
             // For these codes, the message contains more specific info (e.g., "not Dumpling House", "tampered")
@@ -799,8 +842,20 @@ struct ReceiptScanView: View {
         case .duplicate:
             NotificationCenter.default.post(name: Notification.Name("openReceiptHistory"), object: nil)
             presentedOutcome = nil
-        case .notFromRestaurant, .unreadable, .tooOld, .mismatch, .network, .server, .suspicious:
-            // Use primary as guidance links; for now, just dismiss
+        case .network, .server:
+            // Retry upload with last captured image
+            if let image = lastCapturedImage {
+                presentedOutcome = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    self.showLoadingOverlay = true
+                    self.processReceiptImage(image)
+                }
+            } else {
+                // No image stored, just dismiss
+                presentedOutcome = nil
+            }
+        case .notFromRestaurant, .unreadable, .tooOld, .mismatch, .suspicious, .rateLimited:
+            // Just dismiss (buttons now say "Got It")
             presentedOutcome = nil
         }
     }
@@ -811,9 +866,17 @@ struct ReceiptScanView: View {
             // Order Now -> open the order website
             presentedOutcome = nil
             NotificationCenter.default.post(name: Notification.Name("openOrder"), object: nil)
+        case .network, .server:
+            // For network/server errors, "Scan Another" allows retry with new image
+            presentedOutcome = nil
+            lastCapturedImage = nil // Clear stored image since user wants to scan new one
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self.checkCameraPermission()
+            }
         default:
             // Scan Another - give a moment for dismiss animation
             presentedOutcome = nil
+            lastCapturedImage = nil // Clear stored image
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 self.checkCameraPermission()
             }
@@ -1513,7 +1576,7 @@ class CameraController: NSObject, ObservableObject {
     private var lastCandidateAt: CFTimeInterval = 0
     private var lastGoodQuadAt: CFTimeInterval = 0
     private let quadHoldGraceSeconds: CFTimeInterval = 0.85
-    private let lockDelaySeconds: CFTimeInterval = 0.35
+    private let lockDelaySeconds: CFTimeInterval = 0.20 // was 0.35
     private var lockedQuad: DetectedQuad? = nil
 
     // Auto torch (flashlight) during scanning
@@ -1770,7 +1833,7 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
 
         // Throttle Vision work
         let now = CACurrentMediaTime()
-        if now - lastVisionAt < 0.14 { return } // ~7 fps
+        if now - lastVisionAt < 0.08 { return } // ~12 fps (was 0.14 / ~7 fps)
         lastVisionAt = now
 
         // Avoid piling up analyses
@@ -1791,7 +1854,7 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
             request.minimumAspectRatio = 0.10
             request.maximumAspectRatio = 0.90
             request.minimumSize = 0.08
-            request.quadratureTolerance = 25.0
+            request.quadratureTolerance = 35.0 // was 25.0 - increased for tilted receipts
             if let roi = self.liveScanROI {
                 request.regionOfInterest = roi
             }
@@ -1858,7 +1921,8 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                 let centerDist = sqrt(dx * dx + dy * dy)
                 let centerScore = max(0.0, 1.0 - centerDist / 0.70)
 
-                return pow(area, 1.1) * (0.55 + 0.45 * conf) * (0.55 + 0.45 * aspectScore) * (0.65 + 0.35 * centerScore) * (0.6 + 0.4 * longSide)
+                // Confidence weight increased (was 0.55 + 0.45*conf) to better reject low-contrast edges
+                return pow(area, 1.1) * (0.40 + 0.60 * conf) * (0.55 + 0.45 * aspectScore) * (0.65 + 0.35 * centerScore) * (0.6 + 0.4 * longSide)
             }
 
             // Build candidates and apply stronger receipt-like filtering (reduces "imaginary boxes").
@@ -1878,9 +1942,15 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                 let area = Double(bb.width * bb.height)
 
                 // Reject squares / tiny junk early.
-                if aspect > 0.82 { return nil }
+                // Relaxed for tilted receipts (bounding box becomes more square when tilted)
+                if aspect > 0.88 { return nil } // was 0.82
                 if area < 0.035 { return nil }
-                if longSide < 0.35 { return nil }
+                if longSide < 0.30 { return nil } // was 0.35
+                
+                // Edge contrast validation: reject very low confidence detections
+                // (likely false positives on white backgrounds or from hands)
+                // This helps filter out "ghost" rectangles that Vision sometimes detects
+                if o.confidence < 0.50 { return nil } // was implicit 0.45 from request
 
                 let q = DetectedQuad(
                     topLeft: o.topLeft,
@@ -1927,9 +1997,26 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                 let d4 = hypot(a.bottomRight.x - b.bottomRight.x, a.bottomRight.y - b.bottomRight.y)
                 return (d1 + d2 + d3 + d4) / 4.0
             }
+            
+            // Calculate true quad dimensions from corners (rotation-invariant).
+            // This handles tilted receipts better than axis-aligned bounding box.
+            func trueQuadDimensions(_ quad: DetectedQuad) -> (longSide: CGFloat, aspect: CGFloat) {
+                let topEdge = hypot(quad.topRight.x - quad.topLeft.x, quad.topRight.y - quad.topLeft.y)
+                let bottomEdge = hypot(quad.bottomRight.x - quad.bottomLeft.x, quad.bottomRight.y - quad.bottomLeft.y)
+                let leftEdge = hypot(quad.bottomLeft.x - quad.topLeft.x, quad.bottomLeft.y - quad.topLeft.y)
+                let rightEdge = hypot(quad.bottomRight.x - quad.topRight.x, quad.bottomRight.y - quad.topRight.y)
+                
+                let avgWidth = (topEdge + bottomEdge) / 2
+                let avgHeight = (leftEdge + rightEdge) / 2
+                let longSide = max(avgWidth, avgHeight)
+                let shortSide = min(avgWidth, avgHeight)
+                let aspect = longSide > 0 ? shortSide / longSide : 0
+                
+                return (longSide, aspect)
+            }
 
             let scoreGap: Double = (candidates.count >= 2) ? (candidates[0].quad.score - candidates[1].quad.score) : candidates[0].quad.score
-            let ambiguous = candidates.count >= 2 && scoreGap / max(1e-6, candidates[0].quad.score) < 0.10
+            let ambiguous = candidates.count >= 2 && scoreGap / max(1e-6, candidates[0].quad.score) < 0.15 // was 0.10 - less sensitive to close scores
 
             var chosenRaw: DetectedQuad = top.quad
             if let tracked = self.trackedQuadRaw {
@@ -1943,7 +2030,7 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                     // Prefer staying on the same physical receipt (geometric proximity).
                     if delta < 0.060 {
                         chosenRaw = closest
-                    } else if bestScore > trackedScore * 1.35 && !ambiguous {
+                    } else if bestScore > trackedScore * 1.20 && !ambiguous { // was 1.35 - more responsive switching
                         // Only switch if clearly better and not ambiguous.
                         chosenRaw = candidates[0].quad
                     } else {
@@ -1958,12 +2045,15 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
             self.trackedQuadRaw = chosenRaw
             self.lastCandidateAt = CACurrentMediaTime()
 
-            // Smooth the quad to remove jitter (EMA).
+            // Smooth the quad to remove jitter (EMA with adaptive alpha).
             func lerp(_ a: CGPoint, _ b: CGPoint, _ t: CGFloat) -> CGPoint {
                 CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
             }
-            let alpha: CGFloat = 0.22
+            // Adaptive alpha: snap quickly for large movements, smooth for small jitter
+            // was fixed at 0.22
             if let prev = self.smoothedQuad {
+                let rawDelta = avgCornerDelta(chosenRaw, prev)
+                let alpha: CGFloat = rawDelta > 0.05 ? 0.55 : (rawDelta > 0.02 ? 0.38 : 0.22)
                 let tl = lerp(prev.topLeft, chosenRaw.topLeft, alpha)
                 let tr = lerp(prev.topRight, chosenRaw.topRight, alpha)
                 let bl = lerp(prev.bottomLeft, chosenRaw.bottomLeft, alpha)
@@ -2008,13 +2098,16 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
             // Stability on the smoothed quad (more reliable when holding receipt up).
             let previous = self.detectedReceiptQuad
             let delta = (previous != nil) ? avgCornerDelta(previous!, publishQuad) : 1.0
-            let motionStable = delta < 0.013
+            let motionStable = delta < 0.018 // was 0.013 - relaxed for faster lock
 
             // Score-based stability (not perfect consecutive frames):
             // - stable + unambiguous: ramp up quickly
-            // - ambiguous or unstable: decay slowly
+            // - ambiguous: still gain but slower
+            // - unstable: decay slowly
             if motionStable && !ambiguous {
-                self.stabilityScore = min(30, self.stabilityScore + 3)
+                self.stabilityScore = min(30, self.stabilityScore + 4) // was +3
+            } else if motionStable && ambiguous {
+                self.stabilityScore = min(30, self.stabilityScore + 2) // allow gains even when ambiguous
             } else if ambiguous {
                 self.stabilityScore = max(0, self.stabilityScore - 1)
             } else {
@@ -2033,11 +2126,11 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
             }
 
             // Trigger auto-capture once stable enough and reasonably "receipt-like" in the frame.
-            if self.stabilityScore >= 24 && !self.hasTriggeredAutoCapture {
-                // Use the best current candidate geometry (not smoothed) for gating.
-                let longSide = top.longSide
-                let aspect = top.aspect
-                if longSide >= 0.52 && aspect <= 0.72 && !ambiguous {
+            if self.stabilityScore >= 18 && !self.hasTriggeredAutoCapture { // was 24
+                // Use true quad geometry (rotation-invariant) for gating tilted receipts.
+                let (trueLongSide, trueAspect) = trueQuadDimensions(publishQuad)
+                // Relaxed thresholds: was longSide >= 0.52 && aspect <= 0.72
+                if trueLongSide >= 0.45 && trueAspect <= 0.78 && !ambiguous {
                     self.phase = .locked
                     self.lockedQuad = publishQuad
                     self.hasTriggeredAutoCapture = true

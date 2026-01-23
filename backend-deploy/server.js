@@ -1350,6 +1350,124 @@ if (!process.env.OPENAI_API_KEY) {
     return res.status(httpStatus).json({ errorCode, error: message, ...extra });
   }
 
+  // Receipt scan rate limiting helpers
+  async function checkReceiptScanRateLimit(userId, db) {
+    if (!userId) return { allowed: true }; // No user = no rate limit (analyze-receipt endpoint)
+    
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    
+    if (!userDoc.exists) return { allowed: true };
+    
+    const userData = userDoc.data() || {};
+    
+    // Admin users bypass rate limiting
+    if (userData.isAdmin === true) {
+      return { allowed: true };
+    }
+    
+    // Check if user is currently locked out
+    const lockoutUntil = userData.receiptScanLockoutUntil;
+    if (lockoutUntil) {
+      const lockoutTime = lockoutUntil.toDate();
+      const now = new Date();
+      if (lockoutTime > now) {
+        return { allowed: false, reason: 'locked_out' };
+      }
+      // Lockout expired, clear it
+      await userRef.update({
+        receiptScanLockoutUntil: admin.firestore.FieldValue.delete()
+      });
+    }
+    
+    return { allowed: true };
+  }
+
+  async function logReceiptScanAttempt(userId, success, failureReason, db, ipAddress = null) {
+    if (!userId) return; // Don't log for analyze-receipt (no user)
+    
+    const attemptsRef = db.collection('receiptScanAttempts');
+    await attemptsRef.add({
+      userId,
+      success,
+      failureReason: success ? null : failureReason,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      ipAddress
+    });
+    
+    // Clean up old attempts (older than 7 days) to keep collection size manageable
+    // This runs asynchronously and doesn't block the response
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    attemptsRef.where('timestamp', '<', admin.firestore.Timestamp.fromDate(sevenDaysAgo))
+      .limit(100)
+      .get()
+      .then(snapshot => {
+        const batch = db.batch();
+        snapshot.docs.forEach(doc => batch.delete(doc.ref));
+        return batch.commit();
+      })
+      .catch(err => console.error('Error cleaning up old scan attempts:', err));
+  }
+
+  function getProgressiveLockoutDuration(lockoutCount) {
+    // Progressive lockout durations (in milliseconds)
+    switch (lockoutCount) {
+      case 0:
+      case 1:
+        return 1 * 60 * 60 * 1000; // 1 hour
+      case 2:
+        return 6 * 60 * 60 * 1000; // 6 hours
+      case 3:
+        return 24 * 60 * 60 * 1000; // 24 hours
+      default:
+        return 48 * 60 * 60 * 1000; // 48 hours
+    }
+  }
+
+  async function applyReceiptScanLockout(userId, db) {
+    if (!userId) return; // No user = no lockout
+    
+    const userRef = db.collection('users').doc(userId);
+    const attemptsRef = db.collection('receiptScanAttempts');
+    
+    // Count failed attempts in last 24 hours
+    const twentyFourHoursAgo = new Date();
+    twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+    
+    const failedAttempts = await attemptsRef
+      .where('userId', '==', userId)
+      .where('success', '==', false)
+      .where('timestamp', '>=', admin.firestore.Timestamp.fromDate(twentyFourHoursAgo))
+      .get();
+    
+    if (failedAttempts.size >= 5) {
+      // Get current lockout count
+      const userDoc = await userRef.get();
+      const userData = userDoc.data() || {};
+      const currentLockoutCount = userData.receiptScanLockoutCount || 0;
+      
+      // Calculate lockout duration
+      const lockoutDuration = getProgressiveLockoutDuration(currentLockoutCount);
+      const lockoutUntil = new Date(Date.now() + lockoutDuration);
+      
+      // Apply lockout
+      await userRef.update({
+        receiptScanLockoutUntil: admin.firestore.Timestamp.fromDate(lockoutUntil),
+        receiptScanLockoutCount: currentLockoutCount + 1
+      });
+      
+      console.log(`🔒 Applied receipt scan lockout for user ${userId}: ${currentLockoutCount + 1} lockout(s), until ${lockoutUntil.toISOString()}`);
+    }
+  }
+
+  // Helper to log failure and check for lockout
+  async function logFailureAndCheckLockout(userId, failureReason, db, ipAddress = null) {
+    if (!userId) return; // No user = no logging
+    await logReceiptScanAttempt(userId, false, failureReason, db, ipAddress);
+    await applyReceiptScanLockout(userId, db);
+  }
+
   app.post('/analyze-receipt', upload.single('image'), async (req, res) => {
     try {
       console.log('📥 Received receipt analysis request');
@@ -1906,6 +2024,13 @@ If a field is missing, use null.`;
       const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
       const db = admin.firestore();
 
+      // Check rate limit BEFORE making OpenAI API calls (cost savings)
+      const rateLimitCheck = await checkReceiptScanRateLimit(uid, db);
+      if (!rateLimitCheck.allowed) {
+        console.log(`🚫 Rate limit triggered for user ${uid}`);
+        return sendError(res, 429, "RATE_LIMITED", "Too many failed scan attempts. Please wait a while and try again.");
+      }
+
       // Reuse the same strict prompt as /analyze-receipt (kept in sync).
       const prompt = `You are a receipt parser for Dumpling House. Follow these STRICT validation rules:
 
@@ -2021,11 +2146,25 @@ If a field is missing, use null.`;
       const text2 = response2.choices[0].message.content;
       const data1 = extractJson(text1);
       const data2 = extractJson(text2);
-      if (!data1) return sendError(res, 422, "AI_JSON_EXTRACT_FAILED", "Could not extract JSON from first response", { raw: text1 });
-      if (!data2) return sendError(res, 422, "AI_JSON_EXTRACT_FAILED", "Could not extract JSON from second response", { raw: text2 });
+      const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
+      
+      if (!data1) {
+        await logFailureAndCheckLockout(uid, "AI_JSON_EXTRACT_FAILED", db, ipAddress);
+        return sendError(res, 422, "AI_JSON_EXTRACT_FAILED", "Could not extract JSON from first response", { raw: text1 });
+      }
+      if (!data2) {
+        await logFailureAndCheckLockout(uid, "AI_JSON_EXTRACT_FAILED", db, ipAddress);
+        return sendError(res, 422, "AI_JSON_EXTRACT_FAILED", "Could not extract JSON from second response", { raw: text2 });
+      }
 
-      if (data1.error) return sendError(res, 400, "AI_VALIDATION_FAILED", data1.error);
-      if (data2.error) return sendError(res, 400, "AI_VALIDATION_FAILED", data2.error);
+      if (data1.error) {
+        await logFailureAndCheckLockout(uid, "AI_VALIDATION_FAILED", db, ipAddress);
+        return sendError(res, 400, "AI_VALIDATION_FAILED", data1.error);
+      }
+      if (data2.error) {
+        await logFailureAndCheckLockout(uid, "AI_VALIDATION_FAILED", db, ipAddress);
+        return sendError(res, 400, "AI_VALIDATION_FAILED", data2.error);
+      }
 
       // Normalize before comparing
       const normalizeOrderDate = (v) => (typeof v === 'string' ? v.trim().replace(/-/g, '/') : v);
@@ -2059,6 +2198,8 @@ If a field is missing, use null.`;
         norm1.orderTime === norm2.orderTime;
 
       if (!responsesMatch) {
+        const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
+        await logFailureAndCheckLockout(uid, "DOUBLE_PARSE_MISMATCH", db, ipAddress);
         return sendError(
           res,
           400,
@@ -2071,6 +2212,8 @@ If a field is missing, use null.`;
 
       // Validate required fields
       if (!data.orderNumber || !data.orderTotal || !data.orderDate || !data.orderTime) {
+        const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
+        await logFailureAndCheckLockout(uid, "MISSING_FIELDS", db, ipAddress);
         return sendError(res, 400, "MISSING_FIELDS", "Could not extract all required fields from receipt");
       }
 
@@ -2104,12 +2247,17 @@ If a field is missing, use null.`;
         keyFieldsTampered === true ||
         !orderNumberSourceIsValid
       ) {
+        const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
         if (!orderNumberSourceIsValid && keyFieldsTampered !== true) {
           if (paidOnlineReceipt === true) {
+            await logFailureAndCheckLockout(uid, "ORDER_NUMBER_SOURCE_INVALID", db, ipAddress);
             return sendError(res, 400, "ORDER_NUMBER_SOURCE_INVALID", "No valid order number found next to 'Order:' for paid online receipt");
           }
+          await logFailureAndCheckLockout(uid, "ORDER_NUMBER_SOURCE_INVALID", db, ipAddress);
           return sendError(res, 400, "ORDER_NUMBER_SOURCE_INVALID", "No valid order number found under Nashville");
         }
+        const failureReason = keyFieldsTampered ? "KEY_FIELDS_TAMPERED" : "KEY_FIELDS_INVALID";
+        await logFailureAndCheckLockout(uid, failureReason, db, ipAddress);
         const msg = tamperingReason && typeof tamperingReason === 'string' && tamperingReason.trim().length > 0
           ? `Receipt invalid - ${tamperingReason}`
           : "Receipt invalid - key information is obscured or appears tampered with";
@@ -2118,31 +2266,46 @@ If a field is missing, use null.`;
 
       // Validate order number format (must be 3 digits or less and not exceed 400)
       const orderNumberStr = data.orderNumber.toString();
+      const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
       if (orderNumberStr.length > 3) {
+        await logFailureAndCheckLockout(uid, "ORDER_NUMBER_INVALID", db, ipAddress);
         return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number format - must be 3 digits or less");
       }
       const orderNumber = parseInt(data.orderNumber);
-      if (isNaN(orderNumber)) return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number - must be a valid number");
-      if (orderNumber < 1) return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number - must be at least 1");
-      if (orderNumber > 400) return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number - must be 400 or less");
+      if (isNaN(orderNumber)) {
+        await logFailureAndCheckLockout(uid, "ORDER_NUMBER_INVALID", db, ipAddress);
+        return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number - must be a valid number");
+      }
+      if (orderNumber < 1) {
+        await logFailureAndCheckLockout(uid, "ORDER_NUMBER_INVALID", db, ipAddress);
+        return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number - must be at least 1");
+      }
+      if (orderNumber > 400) {
+        await logFailureAndCheckLockout(uid, "ORDER_NUMBER_INVALID", db, ipAddress);
+        return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number - must be 400 or less");
+      }
 
       // Validate date/time formats
       const dateRegex = /^\d{2}\/\d{2}$/;
       if (!dateRegex.test(data.orderDate)) {
+        await logFailureAndCheckLockout(uid, "DATE_FORMAT_INVALID", db, ipAddress);
         return sendError(res, 400, "DATE_FORMAT_INVALID", "Invalid date format - must be MM/DD (or MM-DD on receipt)");
       }
       const timeRegex = /^\d{2}:\d{2}$/;
       if (!timeRegex.test(data.orderTime)) {
+        await logFailureAndCheckLockout(uid, "TIME_FORMAT_INVALID", db, ipAddress);
         return sendError(res, 400, "TIME_FORMAT_INVALID", "Invalid time format - must be HH:MM");
       }
       const [hours, minutes] = data.orderTime.split(':').map(Number);
       if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+        await logFailureAndCheckLockout(uid, "TIME_FORMAT_INVALID", db, ipAddress);
         return sendError(res, 400, "TIME_FORMAT_INVALID", "Invalid time - must be between 00:00 and 23:59");
       }
 
       // Validate order total
       const orderTotal = parseFloat(data.orderTotal);
       if (isNaN(orderTotal) || orderTotal < 1 || orderTotal > 500) {
+        await logFailureAndCheckLockout(uid, "TOTAL_INVALID", db, ipAddress);
         return sendError(res, 400, "TOTAL_INVALID", "Invalid order total - must be a reasonable amount between $1 and $500");
       }
 
@@ -2184,6 +2347,7 @@ If a field is missing, use null.`;
           hoursDiff = hoursDiffPrevYear;
           console.log('🗓️ Year-boundary adjustment applied (submit-receipt):', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
         } else {
+          await logFailureAndCheckLockout(uid, "FUTURE_DATE", db, ipAddress);
           return sendError(res, 400, "FUTURE_DATE", "Invalid receipt date - receipt appears to be dated in the future");
         }
       }
@@ -2193,6 +2357,7 @@ If a field is missing, use null.`;
         console.log('⚠️ Old-receipt test mode active (submit-receipt):', uid, 'daysDiff:', daysDiff);
       }
       if (hoursDiff > 48 && !allowOldReceiptForAdmin) {
+        await logFailureAndCheckLockout(uid, "EXPIRED_48H", db, ipAddress);
         return sendError(res, 400, "EXPIRED_48H", "Receipt expired - receipts must be scanned within 48 hours of purchase");
       }
 
@@ -2285,7 +2450,9 @@ If a field is missing, use null.`;
           });
         });
       } catch (e) {
+        const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
         if (e && e.code === "DUPLICATE_RECEIPT") {
+          await logFailureAndCheckLockout(uid, "DUPLICATE_RECEIPT", db, ipAddress);
           return sendError(
             res,
             409,
@@ -2298,8 +2465,13 @@ If a field is missing, use null.`;
           return sendError(res, 404, "USER_NOT_FOUND", "User not found");
         }
         console.error('❌ submit-receipt transaction failed:', e);
+        await logFailureAndCheckLockout(uid, "SERVER_AWARD_FAILED", db, ipAddress);
         return sendError(res, 500, "SERVER_AWARD_FAILED", "Server error while awarding points - please try again");
       }
+
+      // Log successful scan
+      const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
+      await logReceiptScanAttempt(uid, true, null, db, ipAddress);
 
       return res.json({
         success: true,
@@ -2316,6 +2488,15 @@ If a field is missing, use null.`;
       });
     } catch (err) {
       console.error('❌ Error processing submit-receipt:', err);
+      // Try to log failure if we have a user ID and db is available
+      if (uid && typeof db !== 'undefined') {
+        const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
+        try {
+          await logFailureAndCheckLockout(uid, "SERVER_ERROR", db, ipAddress);
+        } catch (logErr) {
+          console.error('Failed to log receipt scan attempt:', logErr);
+        }
+      }
       return sendError(res, 500, "SERVER_ERROR", err.message || "Server error");
     }
   });

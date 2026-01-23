@@ -10,6 +10,7 @@ enum ReceiptScanOutcome: Equatable {
     case network
     case server
     case suspicious
+    case rateLimited
 }
 
 // Combo generation state for success screen
