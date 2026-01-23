@@ -6974,9 +6974,7 @@ IMPORTANT:
         receiptsTodayCount,
         receiptsWeekCount,
         rewardsCount,
-        rewardsRefundedCount,
         rewardsTodayCount,
-        rewardsTodayRefundedCount,
         pointsSnapshot
       ] = await Promise.all([
         // Total users count (using count aggregation)
@@ -7013,45 +7011,17 @@ IMPORTANT:
           .get()
           .then(snap => snap.data().count),
         
-        // Total rewards redeemed (using count aggregation)
+        // Total rewards redeemed (using count aggregation) - only verified rewards
         db.collection('redeemedRewards')
           .where('isUsed', '==', true)
           .count()
           .get()
           .then(snap => snap.data().count),
         
-        // Count refunded rewards that were marked as used (safety check - shouldn't happen but exclude them)
+        // Rewards redeemed today - only verified rewards scanned today
         db.collection('redeemedRewards')
           .where('isUsed', '==', true)
-          .where('pointsRefunded', '==', true)
-          .count()
-          .get()
-          .then(snap => snap.data().count),
-        
-        // Rewards redeemed today (scanned today OR claimed today)
-        // Count rewards that were either scanned today (isUsed + usedAt) OR claimed today (redeemedAt)
-        Promise.all([
-          // Rewards scanned today
-          db.collection('redeemedRewards')
-            .where('isUsed', '==', true)
-            .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(todayStart))
-            .count()
-            .get()
-            .then(snap => snap.data().count),
-          // Rewards claimed today (but not yet scanned)
-          db.collection('redeemedRewards')
-            .where('redeemedAt', '>=', admin.firestore.Timestamp.fromDate(todayStart))
-            .where('isUsed', '==', false)
-            .count()
-            .get()
-            .then(snap => snap.data().count)
-        ]).then(([scannedToday, claimedToday]) => scannedToday + claimedToday),
-        
-        // Count rewards claimed today that were refunded (exclude from today's count)
-        db.collection('redeemedRewards')
-          .where('redeemedAt', '>=', admin.firestore.Timestamp.fromDate(todayStart))
-          .where('isUsed', '==', false)
-          .where('pointsRefunded', '==', true)
+          .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(todayStart))
           .count()
           .get()
           .then(snap => snap.data().count),
@@ -7069,13 +7039,6 @@ IMPORTANT:
         }
       });
 
-      // Subtract refunded rewards from counts
-      // Total rewards redeemed: exclude any that were refunded (safety check)
-      const totalRewardsRedeemed = Math.max(0, (rewardsCount || 0) - (rewardsRefundedCount || 0));
-      
-      // Rewards redeemed today: exclude refunded rewards from the "claimed but not scanned" portion
-      const rewardsRedeemedToday = Math.max(0, (rewardsTodayCount || 0) - (rewardsTodayRefundedCount || 0));
-
       const stats = {
         totalUsers: usersCount || 0,
         newUsersToday: usersTodayCount || 0,
@@ -7083,8 +7046,8 @@ IMPORTANT:
         totalReceipts: receiptsCount || 0,
         receiptsToday: receiptsTodayCount || 0,
         receiptsThisWeek: receiptsWeekCount || 0,
-        totalRewardsRedeemed: totalRewardsRedeemed,
-        rewardsRedeemedToday: rewardsRedeemedToday,
+        totalRewardsRedeemed: rewardsCount || 0,
+        rewardsRedeemedToday: rewardsTodayCount || 0,
         totalPointsDistributed
       };
 
