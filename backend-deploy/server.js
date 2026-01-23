@@ -2023,6 +2023,7 @@ If a field is missing, use null.`;
       const imagePath = req.file.path;
       const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
       const db = admin.firestore();
+      const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
 
       // Check rate limit BEFORE making OpenAI API calls (cost savings)
       const rateLimitCheck = await checkReceiptScanRateLimit(uid, db);
@@ -2146,7 +2147,6 @@ If a field is missing, use null.`;
       const text2 = response2.choices[0].message.content;
       const data1 = extractJson(text1);
       const data2 = extractJson(text2);
-      const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
       
       if (!data1) {
         await logFailureAndCheckLockout(uid, "AI_JSON_EXTRACT_FAILED", db, ipAddress);
@@ -2198,7 +2198,6 @@ If a field is missing, use null.`;
         norm1.orderTime === norm2.orderTime;
 
       if (!responsesMatch) {
-        const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
         await logFailureAndCheckLockout(uid, "DOUBLE_PARSE_MISMATCH", db, ipAddress);
         return sendError(
           res,
@@ -2212,7 +2211,6 @@ If a field is missing, use null.`;
 
       // Validate required fields
       if (!data.orderNumber || !data.orderTotal || !data.orderDate || !data.orderTime) {
-        const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
         await logFailureAndCheckLockout(uid, "MISSING_FIELDS", db, ipAddress);
         return sendError(res, 400, "MISSING_FIELDS", "Could not extract all required fields from receipt");
       }
@@ -2247,7 +2245,6 @@ If a field is missing, use null.`;
         keyFieldsTampered === true ||
         !orderNumberSourceIsValid
       ) {
-        const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
         if (!orderNumberSourceIsValid && keyFieldsTampered !== true) {
           if (paidOnlineReceipt === true) {
             await logFailureAndCheckLockout(uid, "ORDER_NUMBER_SOURCE_INVALID", db, ipAddress);
@@ -2266,7 +2263,6 @@ If a field is missing, use null.`;
 
       // Validate order number format (must be 3 digits or less and not exceed 400)
       const orderNumberStr = data.orderNumber.toString();
-      const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
       if (orderNumberStr.length > 3) {
         await logFailureAndCheckLockout(uid, "ORDER_NUMBER_INVALID", db, ipAddress);
         return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number format - must be 3 digits or less");
@@ -2450,7 +2446,6 @@ If a field is missing, use null.`;
           });
         });
       } catch (e) {
-        const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
         if (e && e.code === "DUPLICATE_RECEIPT") {
           await logFailureAndCheckLockout(uid, "DUPLICATE_RECEIPT", db, ipAddress);
           return sendError(
@@ -2470,7 +2465,6 @@ If a field is missing, use null.`;
       }
 
       // Log successful scan
-      const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
       await logReceiptScanAttempt(uid, true, null, db, ipAddress);
 
       return res.json({
@@ -2490,7 +2484,6 @@ If a field is missing, use null.`;
       console.error('❌ Error processing submit-receipt:', err);
       // Try to log failure if we have a user ID and db is available
       if (uid && typeof db !== 'undefined') {
-        const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
         try {
           await logFailureAndCheckLockout(uid, "SERVER_ERROR", db, ipAddress);
         } catch (logErr) {
