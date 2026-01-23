@@ -6496,13 +6496,24 @@ IMPORTANT:
           .get()
           .then(snap => snap.data().count),
         
-        // Rewards redeemed today (using count aggregation)
-        db.collection('redeemedRewards')
-          .where('isUsed', '==', true)
-          .where('usedAt', '>=', todayStart)
-          .count()
-          .get()
-          .then(snap => snap.data().count),
+        // Rewards redeemed today (scanned today OR claimed today)
+        // Count rewards that were either scanned today (isUsed + usedAt) OR claimed today (redeemedAt)
+        Promise.all([
+          // Rewards scanned today
+          db.collection('redeemedRewards')
+            .where('isUsed', '==', true)
+            .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(todayStart))
+            .count()
+            .get()
+            .then(snap => snap.data().count),
+          // Rewards claimed today (but not yet scanned)
+          db.collection('redeemedRewards')
+            .where('redeemedAt', '>=', admin.firestore.Timestamp.fromDate(todayStart))
+            .where('isUsed', '==', false)
+            .count()
+            .get()
+            .then(snap => snap.data().count)
+        ]).then(([scannedToday, claimedToday]) => scannedToday + claimedToday),
         
         // Get aggregate points from users collection (still need full docs for sum)
         db.collection('users').select('lifetimePoints').get()
