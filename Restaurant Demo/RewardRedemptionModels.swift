@@ -37,8 +37,16 @@ struct RedeemedReward: Identifiable, Codable {
     let expiresAt: Date
     let isExpired: Bool
     let isUsed: Bool
-    let selectedItemId: String?      // NEW: Selected item ID
-    let selectedItemName: String?    // NEW: Selected item name
+    let selectedItemId: String?      // Selected item ID
+    let selectedItemName: String?    // Selected item name
+    let selectedToppingId: String?   // NEW: Topping ID (for drink rewards)
+    let selectedToppingName: String? // NEW: Topping name (for drink rewards)
+    let selectedItemId2: String?     // NEW: Second item ID (for half-and-half)
+    let selectedItemName2: String?   // NEW: Second item name (for half-and-half)
+    let cookingMethod: String?       // NEW: Cooking method (for dumpling rewards)
+    let drinkType: String?           // NEW: Drink type (Lemonade or Soda)
+    let selectedDrinkItemId: String? // NEW: Drink item ID (for Full Combo)
+    let selectedDrinkItemName: String? // NEW: Drink item name (for Full Combo)
     
     enum CodingKeys: String, CodingKey {
         case id
@@ -54,9 +62,17 @@ struct RedeemedReward: Identifiable, Codable {
         case isUsed
         case selectedItemId
         case selectedItemName
+        case selectedToppingId
+        case selectedToppingName
+        case selectedItemId2
+        case selectedItemName2
+        case cookingMethod
+        case drinkType
+        case selectedDrinkItemId
+        case selectedDrinkItemName
     }
     
-    init(id: String, userId: String, rewardTitle: String, rewardDescription: String, rewardCategory: String, pointsRequired: Int, redemptionCode: String, redeemedAt: Date, expiresAt: Date, isExpired: Bool, isUsed: Bool, selectedItemId: String? = nil, selectedItemName: String? = nil) {
+    init(id: String, userId: String, rewardTitle: String, rewardDescription: String, rewardCategory: String, pointsRequired: Int, redemptionCode: String, redeemedAt: Date, expiresAt: Date, isExpired: Bool, isUsed: Bool, selectedItemId: String? = nil, selectedItemName: String? = nil, selectedToppingId: String? = nil, selectedToppingName: String? = nil, selectedItemId2: String? = nil, selectedItemName2: String? = nil, cookingMethod: String? = nil, drinkType: String? = nil, selectedDrinkItemId: String? = nil, selectedDrinkItemName: String? = nil) {
         self.id = id
         self.userId = userId
         self.rewardTitle = rewardTitle
@@ -70,6 +86,14 @@ struct RedeemedReward: Identifiable, Codable {
         self.isUsed = isUsed
         self.selectedItemId = selectedItemId
         self.selectedItemName = selectedItemName
+        self.selectedToppingId = selectedToppingId
+        self.selectedToppingName = selectedToppingName
+        self.selectedItemId2 = selectedItemId2
+        self.selectedItemName2 = selectedItemName2
+        self.cookingMethod = cookingMethod
+        self.drinkType = drinkType
+        self.selectedDrinkItemId = selectedDrinkItemId
+        self.selectedDrinkItemName = selectedDrinkItemName
     }
     
     init?(document: DocumentSnapshot) {
@@ -100,6 +124,14 @@ struct RedeemedReward: Identifiable, Codable {
         self.isUsed = data["isUsed"] as? Bool ?? false
         self.selectedItemId = data["selectedItemId"] as? String
         self.selectedItemName = data["selectedItemName"] as? String
+        self.selectedToppingId = data["selectedToppingId"] as? String
+        self.selectedToppingName = data["selectedToppingName"] as? String
+        self.selectedItemId2 = data["selectedItemId2"] as? String
+        self.selectedItemName2 = data["selectedItemName2"] as? String
+        self.cookingMethod = data["cookingMethod"] as? String
+        self.drinkType = data["drinkType"] as? String
+        self.selectedDrinkItemId = data["selectedDrinkItemId"] as? String
+        self.selectedDrinkItemName = data["selectedDrinkItemName"] as? String
     }
 }
 
@@ -110,10 +142,18 @@ struct RewardRedemptionRequest: Codable {
     let rewardDescription: String
     let pointsRequired: Int
     let rewardCategory: String
-    let selectedItemId: String?      // NEW: Optional selected item ID
-    let selectedItemName: String?    // NEW: Optional selected item name
+    let selectedItemId: String?      // Optional selected item ID
+    let selectedItemName: String?    // Optional selected item name
+    let selectedToppingId: String?   // NEW: Optional topping ID (for drink rewards)
+    let selectedToppingName: String? // NEW: Optional topping name (for drink rewards)
+    let selectedItemId2: String?     // NEW: Optional second item ID (for half-and-half)
+    let selectedItemName2: String?   // NEW: Optional second item name (for half-and-half)
+    let cookingMethod: String?       // NEW: Optional cooking method (for dumpling rewards)
+    let drinkType: String?           // NEW: Optional drink type (Lemonade or Soda)
+    let selectedDrinkItemId: String? // NEW: Optional drink item ID (for Full Combo)
+    let selectedDrinkItemName: String? // NEW: Optional drink item name (for Full Combo)
     
-    init(userId: String, rewardTitle: String, rewardDescription: String, pointsRequired: Int, rewardCategory: String, selectedItemId: String? = nil, selectedItemName: String? = nil) {
+    init(userId: String, rewardTitle: String, rewardDescription: String, pointsRequired: Int, rewardCategory: String, selectedItemId: String? = nil, selectedItemName: String? = nil, selectedToppingId: String? = nil, selectedToppingName: String? = nil, selectedItemId2: String? = nil, selectedItemName2: String? = nil, cookingMethod: String? = nil, drinkType: String? = nil, selectedDrinkItemId: String? = nil, selectedDrinkItemName: String? = nil) {
         self.userId = userId
         self.rewardTitle = rewardTitle
         self.rewardDescription = rewardDescription
@@ -121,6 +161,14 @@ struct RewardRedemptionRequest: Codable {
         self.rewardCategory = rewardCategory
         self.selectedItemId = selectedItemId
         self.selectedItemName = selectedItemName
+        self.selectedToppingId = selectedToppingId
+        self.selectedToppingName = selectedToppingName
+        self.selectedItemId2 = selectedItemId2
+        self.selectedItemName2 = selectedItemName2
+        self.cookingMethod = cookingMethod
+        self.drinkType = drinkType
+        self.selectedDrinkItemId = selectedDrinkItemId
+        self.selectedDrinkItemName = selectedDrinkItemName
     }
 }
 
@@ -131,7 +179,13 @@ struct RewardRedemptionResponse: Codable {
     let newPointsBalance: Int
     let pointsDeducted: Int
     let rewardTitle: String
-    let selectedItemName: String?    // NEW: Selected item name
+    let selectedItemName: String?    // Selected item name
+    let selectedToppingName: String? // NEW: Selected topping name (for drink rewards)
+    let selectedItemName2: String?   // NEW: Selected second item name (for half-and-half)
+    let cookingMethod: String?       // NEW: Cooking method (for dumpling rewards)
+    let drinkType: String?           // NEW: Drink type (Lemonade or Soda)
+    let selectedDrinkItemId: String? // NEW: Drink item ID (for Full Combo)
+    let selectedDrinkItemName: String? // NEW: Drink item name (for Full Combo)
     let expiresAt: Date
     let message: String
     let error: String?
@@ -143,6 +197,12 @@ struct RewardRedemptionResponse: Codable {
         case pointsDeducted
         case rewardTitle
         case selectedItemName
+        case selectedToppingName
+        case selectedItemName2
+        case cookingMethod
+        case drinkType
+        case selectedDrinkItemId
+        case selectedDrinkItemName
         case expiresAt
         case message
         case error
@@ -157,6 +217,12 @@ struct RewardRedemptionResponse: Codable {
         self.pointsDeducted = try container.decode(Int.self, forKey: .pointsDeducted)
         self.rewardTitle = try container.decode(String.self, forKey: .rewardTitle)
         self.selectedItemName = try container.decodeIfPresent(String.self, forKey: .selectedItemName)
+        self.selectedToppingName = try container.decodeIfPresent(String.self, forKey: .selectedToppingName)
+        self.selectedItemName2 = try container.decodeIfPresent(String.self, forKey: .selectedItemName2)
+        self.cookingMethod = try container.decodeIfPresent(String.self, forKey: .cookingMethod)
+        self.drinkType = try container.decodeIfPresent(String.self, forKey: .drinkType)
+        self.selectedDrinkItemId = try container.decodeIfPresent(String.self, forKey: .selectedDrinkItemId)
+        self.selectedDrinkItemName = try container.decodeIfPresent(String.self, forKey: .selectedDrinkItemName)
         self.message = try container.decode(String.self, forKey: .message)
         self.error = try container.decodeIfPresent(String.self, forKey: .error)
         

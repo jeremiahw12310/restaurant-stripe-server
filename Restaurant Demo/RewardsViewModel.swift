@@ -5,6 +5,7 @@ import Firebase
 // MARK: - Active Redemption Model
 struct ActiveRedemption: Identifiable, Equatable {
     let id = UUID()
+    let rewardId: String
     let rewardTitle: String
     let redemptionCode: String
     let expiresAt: Date
@@ -52,6 +53,8 @@ class RewardsViewModel: ObservableObject {
     }
     @Published var rewardJustUsed = false
     @Published var giftedRewards: [GiftedReward] = []
+    @Published var showRefundNotification = false
+    @Published var refundNotificationMessage: String = ""
     
     private var giftedRewardsListener: ListenerRegistration?
     private let categories = ["All", "Food", "Drinks", "Condiments", "Special"]
@@ -155,12 +158,17 @@ class RewardsViewModel: ObservableObject {
                 if let doc = snapshot?.documents.first, let reward = RedeemedReward(document: doc) {
                     // Ignore rewards that are already expired locally
                     if reward.expiresAt <= Date() {
+                        // Trigger refund before marking as expired
+                        Task { @MainActor in
+                            await self.refundExpiredReward(rewardId: doc.documentID)
+                        }
                         // Mark as expired in Firestore so it won't appear in future queries
                         doc.reference.updateData(["isExpired": true])
                         self.activeRedemption = nil
                         return
                     }
                     self.activeRedemption = ActiveRedemption(
+                        rewardId: reward.id,
                         rewardTitle: reward.rewardTitle,
                         redemptionCode: reward.redemptionCode,
                         expiresAt: reward.expiresAt
@@ -217,11 +225,17 @@ class RewardsViewModel: ObservableObject {
               let decoded = try? JSONDecoder().decode(RedemptionSuccessData.self, from: saved) else { return }
         if decoded.expiresAt > Date() {
             lastSuccessData = decoded
+            // Note: We don't have rewardId in persisted data, so we'll use an empty string
+            // The refund will be triggered by the Firestore listener when it detects expiration
             activeRedemption = ActiveRedemption(
+                rewardId: "", // Will be updated when listener fires
                 rewardTitle: decoded.rewardTitle,
                 redemptionCode: decoded.redemptionCode,
                 expiresAt: decoded.expiresAt)
         } else {
+            // Reward expired - try to refund if we have the reward ID
+            // Note: We don't have the reward ID in persisted data, so refund will happen
+            // when the Firestore listener detects expiration
             UserDefaults.standard.removeObject(forKey: storageKey)
         }
     }
@@ -298,6 +312,98 @@ class RewardsViewModel: ObservableObject {
         } catch {
             print("❌ Error loading gifted rewards: \(error.localizedDescription)")
             self.giftedRewards = []
+        }
+    }
+    
+    // MARK: - Refund Expired Reward
+    
+    @MainActor
+    func refundExpiredReward(rewardId: String? = nil, redemptionCode: String? = nil) async {
+        guard let user = Auth.auth().currentUser else {
+            print("❌ No authenticated user for refund")
+            return
+        }
+        
+        guard rewardId != nil || redemptionCode != nil else {
+            print("❌ Must provide either rewardId or redemptionCode")
+            return
+        }
+        
+        do {
+            let token = try await user.getIDTokenResult(forcingRefresh: false).token
+            let url = URL(string: "\(Config.backendURL)/refund-expired-reward")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            
+            var requestBody: [String: Any] = [:]
+            if let rewardId = rewardId {
+                requestBody["rewardId"] = rewardId
+            }
+            if let redemptionCode = redemptionCode {
+                requestBody["redemptionCode"] = redemptionCode
+            }
+            request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+            
+            if let rewardId = rewardId {
+                print("💰 Requesting refund for expired reward ID: \(rewardId)")
+            } else if let code = redemptionCode {
+                print("💰 Requesting refund for expired reward code: \(code)")
+            }
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw NSError(domain: "RewardsViewModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+            }
+            
+            if httpResponse.statusCode == 200 {
+                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let pointsRefunded = json?["pointsRefunded"] as? Int ?? 0
+                let newPointsBalance = json?["newPointsBalance"] as? Int ?? userPoints
+                let alreadyRefunded = json?["alreadyRefunded"] as? Bool ?? false
+                
+                if alreadyRefunded {
+                    print("✅ Points already refunded for this reward")
+                    return
+                }
+                
+                // Update local points balance
+                userPoints = newPointsBalance
+                
+                // Show notification
+                refundNotificationMessage = "\(pointsRefunded) points refunded - reward expired"
+                showRefundNotification = true
+                
+                // Hide notification after 3 seconds
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    self.showRefundNotification = false
+                }
+                
+                print("✅ Refund successful: \(pointsRefunded) points refunded, new balance: \(newPointsBalance)")
+            } else {
+                let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let errorMessage = errorData?["error"] as? String ?? "Failed to refund reward"
+                print("❌ Error refunding reward: \(errorMessage)")
+                
+                // Still show a notification even if refund failed (might have been refunded server-side)
+                refundNotificationMessage = "Reward expired - checking refund status"
+                showRefundNotification = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    self.showRefundNotification = false
+                }
+            }
+            
+        } catch {
+            print("❌ Error refunding expired reward: \(error.localizedDescription)")
+            
+            // Show notification about expiration
+            refundNotificationMessage = "Reward expired"
+            showRefundNotification = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                self.showRefundNotification = false
+            }
         }
     }
 } 

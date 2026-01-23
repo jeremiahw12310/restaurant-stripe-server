@@ -127,7 +127,7 @@ struct RedeemedRewardsCountdownCard: View {
 
 #Preview {
     RedeemedRewardsCountdownCard(
-        activeRedemption: ActiveRedemption(rewardTitle: "Free Peanut Sauce", redemptionCode: "47319015", expiresAt: Date().addingTimeInterval(120)),
+        activeRedemption: ActiveRedemption(rewardId: "test", rewardTitle: "Free Peanut Sauce", redemptionCode: "47319015", expiresAt: Date().addingTimeInterval(120)),
         onExpired: {}
     )
     .padding()

@@ -51,6 +51,41 @@ struct RewardProgressRing: View {
     }
 }
 
+// MARK: - Reward Selection Background
+/// Shared background component for all reward selection views
+/// Uses a dark base with subtle reward color accent for consistent readability
+struct RewardSelectionBackground: View {
+    let rewardColor: Color
+    
+    var body: some View {
+        ZStack {
+            // Dark base - always readable
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Color(red: 0.12, green: 0.12, blue: 0.15),
+                    Color(red: 0.08, green: 0.08, blue: 0.10)
+                ]),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+            
+            // Subtle reward color accent (top corner glow)
+            RadialGradient(
+                gradient: Gradient(colors: [
+                    rewardColor.opacity(0.25),
+                    rewardColor.opacity(0.08),
+                    Color.clear
+                ]),
+                center: .topLeading,
+                startRadius: 0,
+                endRadius: 400
+            )
+            .ignoresSafeArea()
+        }
+    }
+}
+
 // MARK: - Frosted Glass Card Modifier
 struct FrostedGlassCard: ViewModifier {
     let cornerRadius: CGFloat
@@ -107,18 +142,67 @@ struct RewardDetailView: View {
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var userVM: UserViewModel
     @EnvironmentObject var rewardsVM: RewardsViewModel
+    @EnvironmentObject var menuVM: MenuViewModel
     @StateObject private var redemptionService = RewardRedemptionService()
     
     @State private var showRedeemAnimation = false
     @State private var showConfetti = false
     @State private var showConfirmationDialog = false
-    @State private var showItemSelection = false      // NEW: Item selection sheet
-    @State private var selectedItem: RewardEligibleItem?  // NEW: Selected item
+    @State private var showItemSelection = false      // Item selection sheet
+    @State private var showToppingSelection = false   // NEW: Topping selection sheet (for drink rewards)
+    @State private var showDumplingSelection = false   // NEW: Dumpling selection (for 12pc dumplings)
+    @State private var showHalfAndHalfSelection = false // NEW: Half-and-half selection (for 12pc dumplings)
+    @State private var showCookingMethodSelection = false // NEW: Cooking method selection (for single dumpling)
+    @State private var showDrinkTypeSelection = false // NEW: Drink type selection (for Lemonade or Soda)
+    @State private var showComboDrinkCategorySelection = false // NEW: Drink category selection (for Full Combo)
+    @State private var showComboDrinkItemSelection = false // NEW: Drink item selection (for Full Combo)
+    @State private var selectedItem: RewardEligibleItem?  // Selected item
+    @State private var selectedTopping: RewardEligibleItem? // NEW: Selected topping
+    @State private var selectedFlavor1: RewardEligibleItem? // NEW: First dumpling flavor
+    @State private var selectedFlavor2: RewardEligibleItem? // NEW: Second dumpling flavor
+    @State private var selectedSingleDumpling: RewardEligibleItem? // NEW: Single dumpling selection
+    @State private var cookingMethod: String? // NEW: Cooking method
+    @State private var selectedDrinkType: String? // NEW: Drink type (Lemonade or Soda)
+    @State private var selectedComboDrinkCategory: String? // NEW: Drink category for Full Combo
+    @State private var comboDumplingItem: RewardEligibleItem? // NEW: Dumpling item for Full Combo
+    @State private var comboDrinkItem: RewardEligibleItem? // NEW: Drink item for Full Combo
+    @State private var comboCookingMethod: String? // NEW: Cooking method for Full Combo
     @State private var showSuccessScreen = false
     @State private var redemptionSuccessData: RedemptionSuccessData?
     @State private var appearAnimation = false
     @State private var pulseAnimation = false
     @State private var showFullDescription = false
+    
+    // Helper computed properties to detect reward type
+    private var requiresTopping: Bool {
+        // Check if this is a drink reward that needs toppings
+        let title = reward.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title == "Milk Tea" || title == "Fruit Tea" || title == "Lemonade or Soda" || title == "Coffee"
+    }
+    
+    private var requiresDrinkTypeSelection: Bool {
+        // Check if this is the Lemonade or Soda reward that needs drink type selection
+        let title = reward.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title == "Lemonade or Soda"
+    }
+    
+    private var requiresDumplingSelection: Bool {
+        // Check if this is the 12-Piece Dumpling reward
+        let title = reward.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title == "12-Piece Dumplings"
+    }
+    
+    private var requiresCookingMethodSelection: Bool {
+        // Check if this reward needs cooking method selection (6-piece dumpling rewards)
+        let title = reward.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title == "6-Piece Lunch Special Dumplings" || title == "Pizza Dumplings (6)"
+    }
+    
+    private var isFullComboReward: Bool {
+        // Check if this is the Full Combo reward
+        let title = reward.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title == "Full Combo"
+    }
     
     var progress: Double {
         min(Double(currentPoints) / Double(reward.pointsRequired), 1.0)
@@ -453,10 +537,31 @@ struct RewardDetailView: View {
                     icon: reward.icon
                 ),
                 onConfirm: {
-                    // Dismiss confirmation and show item selection
+                    // Dismiss confirmation and show appropriate selection
                     showConfirmationDialog = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        showItemSelection = true
+                        print("🔍 Reward redemption flow - Title: '\(reward.title)', RequiresDumplingSelection: \(requiresDumplingSelection), IsFullCombo: \(isFullComboReward), EligibleCategoryId: \(reward.eligibleCategoryId ?? "nil"), RewardTierId: \(reward.rewardTierId ?? "nil")")
+                        if isFullComboReward {
+                            // Full Combo: Start with dumpling selection (12-piece tier)
+                            print("✅ Full Combo - Showing dumpling selection")
+                            showDumplingSelection = true
+                        } else if requiresDumplingSelection {
+                            // Show dumpling selection first (for 12-Piece Dumplings)
+                            // User can choose single dumpling OR half-and-half
+                            print("✅ Showing dumpling selection")
+                            showDumplingSelection = true
+                        } else if reward.eligibleCategoryId != nil || reward.rewardTierId != nil {
+                            // Show item selection for rewards with eligible categories OR tier IDs
+                            // Most rewards have rewardTierId, so they should show item selection
+                            print("✅ Showing item selection (has eligibleCategoryId or rewardTierId)")
+                            showItemSelection = true
+                        } else {
+                            // Direct redemption only for rewards without any selection criteria
+                            print("⚠️ No selection needed, proceeding directly to redemption")
+                            Task {
+                                await redeemReward(selectedItem: nil)
+                            }
+                        }
                     }
                 },
                 onCancel: {
@@ -471,14 +576,313 @@ struct RewardDetailView: View {
                 onItemSelected: { item in
                     selectedItem = item
                     showItemSelection = false
-                    Task {
-                        await redeemReward(selectedItem: item)
+                    
+                    // If user skipped selection (nil), proceed with generic reward redemption
+                    if item == nil {
+                        print("⚠️ User skipped item selection, proceeding with generic reward: \(reward.title)")
+                        Task {
+                            await redeemReward(selectedItem: nil)
+                        }
+                        return
+                    }
+                    
+                    // If this is Lemonade or Soda, show drink type selection first
+                    if requiresDrinkTypeSelection, let drinkItem = item {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showDrinkTypeSelection = true
+                        }
+                    } else if requiresTopping, let drinkItem = item {
+                        // Other drink rewards go straight to topping selection
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showToppingSelection = true
+                        }
+                    } else if requiresCookingMethodSelection, let dumplingItem = item {
+                        // For 6-piece lunch special and pizza dumplings, show cooking method selection
+                        selectedSingleDumpling = dumplingItem
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showCookingMethodSelection = true
+                        }
+                    } else {
+                        // Proceed with redemption with selected item
+                        Task {
+                            await redeemReward(selectedItem: item)
+                        }
                     }
                 },
                 onCancel: {
                     showItemSelection = false
                 }
             )
+        }
+        .sheet(isPresented: $showDrinkTypeSelection) {
+            if let item = selectedItem {
+                RewardDrinkTypeSelectionView(
+                    reward: reward,
+                    selectedItem: item,
+                    currentPoints: currentPoints,
+                    onDrinkTypeSelected: { item, drinkType in
+                        if isFullComboReward {
+                            // Full Combo: Store drink type and show topping selection
+                            selectedDrinkType = drinkType
+                            showDrinkTypeSelection = false
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                showToppingSelection = true
+                            }
+                        } else {
+                            // Regular: Store drink type and show topping selection
+                            selectedDrinkType = drinkType
+                            showDrinkTypeSelection = false
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                showToppingSelection = true
+                            }
+                        }
+                    },
+                    onCancel: {
+                        showDrinkTypeSelection = false
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $showToppingSelection) {
+            RewardToppingSelectionView(
+                reward: reward,
+                drinkName: (isFullComboReward ? comboDrinkItem : selectedItem)?.itemName ?? reward.title,
+                currentPoints: currentPoints,
+                onToppingSelected: { topping in
+                    selectedTopping = topping
+                    showToppingSelection = false
+                    
+                    if isFullComboReward {
+                        // Full Combo: Redeem with dumpling(s), drink, cooking method, topping, and drink type
+                        // Check if it's half-and-half (has two flavors) or single dumpling
+                        if let flavor1 = selectedFlavor1, let flavor2 = selectedFlavor2 {
+                            // Half-and-half Full Combo: 
+                            // - selectedItem = first dumpling
+                            // - selectedItem2 = second dumpling
+                            // - selectedDrinkItem = drink item (separate field)
+                            Task {
+                                await redeemReward(
+                                    selectedItem: flavor1,
+                                    selectedTopping: topping,
+                                    selectedItem2: flavor2, // Second dumpling for half-and-half
+                                    cookingMethod: comboCookingMethod,
+                                    drinkType: selectedDrinkType,
+                                    selectedDrinkItem: comboDrinkItem // Drink item in separate field
+                                )
+                            }
+                        } else {
+                            // Single dumpling Full Combo: 
+                            // - selectedItem = dumpling
+                            // - selectedDrinkItem = drink item (separate field)
+                            Task {
+                                await redeemReward(
+                                    selectedItem: comboDumplingItem,
+                                    selectedTopping: topping,
+                                    selectedItem2: nil, // Not used for single dumpling
+                                    cookingMethod: comboCookingMethod,
+                                    drinkType: selectedDrinkType,
+                                    selectedDrinkItem: comboDrinkItem // Drink item in separate field
+                                )
+                            }
+                        }
+                    } else {
+                        // Regular: Proceed with redemption after topping selection
+                        Task {
+                            await redeemReward(selectedItem: selectedItem, selectedTopping: topping, drinkType: selectedDrinkType)
+                        }
+                    }
+                },
+                onCancel: {
+                    showToppingSelection = false
+                }
+            )
+            .environmentObject(menuVM)
+        }
+        .sheet(isPresented: $showDumplingSelection) {
+            // For Full Combo, use 12-piece tier for dumplings
+            let dumplingReward = isFullComboReward 
+                ? RewardOption(
+                    title: reward.title,
+                    description: reward.description,
+                    pointsRequired: 1500, // Use 12-piece points
+                    color: reward.color,
+                    icon: reward.icon,
+                    category: reward.category,
+                    imageName: reward.imageName,
+                    eligibleCategoryId: reward.eligibleCategoryId,
+                    rewardTierId: "tier_12piece_1500" // Use 12-piece tier
+                )
+                : reward
+            
+            RewardDumplingSelectionView(
+                reward: dumplingReward,
+                currentPoints: currentPoints,
+                onSingleDumplingSelected: { dumpling in
+                    if isFullComboReward {
+                        // Full Combo: Store dumpling and show cooking method
+                        comboDumplingItem = dumpling
+                        showDumplingSelection = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showCookingMethodSelection = true
+                        }
+                    } else {
+                        // Regular 12-piece: Show cooking method selection
+                        selectedSingleDumpling = dumpling
+                        showDumplingSelection = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showCookingMethodSelection = true
+                        }
+                    }
+                },
+                onHalfAndHalfSelected: {
+                    if isFullComboReward {
+                        // Full Combo: Show half-and-half selection
+                        showDumplingSelection = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showHalfAndHalfSelection = true
+                        }
+                    } else {
+                        // Regular 12-piece: Show half-and-half selection
+                        showDumplingSelection = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showHalfAndHalfSelection = true
+                        }
+                    }
+                },
+                onCancel: {
+                    showDumplingSelection = false
+                }
+            )
+        }
+        .sheet(isPresented: $showCookingMethodSelection) {
+            if let dumpling = isFullComboReward ? comboDumplingItem : selectedSingleDumpling {
+                RewardCookingMethodView(
+                    reward: reward,
+                    selectedDumpling: dumpling,
+                    currentPoints: currentPoints,
+                    onCookingMethodSelected: { dumpling, method in
+                        if isFullComboReward {
+                            // Full Combo: Store cooking method and show drink category selection
+                            comboCookingMethod = method
+                            showCookingMethodSelection = false
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                showComboDrinkCategorySelection = true
+                            }
+                        } else {
+                            // Regular: Proceed with redemption
+                            selectedSingleDumpling = nil
+                            cookingMethod = method
+                            showCookingMethodSelection = false
+                            Task {
+                                await redeemReward(
+                                    selectedItem: dumpling,
+                                    selectedItem2: nil,
+                                    cookingMethod: method
+                                )
+                            }
+                        }
+                    },
+                    onCancel: {
+                        showCookingMethodSelection = false
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $showHalfAndHalfSelection) {
+            // For Full Combo, use 12-piece tier for dumplings
+            let halfAndHalfReward = isFullComboReward 
+                ? RewardOption(
+                    title: reward.title,
+                    description: reward.description,
+                    pointsRequired: 1500, // Use 12-piece points
+                    color: reward.color,
+                    icon: reward.icon,
+                    category: reward.category,
+                    imageName: reward.imageName,
+                    eligibleCategoryId: reward.eligibleCategoryId,
+                    rewardTierId: "tier_12piece_1500" // Use 12-piece tier
+                )
+                : reward
+            
+            RewardHalfAndHalfSelectionView(
+                reward: halfAndHalfReward,
+                currentPoints: currentPoints,
+                onSelectionComplete: { flavor1, flavor2, method in
+                    if isFullComboReward {
+                        // Full Combo: Store half-and-half selections and proceed to drink category
+                        selectedFlavor1 = flavor1
+                        selectedFlavor2 = flavor2
+                        comboCookingMethod = method
+                        showHalfAndHalfSelection = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showComboDrinkCategorySelection = true
+                        }
+                    } else {
+                        // Regular: Proceed with redemption
+                        selectedFlavor1 = flavor1
+                        selectedFlavor2 = flavor2
+                        cookingMethod = method
+                        showHalfAndHalfSelection = false
+                        Task {
+                            await redeemReward(
+                                selectedItem: flavor1,
+                                selectedItem2: flavor2,
+                                cookingMethod: method
+                            )
+                        }
+                    }
+                },
+                onCancel: {
+                    showHalfAndHalfSelection = false
+                }
+            )
+        }
+        .sheet(isPresented: $showComboDrinkCategorySelection) {
+            RewardDrinkCategorySelectionView(
+                reward: reward,
+                currentPoints: currentPoints,
+                onCategorySelected: { category in
+                    selectedComboDrinkCategory = category
+                    showComboDrinkCategorySelection = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        showComboDrinkItemSelection = true
+                    }
+                },
+                onCancel: {
+                    showComboDrinkCategorySelection = false
+                }
+            )
+        }
+        .sheet(isPresented: $showComboDrinkItemSelection) {
+            if let category = selectedComboDrinkCategory {
+                RewardComboDrinkItemSelectionView(
+                    reward: reward,
+                    drinkCategory: category,
+                    currentPoints: currentPoints,
+                    onItemSelected: { item in
+                        comboDrinkItem = item
+                        showComboDrinkItemSelection = false
+                        
+                        // Check if this is Lemonade or Soda category
+                        if category == "Lemonade" || category == "Soda" {
+                            // Show drink type selection
+                            selectedItem = item // Temporarily store for drink type view
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                showDrinkTypeSelection = true
+                            }
+                        } else {
+                            // Other categories go straight to topping selection
+                            selectedItem = item // Temporarily store for topping view
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                showToppingSelection = true
+                            }
+                        }
+                    },
+                    onCancel: {
+                        showComboDrinkItemSelection = false
+                    }
+                )
+            }
         }
         .sheet(isPresented: $showSuccessScreen) {
             if let successData = redemptionSuccessData {
@@ -500,7 +904,14 @@ struct RewardDetailView: View {
     }
     
     // MARK: - Redemption Logic
-    private func redeemReward(selectedItem: RewardEligibleItem? = nil) async {
+    private func redeemReward(
+        selectedItem: RewardEligibleItem? = nil,
+        selectedTopping: RewardEligibleItem? = nil,
+        selectedItem2: RewardEligibleItem? = nil,
+        cookingMethod: String? = nil,
+        drinkType: String? = nil,
+        selectedDrinkItem: RewardEligibleItem? = nil
+    ) async {
         guard let userId = Auth.auth().currentUser?.uid else {
             print("❌ No user ID available for redemption")
             return
@@ -513,7 +924,15 @@ struct RewardDetailView: View {
             pointsRequired: reward.pointsRequired,
             rewardCategory: reward.category,
             selectedItemId: selectedItem?.itemId,
-            selectedItemName: selectedItem?.itemName
+            selectedItemName: selectedItem?.itemName,
+            selectedToppingId: selectedTopping?.itemId,
+            selectedToppingName: selectedTopping?.itemName,
+            selectedItemId2: selectedItem2?.itemId,
+            selectedItemName2: selectedItem2?.itemName,
+            cookingMethod: cookingMethod,
+            drinkType: drinkType,
+            selectedDrinkItemId: selectedDrinkItem?.itemId,
+            selectedDrinkItemName: selectedDrinkItem?.itemName
         )
         
         await MainActor.run {
@@ -522,7 +941,75 @@ struct RewardDetailView: View {
                 // Update user points
                 userVM.points = response.newPointsBalance
                 
-                // Create success data with selected item name
+                // Build display name for success screen
+                var displayName: String = response.rewardTitle
+                
+                // Check if this is Full Combo
+                if response.rewardTitle == "Full Combo" {
+                    // Full Combo: Dumpling(s) + Drink + Topping
+                    var comboDisplay = ""
+                    
+                    // Check if it's half-and-half (has selectedItemName2 as second dumpling)
+                    if let itemName = response.selectedItemName, let itemName2 = response.selectedItemName2, response.selectedDrinkItemName != nil {
+                        // Half-and-half Full Combo
+                        comboDisplay = "Half and Half: \(itemName) + \(itemName2)"
+                        if let method = response.cookingMethod {
+                            comboDisplay += " (\(method))"
+                        }
+                    } else if let dumplingName = response.selectedItemName {
+                        // Single dumpling Full Combo
+                        comboDisplay = dumplingName
+                        if let method = response.cookingMethod {
+                            comboDisplay += " (\(method))"
+                        }
+                    }
+                    
+                    // Add drink (from selectedDrinkItemName, not selectedItemName2)
+                    if let drinkName = response.selectedDrinkItemName {
+                        comboDisplay += " + \(drinkName)"
+                        if let drinkType = response.drinkType {
+                            comboDisplay += " (\(drinkType))"
+                        }
+                    }
+                    
+                    // Add topping
+                    if let toppingName = response.selectedToppingName {
+                        comboDisplay += " with \(toppingName)"
+                    }
+                    
+                    displayName = comboDisplay.isEmpty ? response.rewardTitle : comboDisplay
+                } else if let itemName = response.selectedItemName {
+                    if let toppingName = response.selectedToppingName {
+                        // Drink with topping format
+                        if let drinkType = response.drinkType {
+                            displayName = "\(itemName) (\(drinkType)) with \(toppingName)"
+                        } else {
+                            displayName = "\(itemName) with \(toppingName)"
+                        }
+                    } else if let itemName2 = response.selectedItemName2 {
+                        // Half-and-half format
+                        displayName = "Half and Half: \(itemName) + \(itemName2)"
+                        if let method = response.cookingMethod {
+                            displayName += " (\(method))"
+                        }
+                    } else {
+                        // Regular item (includes single dumplings with cooking method)
+                        if let drinkType = response.drinkType {
+                            displayName = "\(itemName) (\(drinkType))"
+                        } else if let method = response.cookingMethod {
+                            displayName = "\(itemName) (\(method))"
+                        } else {
+                            displayName = itemName
+                        }
+                    }
+                    
+                    // Add tag for 6-Piece Lunch Special (after all formatting)
+                    if response.rewardTitle == "6-Piece Lunch Special Dumplings" {
+                        displayName += " (6 Piece Lunch Special)"
+                    }
+                }
+                
+                // Create success data with display name
                 redemptionSuccessData = RedemptionSuccessData(
                     redemptionCode: response.redemptionCode,
                     rewardTitle: response.rewardTitle,
@@ -532,13 +1019,14 @@ struct RewardDetailView: View {
                     expiresAt: response.expiresAt,
                     rewardColorHex: nil,
                     rewardIcon: reward.icon,
-                    selectedItemName: response.selectedItemName
+                    selectedItemName: displayName
                 )
 
                 // Store active redemption in shared rewards view-model for countdown card
-                // Use selected item name if available for the title
-                let displayTitle = response.selectedItemName ?? response.rewardTitle
+                // Use display name if available for the title
+                let displayTitle = displayName != response.rewardTitle ? displayName : (response.selectedItemName ?? response.rewardTitle)
                 rewardsVM.activeRedemption = ActiveRedemption(
+                    rewardId: "", // Will be set by Firestore listener
                     rewardTitle: displayTitle,
                     redemptionCode: response.redemptionCode,
                     expiresAt: response.expiresAt
@@ -556,6 +1044,15 @@ struct RewardDetailView: View {
                 print("💰 New balance: \(response.newPointsBalance)")
                 if let selectedName = response.selectedItemName {
                     print("🍽️ Selected item: \(selectedName)")
+                }
+                if let toppingName = response.selectedToppingName {
+                    print("🧋 Selected topping: \(toppingName)")
+                }
+                if let itemName2 = response.selectedItemName2 {
+                    print("🥟 Second item: \(itemName2)")
+                }
+                if let method = response.cookingMethod {
+                    print("🔥 Cooking method: \(method)")
                 }
                 
             case .failure(let error):
@@ -575,6 +1072,8 @@ struct DiagonalRewardCard: View {
     let icon: String
     let category: String
     let imageName: String?
+    let eligibleCategoryId: String?
+    let rewardTierId: String?
     // Compact mode is used for the smaller cards embedded on Home
     let compact: Bool
     
@@ -587,6 +1086,8 @@ struct DiagonalRewardCard: View {
         icon: String,
         category: String,
         imageName: String?,
+        eligibleCategoryId: String? = nil,
+        rewardTierId: String? = nil,
         compact: Bool = false
     ) {
         self.title = title
@@ -597,6 +1098,8 @@ struct DiagonalRewardCard: View {
         self.icon = icon
         self.category = category
         self.imageName = imageName
+        self.eligibleCategoryId = eligibleCategoryId
+        self.rewardTierId = rewardTierId
         self.compact = compact
     }
     
@@ -767,10 +1270,15 @@ struct DiagonalRewardCard: View {
                     color: color,
                     icon: icon,
                     category: category,
-                    imageName: imageName
+                    imageName: imageName,
+                    eligibleCategoryId: eligibleCategoryId,
+                    rewardTierId: rewardTierId
                 ),
                 currentPoints: currentPoints
             )
+            .environmentObject(UserViewModel())
+            .environmentObject(RewardsViewModel())
+            .environmentObject(MenuViewModel())
         }
     }
 }
@@ -916,7 +1424,9 @@ struct DetailedRewardsView: View {
                                     color: reward.color,
                                     icon: reward.icon,
                             category: reward.category,
-                            imageName: reward.imageName
+                            imageName: reward.imageName,
+                            eligibleCategoryId: reward.eligibleCategoryId,
+                            rewardTierId: reward.rewardTierId
                                 )
                             }
                         }

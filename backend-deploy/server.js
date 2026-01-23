@@ -4683,6 +4683,239 @@ IMPORTANT:
     return 'ok';
   }
 
+  // Helper function to refund an expired reward
+  async function refundExpiredReward(rewardRef, rewardData, db) {
+    const pointsRefunded = rewardData.pointsRefunded === true;
+    
+    // Skip if already refunded
+    if (pointsRefunded) {
+      return { alreadyRefunded: true };
+    }
+    
+    const userId = rewardData.userId;
+    const pointsRequired = rewardData.pointsRequired || 0;
+    
+    if (!userId || pointsRequired <= 0) {
+      throw new Error('Invalid reward data for refund');
+    }
+    
+    // Get user's current points
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    
+    if (!userDoc.exists) {
+      throw new Error('User not found for refund');
+    }
+    
+    const userData = userDoc.data();
+    const currentPoints = userData.points || 0;
+    const newPointsBalance = currentPoints + pointsRequired;
+    
+    // Build transaction description
+    let transactionDescription = `Points refunded - reward expired unused: ${rewardData.rewardTitle || 'Reward'}`;
+    if (rewardData.selectedItemName) {
+      transactionDescription = `Points refunded - reward expired unused: ${rewardData.selectedItemName}`;
+      if (rewardData.selectedToppingName) {
+        transactionDescription += ` with ${rewardData.selectedToppingName}`;
+      }
+      if (rewardData.selectedItemName2) {
+        transactionDescription = `Points refunded - reward expired unused: Half and Half: ${rewardData.selectedItemName} + ${rewardData.selectedItemName2}`;
+        if (rewardData.cookingMethod) {
+          transactionDescription += ` (${rewardData.cookingMethod})`;
+        }
+      }
+    }
+    
+    // Create points transaction for refund
+    const pointsTransaction = {
+      id: `refund_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      userId: userId,
+      type: 'reward_expiration_refund',
+      amount: pointsRequired,
+      description: transactionDescription,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      isEarned: true,
+      redemptionCode: rewardData.redemptionCode || null,
+      rewardTitle: rewardData.rewardTitle || null,
+      ...(rewardData.selectedItemName && { selectedItemName: rewardData.selectedItemName }),
+      ...(rewardData.selectedToppingName && { selectedToppingName: rewardData.selectedToppingName }),
+      ...(rewardData.selectedItemName2 && { selectedItemName2: rewardData.selectedItemName2 }),
+      ...(rewardData.cookingMethod && { cookingMethod: rewardData.cookingMethod })
+    };
+    
+    // Perform database operations in a transaction
+    await db.runTransaction(async (tx) => {
+      // Re-check reward status to prevent race conditions
+      const rewardSnapshot = await tx.get(rewardRef);
+      if (!rewardSnapshot.exists) {
+        throw new Error('Reward not found');
+      }
+      
+      const snapshotData = rewardSnapshot.data() || {};
+      if (snapshotData.isUsed === true) {
+        throw new Error('Reward already used');
+      }
+      if (snapshotData.pointsRefunded === true) {
+        throw new Error('Points already refunded');
+      }
+      
+      // Update user points
+      tx.update(userRef, { points: newPointsBalance });
+      
+      // Mark reward as refunded
+      tx.update(rewardRef, { 
+        pointsRefunded: true,
+        refundedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      
+      // Add points transaction
+      const transactionRef = db.collection('pointsTransactions').doc(pointsTransaction.id);
+      tx.set(transactionRef, pointsTransaction);
+    });
+    
+    console.log(`✅ Auto-refunded expired reward: ${pointsRequired} points to user ${userId}`);
+    
+    return {
+      success: true,
+      pointsRefunded: pointsRequired,
+      newPointsBalance: newPointsBalance
+    };
+  }
+
+  // Refund expired reward endpoint
+  app.post('/refund-expired-reward', async (req, res) => {
+    try {
+      console.log('💰 Received refund expired reward request');
+      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      
+      // Require authenticated user
+      const userContext = await requireUser(req, res);
+      if (!userContext) return;
+      
+      const { rewardId, redemptionCode } = req.body;
+      
+      if (!rewardId && !redemptionCode) {
+        console.log('❌ Missing required field: rewardId or redemptionCode');
+        return res.status(400).json({ 
+          error: 'Missing required field: rewardId or redemptionCode'
+        });
+      }
+      
+      const db = admin.firestore();
+      let rewardRef;
+      let rewardDoc;
+      
+      // Find reward by ID or redemption code
+      if (rewardId) {
+        rewardRef = db.collection('redeemedRewards').doc(rewardId);
+        rewardDoc = await rewardRef.get();
+      } else {
+        // Find by redemption code
+        const snapshot = await db
+          .collection('redeemedRewards')
+          .where('redemptionCode', '==', redemptionCode)
+          .limit(1)
+          .get();
+        
+        if (snapshot.empty) {
+          console.log('❌ Reward not found with redemption code:', redemptionCode);
+          return res.status(404).json({ error: 'Reward not found' });
+        }
+        
+        rewardRef = snapshot.docs[0].ref;
+        rewardDoc = snapshot.docs[0];
+      }
+      
+      if (!rewardDoc.exists) {
+        console.log('❌ Reward document not found');
+        return res.status(404).json({ error: 'Reward not found' });
+      }
+      
+      const data = rewardDoc.data() || {};
+      const expiresAt = parseFirestoreDate(data.expiresAt);
+      const isExpired = data.isExpired === true || (expiresAt ? expiresAt <= new Date() : false);
+      const isUsed = data.isUsed === true;
+      const pointsRefunded = data.pointsRefunded === true;
+      
+      // Validate that reward is eligible for refund
+      if (isUsed) {
+        console.log('❌ Reward already used, cannot refund');
+        return res.status(400).json({ 
+          error: 'Reward already used, cannot refund',
+          status: 'already_used'
+        });
+      }
+      
+      if (!isExpired) {
+        console.log('❌ Reward not expired yet, cannot refund');
+        return res.status(400).json({ 
+          error: 'Reward not expired yet, cannot refund',
+          status: 'not_expired'
+        });
+      }
+      
+      if (pointsRefunded) {
+        console.log('✅ Points already refunded for this reward');
+        return res.json({ 
+          success: true,
+          message: 'Points already refunded',
+          alreadyRefunded: true,
+          pointsRefunded: data.pointsRequired || 0
+        });
+      }
+      
+      const userId = data.userId;
+      const pointsRequired = data.pointsRequired || 0;
+      
+      if (!userId || pointsRequired <= 0) {
+        console.log('❌ Invalid reward data: missing userId or pointsRequired');
+        return res.status(400).json({ error: 'Invalid reward data' });
+      }
+      
+      // Verify user can only refund their own rewards
+      if (userId !== userContext.uid) {
+        console.log('❌ User attempted to refund another user\'s reward');
+        return res.status(403).json({ error: 'You can only refund your own rewards' });
+      }
+      
+      // Get user's current points
+      const userRef = db.collection('users').doc(userId);
+      const userDoc = await userRef.get();
+      
+      if (!userDoc.exists) {
+        console.log('❌ User not found:', userId);
+        return res.status(404).json({ error: 'User not found' });
+      }
+      
+      // Use helper function to perform refund
+      const refundResult = await refundExpiredReward(rewardRef, data, db);
+      
+      if (refundResult.alreadyRefunded) {
+        return res.json({ 
+          success: true,
+          message: 'Points already refunded',
+          alreadyRefunded: true,
+          pointsRefunded: data.pointsRequired || 0
+        });
+      }
+      
+      res.json({
+        success: true,
+        pointsRefunded: refundResult.pointsRefunded,
+        newPointsBalance: refundResult.newPointsBalance,
+        rewardTitle: data.rewardTitle || null,
+        message: 'Points refunded successfully'
+      });
+      
+    } catch (error) {
+      console.error('❌ Error refunding expired reward:', error);
+      res.status(500).json({ 
+        error: 'Failed to refund expired reward',
+        details: error.message 
+      });
+    }
+  });
+
   // Validate a reward code (no mutation; used to show confirmation UI)
   app.post('/admin/rewards/validate', async (req, res) => {
     try {
@@ -4709,9 +4942,20 @@ IMPORTANT:
       const data = bestDoc.data() || {};
       const expiresAt = parseFirestoreDate(data.expiresAt);
       const redeemedAt = parseFirestoreDate(data.redeemedAt);
+      const status = rewardStatusFromData(data);
+
+      // Auto-refund if expired and not already refunded
+      if (status === 'expired' && data.isUsed !== true && data.pointsRefunded !== true) {
+        try {
+          await refundExpiredReward(bestDoc.ref, data, db);
+        } catch (error) {
+          console.error('⚠️ Error auto-refunding expired reward during validate:', error);
+          // Continue with response even if refund fails
+        }
+      }
 
       return res.json({
-        status: rewardStatusFromData(data),
+        status: status,
         reward: {
           id: bestDoc.id,
           userId: data.userId || null,
@@ -4813,6 +5057,9 @@ IMPORTANT:
         if (status === 'expired') {
           // Mark expired for consistency
           tx.update(rewardRef, { isExpired: true });
+          
+          // Note: Refund will be handled after transaction commits
+          // We can't do async refund inside transaction, so we'll do it after
           return {
             status,
             reward: {
@@ -4836,7 +5083,8 @@ IMPORTANT:
               drinkType: data.drinkType || null,
               selectedDrinkItemId: data.selectedDrinkItemId || null,
               selectedDrinkItemName: data.selectedDrinkItemName || null
-            }
+            },
+            needsRefund: data.pointsRefunded !== true // Flag to trigger refund after transaction
           };
         }
 
@@ -4876,6 +5124,26 @@ IMPORTANT:
           }
         };
       });
+
+      // Auto-refund if expired and not already refunded
+      if (result.status === 'expired' && result.needsRefund) {
+        try {
+          // Re-fetch the reward data after transaction
+          const rewardDoc = await rewardRef.get();
+          if (rewardDoc.exists) {
+            const rewardData = rewardDoc.data() || {};
+            await refundExpiredReward(rewardRef, rewardData, db);
+          }
+        } catch (error) {
+          console.error('⚠️ Error auto-refunding expired reward during consume:', error);
+          // Continue with response even if refund fails
+        }
+      }
+
+      // Remove needsRefund flag from response
+      if (result.needsRefund) {
+        delete result.needsRefund;
+      }
 
       return res.json(result);
     } catch (error) {

@@ -83,6 +83,16 @@ struct UnifiedRewardsScreen: View {
                         // Active redeemed reward countdown card
                         if let active = rewardsVM.activeRedemption {
                             RedeemedRewardsCountdownCard(activeRedemption: active) {
+                                // Trigger refund if we have the reward ID or code
+                                if !active.rewardId.isEmpty {
+                                    Task { @MainActor in
+                                        await rewardsVM.refundExpiredReward(rewardId: active.rewardId)
+                                    }
+                                } else {
+                                    Task { @MainActor in
+                                        await rewardsVM.refundExpiredReward(redemptionCode: active.redemptionCode)
+                                    }
+                                }
                                 rewardsVM.activeRedemption = nil
                                 showExpiredScreen = true
                             }
@@ -125,6 +135,13 @@ struct UnifiedRewardsScreen: View {
             if let uid = Auth.auth().currentUser?.uid {
                 rewardsVM.startGiftedRewardsListener(userId: uid)
             }
+        }
+        .alert("Points Refunded", isPresented: $rewardsVM.showRefundNotification) {
+            Button("OK") {
+                rewardsVM.showRefundNotification = false
+            }
+        } message: {
+            Text(rewardsVM.refundNotificationMessage)
         }
         .onChange(of: userVM.points) { _, new in
             rewardsVM.updatePoints(new)

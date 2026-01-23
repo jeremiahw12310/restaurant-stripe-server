@@ -105,6 +105,16 @@ struct RewardsView: View {
                     // Redeemed countdown card if active
                     if let active = rewardsVM.activeRedemption {
                         RedeemedRewardsCountdownCard(activeRedemption: active) {
+                            // Trigger refund if we have the reward ID or code
+                            if !active.rewardId.isEmpty {
+                                Task { @MainActor in
+                                    await rewardsVM.refundExpiredReward(rewardId: active.rewardId)
+                                }
+                            } else {
+                                Task { @MainActor in
+                                    await rewardsVM.refundExpiredReward(redemptionCode: active.redemptionCode)
+                                }
+                            }
                             rewardsVM.activeRedemption = nil
                             showExpiredScreen = true
                         }
@@ -115,6 +125,13 @@ struct RewardsView: View {
                     }
                 }
                 .padding(.top)
+                .alert("Points Refunded", isPresented: $rewardsVM.showRefundNotification) {
+                    Button("OK") {
+                        rewardsVM.showRefundNotification = false
+                    }
+                } message: {
+                    Text(rewardsVM.refundNotificationMessage)
+                }
                 
                 // Category filter - same as DetailedRewardsView
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -160,7 +177,9 @@ struct RewardsView: View {
                                 color: reward.color,
                                 icon: reward.icon,
                                 category: reward.category,
-                                imageName: reward.imageName
+                                imageName: reward.imageName,
+                                eligibleCategoryId: reward.eligibleCategoryId,
+                                rewardTierId: reward.rewardTierId
                             )
                         }
                     }

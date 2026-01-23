@@ -28,10 +28,27 @@ struct HomeRewardsSection: View {
             // Active countdown at top if a reward was recently redeemed
             if let active = sharedRewardsVM.activeRedemption {
                 RedeemedRewardsCountdownCard(activeRedemption: active) {
+                    // Trigger refund if we have the reward ID or code
+                    if !active.rewardId.isEmpty {
+                        Task { @MainActor in
+                            await sharedRewardsVM.refundExpiredReward(rewardId: active.rewardId)
+                        }
+                    } else {
+                        Task { @MainActor in
+                            await sharedRewardsVM.refundExpiredReward(redemptionCode: active.redemptionCode)
+                        }
+                    }
                     sharedRewardsVM.activeRedemption = nil
                 }
                 .onTapGesture { showRedeemedCard = true }
                 .padding(.bottom, 8)
+            }
+            .alert("Points Refunded", isPresented: $sharedRewardsVM.showRefundNotification) {
+                Button("OK") {
+                    sharedRewardsVM.showRefundNotification = false
+                }
+            } message: {
+                Text(sharedRewardsVM.refundNotificationMessage)
             }
             HStack {
                 HStack(spacing: 8) {
@@ -94,6 +111,8 @@ struct HomeRewardsSection: View {
                             icon: reward.icon,
                             category: reward.category,
                             imageName: reward.imageName,
+                            eligibleCategoryId: reward.eligibleCategoryId,
+                            rewardTierId: reward.rewardTierId,
                             compact: true
                         )
                         .scaleEffect(animate ? 1.05 : 0.9)
@@ -114,6 +133,16 @@ struct HomeRewardsSection: View {
             // Active countdown at top if a reward was recently redeemed
             if let active = sharedRewardsVM.activeRedemption {
                 RedeemedRewardsCountdownCard(activeRedemption: active) {
+                    // Trigger refund if we have the reward ID or code
+                    if !active.rewardId.isEmpty {
+                        Task { @MainActor in
+                            await sharedRewardsVM.refundExpiredReward(rewardId: active.rewardId)
+                        }
+                    } else {
+                        Task { @MainActor in
+                            await sharedRewardsVM.refundExpiredReward(redemptionCode: active.redemptionCode)
+                        }
+                    }
                     sharedRewardsVM.activeRedemption = nil
                 }
                 .onTapGesture { showRedeemedCard = true }
@@ -205,6 +234,8 @@ struct HomeRewardsSection: View {
                             icon: reward.icon,
                             category: reward.category,
                             imageName: reward.imageName,
+                            eligibleCategoryId: reward.eligibleCategoryId,
+                            rewardTierId: reward.rewardTierId,
                             compact: true
                         )
                         // Slightly larger on Home so inner elements don’t feel tiny
