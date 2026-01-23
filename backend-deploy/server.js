@@ -6955,14 +6955,12 @@ IMPORTANT:
 
       const db = admin.firestore();
       
-      // Calculate date boundaries
+      // Calculate date boundaries in UTC to match Firestore timestamps
       const now = new Date();
-      const todayStart = new Date(now);
-      todayStart.setHours(0, 0, 0, 0);
+      const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
       
-      const weekAgo = new Date(now);
-      weekAgo.setDate(weekAgo.getDate() - 7);
-      weekAgo.setHours(0, 0, 0, 0);
+      const weekAgo = new Date(todayStart);
+      weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
 
       // Run all queries in parallel for efficiency
       // Use count() aggregation for large collections to avoid reading all documents
@@ -7128,7 +7126,8 @@ IMPORTANT:
           
           if (usedAt && usedAt.toDate) {
             const date = usedAt.toDate();
-            const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+            // Use UTC methods to match Firestore timestamp timezone
+            const monthKey = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
             monthMap.set(monthKey, (monthMap.get(monthKey) || 0) + 1);
           }
         });
@@ -7210,10 +7209,10 @@ IMPORTANT:
 
       const db = admin.firestore();
 
-      // Parse month boundaries
+      // Parse month boundaries in UTC to match Firestore timestamps
       const [year, monthNum] = month.split('-').map(Number);
-      const monthStart = new Date(year, monthNum - 1, 1, 0, 0, 0, 0);
-      const monthEnd = new Date(year, monthNum, 1, 0, 0, 0, 0); // First day of next month
+      const monthStart = new Date(Date.UTC(year, monthNum - 1, 1, 0, 0, 0, 0));
+      const monthEnd = new Date(Date.UTC(year, monthNum, 1, 0, 0, 0, 0)); // First day of next month
 
       // Build query
       let query = db.collection('redeemedRewards')
