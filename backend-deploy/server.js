@@ -4574,61 +4574,6 @@ IMPORTANT:
     }
   }
 
-  // Temporary endpoint to backfill usedAt for rewards (one-time migration, no auth required)
-  app.post('/admin/backfill-usedAt', async (req, res) => {
-    try {
-      // Temporarily skip auth for one-time migration
-      // const adminContext = await requireAdmin(req, res);
-      // if (!adminContext) return;
-
-      console.log('🔍 Starting backfill of usedAt for rewards...');
-      
-      const db = admin.firestore();
-      const snapshot = await db.collection('redeemedRewards')
-        .where('isUsed', '==', true)
-        .get();
-      
-      console.log(`📊 Found ${snapshot.size} total used rewards`);
-      
-      const missingUsedAt = snapshot.docs.filter(doc => !doc.data().usedAt);
-      console.log(`⚠️  ${missingUsedAt.length} rewards are missing usedAt`);
-      
-      if (missingUsedAt.length === 0) {
-        return res.json({ success: true, message: 'No backfill needed', updated: 0 });
-      }
-      
-      let updated = 0;
-      const batchSize = 450;
-      
-      for (let i = 0; i < missingUsedAt.length; i += batchSize) {
-        const batch = db.batch();
-        const chunk = missingUsedAt.slice(i, i + batchSize);
-        
-        for (const doc of chunk) {
-          const data = doc.data();
-          const redeemedAt = data.redeemedAt;
-          
-          if (redeemedAt) {
-            batch.update(doc.ref, { usedAt: redeemedAt });
-          } else {
-            batch.update(doc.ref, { usedAt: admin.firestore.FieldValue.serverTimestamp() });
-          }
-          updated++;
-        }
-        
-        await batch.commit();
-        console.log(`✅ Batch ${Math.floor(i / batchSize) + 1}: updated ${chunk.length} documents`);
-      }
-      
-      console.log(`🎉 Backfill complete! Updated: ${updated}`);
-      res.json({ success: true, updated, total: missingUsedAt.length });
-      
-    } catch (error) {
-      console.error('❌ Error in backfill:', error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
   // Helper to verify Firebase Auth token for any signed-in user
   async function requireUser(req, res) {
     try {
