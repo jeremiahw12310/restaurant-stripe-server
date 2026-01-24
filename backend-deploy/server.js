@@ -7473,9 +7473,11 @@ IMPORTANT:
           .get()
           .then(snap => snap.data().count),
         
-        // Total rewards redeemed (using count aggregation) - only verified rewards
+        // Total rewards redeemed (using count aggregation) - only rewards with usedAt
+        // so total matches reward history (which requires usedAt for date grouping)
         db.collection('redeemedRewards')
           .where('isUsed', '==', true)
+          .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(new Date(0)))
           .count()
           .get()
           .then(snap => snap.data().count),

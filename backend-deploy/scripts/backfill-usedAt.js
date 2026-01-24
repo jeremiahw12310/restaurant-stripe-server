@@ -82,7 +82,6 @@ async function backfillUsedAt() {
   
   // Batch update
   let updated = 0;
-  let skipped = 0;
   const batchSize = 450; // Firestore batch limit is 500
   
   for (let i = 0; i < missingUsedAt.length; i += batchSize) {
@@ -94,22 +93,19 @@ async function backfillUsedAt() {
       const redeemedAt = data.redeemedAt;
       
       if (redeemedAt) {
-        // Use redeemedAt as usedAt (reasonable approximation)
         batch.update(doc.ref, { usedAt: redeemedAt });
-        updated++;
       } else {
-        // No redeemedAt either - use current time as fallback
         console.log(`  ⚠️  ${doc.id} has no redeemedAt, using current time`);
         batch.update(doc.ref, { usedAt: admin.firestore.FieldValue.serverTimestamp() });
-        updated++;
       }
+      updated++;
     }
     
     await batch.commit();
     console.log(`✅ Batch ${Math.floor(i / batchSize) + 1}: updated ${chunk.length} documents`);
   }
   
-  console.log(`\n🎉 Backfill complete! Updated: ${updated}, Skipped: ${skipped}`);
+  console.log(`\n🎉 Backfill complete! Updated: ${updated}`);
 }
 
 backfillUsedAt()
