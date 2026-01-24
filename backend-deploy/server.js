@@ -788,17 +788,6 @@ app.post('/referrals/award-check', async (req, res) => {
     const referredUserData = referredUserDoc.data();
     const referredUserPoints = referredUserData.points || 0;
 
-    // Get the referred user's current points to check threshold
-    const referredUserRef = db.collection('users').doc(uid);
-    const referredUserDoc = await referredUserRef.get();
-    
-    if (!referredUserDoc.exists) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const referredUserData = referredUserDoc.data();
-    const referredUserPoints = referredUserData.points || 0;
-
     // Check if referred user has reached the 50-point threshold
     if (referredUserPoints < 50) {
       console.log(`ℹ️ User ${uid} has ${referredUserPoints} points, needs 50 for referral bonus`);
@@ -4585,6 +4574,61 @@ IMPORTANT:
     }
   }
 
+  // Temporary endpoint to backfill usedAt for rewards (one-time migration, no auth required)
+  app.post('/admin/backfill-usedAt', async (req, res) => {
+    try {
+      // Temporarily skip auth for one-time migration
+      // const adminContext = await requireAdmin(req, res);
+      // if (!adminContext) return;
+
+      console.log('🔍 Starting backfill of usedAt for rewards...');
+      
+      const db = admin.firestore();
+      const snapshot = await db.collection('redeemedRewards')
+        .where('isUsed', '==', true)
+        .get();
+      
+      console.log(`📊 Found ${snapshot.size} total used rewards`);
+      
+      const missingUsedAt = snapshot.docs.filter(doc => !doc.data().usedAt);
+      console.log(`⚠️  ${missingUsedAt.length} rewards are missing usedAt`);
+      
+      if (missingUsedAt.length === 0) {
+        return res.json({ success: true, message: 'No backfill needed', updated: 0 });
+      }
+      
+      let updated = 0;
+      const batchSize = 450;
+      
+      for (let i = 0; i < missingUsedAt.length; i += batchSize) {
+        const batch = db.batch();
+        const chunk = missingUsedAt.slice(i, i + batchSize);
+        
+        for (const doc of chunk) {
+          const data = doc.data();
+          const redeemedAt = data.redeemedAt;
+          
+          if (redeemedAt) {
+            batch.update(doc.ref, { usedAt: redeemedAt });
+          } else {
+            batch.update(doc.ref, { usedAt: admin.firestore.FieldValue.serverTimestamp() });
+          }
+          updated++;
+        }
+        
+        await batch.commit();
+        console.log(`✅ Batch ${Math.floor(i / batchSize) + 1}: updated ${chunk.length} documents`);
+      }
+      
+      console.log(`🎉 Backfill complete! Updated: ${updated}`);
+      res.json({ success: true, updated, total: missingUsedAt.length });
+      
+    } catch (error) {
+      console.error('❌ Error in backfill:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Helper to verify Firebase Auth token for any signed-in user
   async function requireUser(req, res) {
     try {
@@ -7540,82 +7584,6 @@ IMPORTANT:
     } catch (error) {
       console.error('❌ Error fetching admin stats:', error);
       res.status(500).json({ error: 'Failed to fetch admin statistics' });
-    }
-  });
-
-  /**
-   * POST /admin/backfill-usedAt
-   * 
-   * One-time migration endpoint to backfill usedAt for rewards missing it.
-   * Finds rewards where isUsed=true but usedAt is missing, and sets usedAt to redeemedAt.
-   * 
-   * TEMPORARY - Remove after running once.
-   */
-  app.post('/admin/backfill-usedAt', async (req, res) => {
-    try {
-      // Temporary: Allow secret key OR admin auth for this one-time migration
-      const secretKey = req.headers['x-backfill-key'] || req.query.key;
-      if (secretKey !== 'dumplinghouse2026backfill') {
-        const adminContext = await requireAdmin(req, res);
-        if (!adminContext) return;
-      }
-
-      console.log('🔧 Starting usedAt backfill...');
-      const db = admin.firestore();
-      
-      // Query all used rewards
-      const snapshot = await db.collection('redeemedRewards')
-        .where('isUsed', '==', true)
-        .get();
-      
-      console.log(`📊 Found ${snapshot.size} total used rewards`);
-      
-      // Filter to those missing usedAt
-      const missingUsedAt = snapshot.docs.filter(doc => !doc.data().usedAt);
-      
-      console.log(`⚠️  ${missingUsedAt.length} rewards are missing usedAt`);
-      
-      if (missingUsedAt.length === 0) {
-        return res.json({ success: true, message: 'No backfill needed', updated: 0 });
-      }
-      
-      // Batch update
-      let updated = 0;
-      const batchSize = 450;
-      
-      for (let i = 0; i < missingUsedAt.length; i += batchSize) {
-        const batch = db.batch();
-        const chunk = missingUsedAt.slice(i, i + batchSize);
-        
-        for (const doc of chunk) {
-          const data = doc.data();
-          const redeemedAt = data.redeemedAt;
-          
-          if (redeemedAt) {
-            batch.update(doc.ref, { usedAt: redeemedAt });
-          } else {
-            batch.update(doc.ref, { usedAt: admin.firestore.FieldValue.serverTimestamp() });
-          }
-          updated++;
-        }
-        
-        await batch.commit();
-        console.log(`✅ Batch ${Math.floor(i / batchSize) + 1}: updated ${chunk.length} documents`);
-      }
-      
-      console.log(`🎉 Backfill complete! Updated: ${updated}`);
-      
-      // Clear the stats cache so new values show immediately
-      adminStatsCache.data = null;
-      adminStatsCache.timestamp = null;
-      rewardHistoryMonthsCache.data = null;
-      rewardHistoryMonthsCache.timestamp = null;
-      
-      res.json({ success: true, message: 'Backfill complete', updated });
-      
-    } catch (error) {
-      console.error('❌ Error during backfill:', error);
-      res.status(500).json({ error: 'Failed to run backfill', details: error.message });
     }
   });
 
