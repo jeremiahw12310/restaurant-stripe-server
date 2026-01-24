@@ -7544,6 +7544,78 @@ IMPORTANT:
   });
 
   /**
+   * POST /admin/backfill-usedAt
+   * 
+   * One-time migration endpoint to backfill usedAt for rewards missing it.
+   * Finds rewards where isUsed=true but usedAt is missing, and sets usedAt to redeemedAt.
+   * 
+   * TEMPORARY - Remove after running once.
+   */
+  app.post('/admin/backfill-usedAt', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      console.log('🔧 Starting usedAt backfill...');
+      const db = admin.firestore();
+      
+      // Query all used rewards
+      const snapshot = await db.collection('redeemedRewards')
+        .where('isUsed', '==', true)
+        .get();
+      
+      console.log(`📊 Found ${snapshot.size} total used rewards`);
+      
+      // Filter to those missing usedAt
+      const missingUsedAt = snapshot.docs.filter(doc => !doc.data().usedAt);
+      
+      console.log(`⚠️  ${missingUsedAt.length} rewards are missing usedAt`);
+      
+      if (missingUsedAt.length === 0) {
+        return res.json({ success: true, message: 'No backfill needed', updated: 0 });
+      }
+      
+      // Batch update
+      let updated = 0;
+      const batchSize = 450;
+      
+      for (let i = 0; i < missingUsedAt.length; i += batchSize) {
+        const batch = db.batch();
+        const chunk = missingUsedAt.slice(i, i + batchSize);
+        
+        for (const doc of chunk) {
+          const data = doc.data();
+          const redeemedAt = data.redeemedAt;
+          
+          if (redeemedAt) {
+            batch.update(doc.ref, { usedAt: redeemedAt });
+          } else {
+            batch.update(doc.ref, { usedAt: admin.firestore.FieldValue.serverTimestamp() });
+          }
+          updated++;
+        }
+        
+        await batch.commit();
+        console.log(`✅ Batch ${Math.floor(i / batchSize) + 1}: updated ${chunk.length} documents`);
+      }
+      
+      console.log(`🎉 Backfill complete! Updated: ${updated}`);
+      
+      // Clear the stats cache so new values show immediately
+      adminStatsCache.data = null;
+      adminStatsCache.timestamp = null;
+      rewardHistoryMonthsCache.data = null;
+      rewardHistoryMonthsCache.timestamp = null;
+      
+      res.json({ success: true, message: 'Backfill complete', updated });
+      
+    } catch (error) {
+      console.error('❌ Error during backfill:', error);
+      res.status(500).json({ error: 'Failed to run backfill', details: error.message });
+    }
+  });
+
+  /**
    * GET /admin/rewards/history/months
    * 
    * Get list of available months with reward counts for the month picker.
