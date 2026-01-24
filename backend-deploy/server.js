@@ -4,6 +4,7 @@ const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs');
 const { OpenAI } = require('openai');
+const { DateTime } = require('luxon');
 
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
@@ -7417,19 +7418,19 @@ IMPORTANT:
 
       const db = admin.firestore();
       
-      // Calculate date boundaries in UTC to match Firestore timestamps
-      const now = new Date();
-      const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
-      const tomorrowStart = new Date(todayStart);
-      tomorrowStart.setUTCDate(tomorrowStart.getUTCDate() + 1);
+      // Calculate date boundaries in Central Time (America/Chicago) for consistent local day tracking
+      // This ensures "today" aligns with the restaurant's local calendar day
+      // Can be overridden with STATS_TIMEZONE environment variable
+      const statsTimezone = process.env.STATS_TIMEZONE || 'America/Chicago';
+      const now = DateTime.now().setZone(statsTimezone);
+      const todayStart = now.startOf('day').toJSDate();
+      const tomorrowStart = now.startOf('day').plus({ days: 1 }).toJSDate();
+      const weekAgo = now.startOf('day').minus({ days: 7 }).toJSDate();
+      const monthStart = now.startOf('month').toJSDate();
+      const nextMonthStart = now.startOf('month').plus({ months: 1 }).toJSDate();
       
-      const weekAgo = new Date(todayStart);
-      weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
-      
-      // Calculate current month boundaries for rewards redeemed this month
-      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
-      const nextMonthStart = new Date(monthStart);
-      nextMonthStart.setUTCMonth(nextMonthStart.getUTCMonth() + 1);
+      console.log(`📊 Admin stats using timezone: ${statsTimezone}`);
+      console.log(`📊 Today boundaries: ${todayStart.toISOString()} to ${tomorrowStart.toISOString()}`);
 
       // Run all queries in parallel for efficiency
       // Use count() aggregation for large collections to avoid reading all documents
