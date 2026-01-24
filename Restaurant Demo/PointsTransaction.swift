@@ -7,6 +7,7 @@ enum PointsTransactionType: String, CaseIterable, Codable {
     case welcome = "welcome"
     case receiptScan = "receipt_scan"
     case rewardRedeemed = "reward_redeemed"
+    case rewardExpirationRefund = "reward_expiration_refund"
     case adminAdjustment = "admin_adjustment"
     case bonus = "bonus"
     case referral = "referral"
@@ -17,6 +18,7 @@ enum PointsTransactionType: String, CaseIterable, Codable {
         case .welcome: return "Welcome Points"
         case .receiptScan: return "Receipt Scan"
         case .rewardRedeemed: return "Reward Redeemed"
+        case .rewardExpirationRefund: return "Reward Refund"
         case .adminAdjustment: return "Points Adjustment"
         case .bonus: return "Bonus Points"
         case .referral: return "Referral Bonus"
@@ -29,6 +31,7 @@ enum PointsTransactionType: String, CaseIterable, Codable {
         case .welcome: return "gift.fill"
         case .receiptScan: return "doc.text.viewfinder"
         case .rewardRedeemed: return "cart.badge.minus"
+        case .rewardExpirationRefund: return "arrow.uturn.backward.circle.fill"
         case .adminAdjustment: return "person.crop.circle.badge.checkmark"
         case .bonus: return "star.fill"
         case .referral: return "person.2.fill"
@@ -38,7 +41,7 @@ enum PointsTransactionType: String, CaseIterable, Codable {
     var color: String {
         switch self {
         case .unknown: return "gray"
-        case .welcome, .receiptScan, .bonus, .referral: return "green"
+        case .welcome, .receiptScan, .bonus, .referral, .rewardExpirationRefund: return "green"
         case .rewardRedeemed: return "red"
         case .adminAdjustment: return "blue"
         }
@@ -90,6 +93,7 @@ struct PointsTransaction: Identifiable {
     var effectiveType: PointsTransactionType {
         if type != .unknown { return type }
         let lower = description.lowercased()
+        if lower.contains("refund") && lower.contains("expired") { return .rewardExpirationRefund }
         if lower.contains("redeemed") { return .rewardRedeemed }
         if lower.contains("receipt") { return .receiptScan }
         if lower.contains("welcome") { return .welcome }

@@ -6,6 +6,7 @@ struct MenuView: View {
     @StateObject private var menuVM = MenuViewModel()
     @StateObject private var userVM = UserViewModel()
     @StateObject private var viewModel = MenuViewViewModel()
+    @Environment(\.scenePhase) private var scenePhase
     // Track the currently selected category by ID to make NavigationLink more reliable
     @State private var selectedCategoryId: String?
     @State private var showAdminTools = false
@@ -164,6 +165,16 @@ struct MenuView: View {
             userVM.loadUserData()
             // Start menu order listener based on current admin status
             menuVM.startMenuOrderListenerIfAdmin(isAdmin: userVM.isAdmin)
+            // Reload cached images when view appears (in case they were cleared)
+            if !menuVM.menuCategories.isEmpty {
+                menuVM.reloadCachedImages()
+            }
+        }
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            // Reload cached images when app becomes active (after being in background)
+            if newPhase == .active && oldPhase != .active && !menuVM.menuCategories.isEmpty {
+                menuVM.reloadCachedImages()
+            }
         }
         .onChange(of: userVM.isAdmin) { _, newIsAdmin in
             // When admin status changes (e.g., after login), update the menu order listener

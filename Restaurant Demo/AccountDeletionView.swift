@@ -20,11 +20,30 @@ struct AccountDeletionView: View {
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("Delete Account")) {
-                    Text("This will permanently delete your account and associated data. This action cannot be undone.")
-                        .font(.callout)
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                Section(header: Text("What Happens When You Delete")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Permanently Deleted:")
+                            .font(.subheadline.bold())
+                        Text("• Your account and login credentials")
+                        Text("• Points balance and points history")
+                        Text("• Referral connections")
+                        Text("• Notifications")
+                        
+                        Text("Anonymized (kept for records):")
+                            .font(.subheadline.bold())
+                            .padding(.top, 8)
+                        Text("• Receipt scan history (shows as \"Deleted User\")")
+                        Text("• Redeemed rewards history")
+                        Text("• Community posts and replies")
+                        
+                        Text("This action is immediate and cannot be undone.")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                            .padding(.top, 8)
+                    }
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 
                 if userVM.isAwaitingDeletionSMSCode {

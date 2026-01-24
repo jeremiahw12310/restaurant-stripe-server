@@ -43,7 +43,7 @@ Render automatically provides a service account for your deployments. We need to
 
 ```bash
 # Get the Render service account email (you'll find this in Render logs)
-# It usually looks like: render-12345@render-12345.iam.gserviceaccount.com
+# It usually looks like: render-10001@render-10001.iam.gserviceaccount.com
 
 # Grant Firebase Admin permissions
 gcloud projects add-iam-policy-binding dumplinghouseapp \
@@ -66,7 +66,7 @@ gcloud projects add-iam-policy-binding dumplinghouseapp \
 1. **Deploy your app to Render**
 2. **Check the build logs** - Look for a line like:
    ```
-   Using service account: render-12345@render-12345.iam.gserviceaccount.com
+   Using service account: render-10001@render-10001.iam.gserviceaccount.com
    ```
 3. **Copy that email address** and use it in the commands above
 

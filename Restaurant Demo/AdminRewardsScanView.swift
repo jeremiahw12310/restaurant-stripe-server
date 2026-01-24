@@ -625,6 +625,8 @@ final class AdminRewardsScanViewModel: ObservableObject {
         let selectedItemName2: String?   // NEW: Second item name (for half-and-half)
         let cookingMethod: String?       // NEW: Cooking method (for dumpling rewards)
         let drinkType: String?           // NEW: Drink type (Lemonade or Soda)
+        let selectedDrinkItemId: String? // NEW: Drink item ID (for Full Combo)
+        let selectedDrinkItemName: String? // NEW: Drink item name (for Full Combo)
     }
 
     struct ValidateResponse: Codable {
@@ -655,7 +657,46 @@ final class AdminRewardsScanViewModel: ObservableObject {
     }
     
     func buildDisplayName(for reward: Reward) -> String {
+        // Check if this is Full Combo
+        if reward.rewardTitle == "Full Combo" {
+            var display = ""
+            
+            // Check if it's half-and-half (has selectedItemName2 as second dumpling AND selectedDrinkItemName)
+            if let itemName = reward.selectedItemName, 
+               let itemName2 = reward.selectedItemName2, 
+               reward.selectedDrinkItemName != nil {
+                // Half-and-half Full Combo
+                display = "Half and Half: \(itemName) + \(itemName2)"
+                if let method = reward.cookingMethod {
+                    display += " (\(method))"
+                }
+            } else if let dumplingName = reward.selectedItemName {
+                // Single dumpling Full Combo
+                display = dumplingName
+                if let method = reward.cookingMethod {
+                    display += " (\(method))"
+                }
+            }
+            
+            // Add drink (from selectedDrinkItemName, not selectedItemName2)
+            if let drinkName = reward.selectedDrinkItemName {
+                display += " + \(drinkName)"
+                if let drinkType = reward.drinkType {
+                    display += " (\(drinkType))"
+                }
+            }
+            
+            // Add topping
+            if let toppingName = reward.selectedToppingName {
+                display += " with \(toppingName)"
+            }
+            
+            return display.isEmpty ? (reward.rewardTitle ?? "Full Combo") : display
+        }
+        
         // Check for half-and-half (has second item) - shows both flavors and cooking method
+        // This is for regular 12-piece dumplings, not Full Combo
+        // Note: 6-Piece Lunch Special does NOT support half-and-half
         if let itemName = reward.selectedItemName, let itemName2 = reward.selectedItemName2 {
             var display = "Half and Half: \(itemName) + \(itemName2)"
             if let method = reward.cookingMethod {
@@ -669,7 +710,12 @@ final class AdminRewardsScanViewModel: ObservableObject {
         if let itemName = reward.selectedItemName,
            reward.selectedItemName2 == nil,
            let method = reward.cookingMethod {
-            return "\(itemName) (\(method))"
+            var display = "\(itemName) (\(method))"
+            // Add tag for 6-Piece Lunch Special
+            if reward.rewardTitle == "6-Piece Lunch Special Dumplings" {
+                display += " (6 Piece Lunch Special)"
+            }
+            return display
         }
         
         // Check for drink with topping
@@ -692,7 +738,12 @@ final class AdminRewardsScanViewModel: ObservableObject {
         // Check for drink without topping (other teas - Milk Tea, Fruit Tea, Coffee)
         // Shows just the flavor/item name
         if let itemName = reward.selectedItemName {
-            return itemName
+            var display = itemName
+            // Add tag for 6-Piece Lunch Special (in case there's no cooking method shown)
+            if reward.rewardTitle == "6-Piece Lunch Special Dumplings" {
+                display += " (6 Piece Lunch Special)"
+            }
+            return display
         }
         
         // Fallback to reward title

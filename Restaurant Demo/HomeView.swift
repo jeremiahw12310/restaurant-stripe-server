@@ -40,7 +40,6 @@ struct HomeView: View {
     @State private var mapCameraPosition: MapCameraPosition
     // ✅ NEW: State to control the visibility of the sign-out alert.
     @State private var showSignOutConfirmation = false
-    @State private var showDeleteAccountConfirmation = false
     @State private var glimmerOpacity: Double = 0
     @State private var lastScroll: Date = Date()
     @State private var scrollOffset: CGFloat = 0
@@ -469,25 +468,6 @@ struct HomeView: View {
             } message: {
                 Text("Are you sure you want to sign out?")
             }
-            .alert("Delete Account", isPresented: $showDeleteAccountConfirmation) {
-                Button("Delete", role: .destructive) {
-                    // Delete account logic
-                    userVM.deleteAccount { success in
-                        if success {
-                            // Account deleted successfully, sign out and return to auth flow
-                            userVM.signOut()
-                            isLoggedIn = false
-                        } else {
-                            // Handle deletion failure - could show an error message
-                            print("❌ Failed to delete account")
-                        }
-                    }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Are you sure you want to delete your account? This action cannot be undone and will permanently remove all your data, points, and profile information.")
-            }
-        
         let referralHandling = alerts
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("incomingReferralCode"))) { output in
                 if let code = output.userInfo?["code"] as? String, !code.isEmpty {

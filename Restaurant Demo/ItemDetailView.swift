@@ -189,8 +189,20 @@ struct ItemDetailView: View {
                     CategoryDetailView(
                         category: toppingsCategory,
                         menuVM: menuVM,
-                        showAdminTools: .constant(false)
+                        showAdminTools: .constant(false),
+                        isViewOnly: true
                     )
+                    .navigationTitle("Topping Options")
+                    .navigationBarTitleDisplayMode(.large)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button(action: { showToppingCategorySheet = false }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 24))
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                    }
                 }
             } else {
                 EmptyView()

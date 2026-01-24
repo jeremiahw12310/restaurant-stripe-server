@@ -719,11 +719,12 @@ class RewardTierAdminViewModel: ObservableObject {
         DefaultTier(id: "tier_sauce_250", pointsRequired: 250, name: "Sauce"),
         DefaultTier(id: "tier_drinks_fruit_tea_450", pointsRequired: 450, name: "Fruit Tea"),
         DefaultTier(id: "tier_drinks_milk_tea_450", pointsRequired: 450, name: "Milk Tea"),
-        DefaultTier(id: "tier_drinks_lemonade_450", pointsRequired: 450, name: "Lemonade"),
+        DefaultTier(id: "tier_drinks_lemonade_450", pointsRequired: 450, name: "Lemonade or Soda"),
         DefaultTier(id: "tier_drinks_coffee_450", pointsRequired: 450, name: "Coffee"),
         DefaultTier(id: "tier_small_appetizer_500", pointsRequired: 500, name: "Small Appetizer"),
         DefaultTier(id: "tier_large_appetizer_650", pointsRequired: 650, name: "Large Appetizer"),
-        DefaultTier(id: "tier_pizza_dumplings_850", pointsRequired: 850, name: "Pizza Dumplings / Lunch Special"),
+        DefaultTier(id: "tier_pizza_dumplings_850", pointsRequired: 850, name: "Pizza Dumplings"),
+        DefaultTier(id: "tier_lunch_special_850", pointsRequired: 850, name: "Lunch Special"),
         DefaultTier(id: "tier_12piece_1500", pointsRequired: 1500, name: "12-Piece Dumplings"),
         DefaultTier(id: "tier_full_combo_2000", pointsRequired: 2000, name: "Full Combo")
     ]

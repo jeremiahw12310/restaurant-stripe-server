@@ -443,8 +443,11 @@ class MenuViewModel: ObservableObject {
                             self.isRefreshing = false
                             self.lastMenuUpdate = Date()
                             
-                            // Cache after first load
+                            // Cache menu data after first load
                             self.dataCacheManager.cacheMenuCategories(self.menuCategories)
+                            
+                            // Load cached images immediately and check for updates
+                            self.preloadCachedImages()
                         }
                     }
                 }
@@ -547,46 +550,164 @@ class MenuViewModel: ObservableObject {
     
     // MARK: - Image Caching Methods
     
-    /// Load all menu images eagerly using Kingfisher's own disk cache (no custom metadata).
-    /// This gives us preloading and fewer network hits without touching UserDefaults.
+    /// Main orchestration method for image caching
+    /// Loads cached images immediately, then checks for updates in background
     private func preloadCachedImages() {
-        var urls: Set<URL> = []
+        // Step 1: Load existing cached images immediately (instant display)
+        loadCachedCategoryIcons()
+        loadCachedMenuItemImages()
         
-        // 1. Category icons
-        for category in menuCategories {
-            if let iconString = effectiveIconString(for: category),
-               let url = resolveIconURL(iconString) {
-                urls.insert(url)
+        // Step 2: Cleanup cache if needed on app launch
+        if let cacheManager = imageCacheManager {
+            DispatchQueue.global(qos: .utility).async {
+                cacheManager.cleanupIfNeeded()
             }
         }
         
-        // 2. Menu item images
-        let allItems = menuCategories.flatMap { $0.items ?? [] }
+        // Step 3: Check for updates and download new/changed images in background
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            self.checkForImageUpdates()
+        }
+    }
+    
+    /// Public method to reload cached images (useful when app becomes active)
+    func reloadCachedImages() {
+        // Only reload if we have menu data loaded
+        guard !menuCategories.isEmpty else { return }
+        
+        // Reload cached images from disk
+        loadCachedCategoryIcons()
+        loadCachedMenuItemImages()
+    }
+    
+    /// Load category icons from disk cache into published dictionary for instant display
+    private func loadCachedCategoryIcons() {
+        guard let cacheManager = imageCacheManager else { return }
+        
+        var icons: [String: UIImage] = [:]
+        for category in menuCategories {
+            if let iconString = effectiveIconString(for: category),
+               let url = resolveIconURL(iconString) {
+                let urlString = url.absoluteString
+                if let cachedImage = cacheManager.getCachedImage(for: urlString) {
+                    icons[urlString] = cachedImage
+                }
+            }
+        }
+        
+        DispatchQueue.main.async {
+            self.cachedCategoryIcons = icons
+            print("✅ Loaded \(icons.count) cached category icons from disk")
+        }
+    }
+    
+    /// Load menu item images from disk cache into published dictionary for instant display
+    private func loadCachedMenuItemImages() {
+        guard let cacheManager = imageCacheManager else { return }
+        
+        let allItems = menuCategories.flatMap { category in
+            var items: [MenuItem] = []
+            if let categoryItems = category.items {
+                items.append(contentsOf: categoryItems)
+            }
+            if let subCategories = category.subCategories {
+                for subCategory in subCategories {
+                    items.append(contentsOf: subCategory.items)
+                }
+            }
+            return items
+        }
+        
+        // Load in background to avoid blocking UI
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            
+            var images: [String: UIImage] = [:]
+            for item in allItems {
+                guard !item.imageURL.isEmpty,
+                      let url = item.resolvedImageURL else {
+                    continue
+                }
+                let urlString = url.absoluteString
+                if let cachedImage = cacheManager.getCachedImage(for: urlString) {
+                    images[urlString] = cachedImage
+                }
+            }
+            
+            DispatchQueue.main.async {
+                self.cachedItemImages = images
+                print("✅ Loaded \(images.count) cached menu item images from disk")
+            }
+        }
+    }
+    
+    /// Check for image updates and download only changed/new images
+    private func checkForImageUpdates() {
+        guard let cacheManager = imageCacheManager else { return }
+        
+        // Build category icon URLs with metadata
+        var categoryIconURLs: [(url: String, metadata: MenuImageMetadata)] = []
+        for category in menuCategories {
+            if let iconString = effectiveIconString(for: category),
+               let url = resolveIconURL(iconString) {
+                let urlString = url.absoluteString
+                // Use current timestamp as metadata since Firestore doesn't store image timestamps
+                let metadata = MenuImageMetadata(url: urlString, timestamp: Date())
+                categoryIconURLs.append((url: urlString, metadata: metadata))
+            }
+        }
+        
+        // Preload category icons (high priority)
+        if !categoryIconURLs.isEmpty {
+            cacheManager.preloadCategoryIcons(urls: categoryIconURLs) { [weak self] in
+                guard let self = self else { return }
+                // Reload cached icons after preloading completes to include newly cached images
+                self.loadCachedCategoryIcons()
+                
+                // Cleanup cache if needed after preloading
+                cacheManager.cleanupIfNeeded()
+            }
+        }
+        
+        // Build menu item image URLs with metadata
+        let allItems = menuCategories.flatMap { category in
+            var items: [MenuItem] = []
+            if let categoryItems = category.items {
+                items.append(contentsOf: categoryItems)
+            }
+            if let subCategories = category.subCategories {
+                for subCategory in subCategories {
+                    items.append(contentsOf: subCategory.items)
+                }
+            }
+            return items
+        }
+        
+        var menuItemURLs: [(url: String, metadata: MenuImageMetadata)] = []
         for item in allItems {
             guard !item.imageURL.isEmpty,
                   let url = item.resolvedImageURL else {
                 continue
             }
-            urls.insert(url)
+            let urlString = url.absoluteString
+            // Use current timestamp as metadata since Firestore doesn't store image timestamps
+            let metadata = MenuImageMetadata(url: urlString, timestamp: Date())
+            menuItemURLs.append((url: urlString, metadata: metadata))
         }
         
-        guard !urls.isEmpty else { return }
-        
-        let prefetcher = ImagePrefetcher(urls: Array(urls)) { _, _, _ in }
-        prefetcher.start()
-    }
-    
-    /// These remain as helpers for potential future in-memory caching, but are no-ops for now.
-    private func loadCachedCategoryIcons() {
-        // Using Kingfisher's disk cache directly via KFImage; no separate in-memory map needed.
-    }
-    
-    private func loadCachedMenuItemImages() {
-        // Using Kingfisher's disk cache directly via KFImage; no separate in-memory map needed.
-    }
-    
-    private func checkForImageUpdates() {
-        // Updates are naturally handled when Firestore changes the image URLs; Kingfisher will fetch new URLs.
+        // Preload menu items in background (lower priority)
+        if !menuItemURLs.isEmpty {
+            cacheManager.preloadMenuItems(urls: menuItemURLs, batchSize: 10) { [weak self] loadedCount in
+                guard let self = self else { return }
+                print("✅ Preloaded \(loadedCount) menu item images")
+                // Reload cached images after preloading completes to include newly cached images
+                self.loadCachedMenuItemImages()
+                
+                // Cleanup cache if needed after preloading completes
+                cacheManager.cleanupIfNeeded()
+            }
+        }
     }
     
     /// Helper method to get effective icon string for a category (mirrors CategoryRow logic)

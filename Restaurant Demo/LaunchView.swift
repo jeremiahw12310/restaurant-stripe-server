@@ -15,12 +15,21 @@ struct LaunchView: View {
     @State private var launchPhase: LaunchPhase = .initial
     @State private var authListenerHandle: AuthStateDidChangeListenerHandle? = nil
     @State private var loginGateCheckToken: UUID = UUID()
+    @State private var isBanned: Bool = false
+    @StateObject private var userVM = UserViewModel()
     
     var body: some View {
         ZStack {
             // The content that will be revealed underneath is always present in the hierarchy.
             if isLoggedIn {
-                ContentView()
+                if isBanned {
+                    // Banned users see deletion-only screen
+                    BannedAccountDeletionView()
+                        .environmentObject(userVM)
+                } else {
+                    // Normal users see full app
+                    ContentView()
+                }
             } else {
                 // We pass a binding of the launchPhase to the SplashView
                 // so it knows when to start its own animation.
@@ -83,19 +92,30 @@ struct LaunchView: View {
 
             // If snapshot exists and has data, allow logged-in UI.
             if let snapshot, snapshot.exists, let data = snapshot.data(), !data.isEmpty {
-                if !isLoggedIn { isLoggedIn = true }
+                // Check if user is banned
+                let userIsBanned = data["isBanned"] as? Bool ?? false
+                DispatchQueue.main.async {
+                    self.isBanned = userIsBanned
+                    if !isLoggedIn { isLoggedIn = true }
+                }
                 return
             }
 
             // If Firestore is temporarily unavailable, don't lock existing users out.
             // (This does NOT reintroduce the bug: the deleted-account case returns snapshot.exists == false without an error.)
             if error != nil {
-                if !isLoggedIn { isLoggedIn = true }
+                DispatchQueue.main.async {
+                    self.isBanned = false
+                    if !isLoggedIn { isLoggedIn = true }
+                }
                 return
             }
 
             // Missing profile doc -> remain logged out so the auth flow can collect details.
-            if isLoggedIn { isLoggedIn = false }
+            DispatchQueue.main.async {
+                self.isBanned = false
+                if isLoggedIn { isLoggedIn = false }
+            }
         }
     }
 

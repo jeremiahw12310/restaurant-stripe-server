@@ -135,11 +135,11 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
 
     func updateUIView(_ uiView: UIView, context: Context) {
         context.coordinator.playerLayer?.frame = UIScreen.main.bounds
-        // Propagate early-cut request and handle immediate cut if threshold already passed
+        // Propagate early-cut request and interrupt immediately when requested
         let wasRequested = context.coordinator.lastEarlyCutRequested
         context.coordinator.lastEarlyCutRequested = earlyCutRequested
         if earlyCutRequested && !wasRequested {
-            context.coordinator.tryEarlyFinishIfPastThreshold()
+            context.coordinator.finishEarly()
         }
     }
 
@@ -167,6 +167,8 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
                 if let item = object as? AVPlayerItem {
                     switch item.status {
                     case .readyToPlay:
+                        // Don't play if we've already completed (early cut was requested)
+                        guard !hasCompleted else { return }
                         // Only play if not already at end
                         if item.currentTime().seconds < item.duration.seconds - 0.1 {
                             // First play with audio, subsequent plays muted
@@ -206,8 +208,18 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
             // Mark this play as completed
             playCount += 1
 
+            // If early cut was requested during first play, finish immediately instead of looping
+            if playCount == 1 && lastEarlyCutRequested {
+                player.pause()
+                playerLayer?.isHidden = true
+                player.replaceCurrentItem(with: nil)
+                hasCompleted = true
+                DispatchQueue.main.async { self.onComplete() }
+                return
+            }
+
             if playCount < maxPlays {
-                // Immediately start a muted loop with no UI teardown to avoid flicker
+                // Continue to second play only if early cut wasn't requested
                 player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
                 player.isMuted = true
                 player.play()

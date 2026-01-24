@@ -302,6 +302,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         completionHandler()
     }
     
+    /// Sync app badge when app becomes active (launch or foreground)
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        NotificationService.shared.updateAppBadge()
+    }
+    
     // FIXED: Add memory warning handling to prevent storage bloat
     func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
         DebugLogger.debug("App memory warning received - clearing all caches", category: "App")

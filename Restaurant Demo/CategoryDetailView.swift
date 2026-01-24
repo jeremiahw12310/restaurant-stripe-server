@@ -4,14 +4,30 @@ struct CategoryDetailView: View {
     let category: MenuCategory
     @State private var selectedItem: MenuItem?
     @Environment(\.colorScheme) var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var menuVM: MenuViewModel
     @Binding var showAdminTools: Bool
+    let isViewOnly: Bool
     @State private var showOrganizeItems = false
     @State private var showHalfAndHalf = false
     @State private var showOrderWebView = false
-
+    
+    init(category: MenuCategory, menuVM: MenuViewModel, showAdminTools: Binding<Bool>, isViewOnly: Bool = false) {
+        self.category = category
+        self.menuVM = menuVM
+        self._showAdminTools = showAdminTools
+        self.isViewOnly = isViewOnly
+    }
+    
+    /// Disable item selection if explicitly set to view-only OR if this is a toppings category
+    private var shouldDisableItemSelection: Bool {
+        let isToppings = isViewOnly || category.isToppingCategory || category.id.lowercased().contains("topping")
+        print("🔒 CategoryDetailView - category: \(category.id), isViewOnly: \(isViewOnly), isToppingCategory: \(category.isToppingCategory), shouldDisable: \(isToppings)")
+        return isToppings
+    }
 
     var body: some View {
+        let _ = print("📂 CategoryDetailView BODY - category: \(category.id), isDrinks: \(category.isDrinks), isToppingCategory: \(category.isToppingCategory), shouldDisable: \(shouldDisableItemSelection)")
         ZStack {
             Color.black.ignoresSafeArea()
             // Dumpling rain only for Dumplings category (hidden while loading)
@@ -77,7 +93,8 @@ struct CategoryDetailView: View {
                         items: displayItems,
                         selectedItem: $selectedItem,
                         menuVM: menuVM,
-                        showAdminTools: showAdminTools
+                        showAdminTools: showAdminTools,
+                        disableItemSelection: shouldDisableItemSelection
                     )
                 }
             } else {
@@ -123,7 +140,7 @@ struct CategoryDetailView: View {
                             
                             // Unified grid: show all items without Half & Half insertion
                             let displayItems = (menuVM.orderedItemIdsByCategory[category.id]?.isEmpty == false) ? menuVM.orderedItems(for: category) : (category.items ?? [])
-                            MenuItemGridView(items: displayItems, selectedItem: $selectedItem, menuVM: menuVM, showAdminTools: showAdminTools, categoryId: category.id)
+                            MenuItemGridView(items: displayItems, selectedItem: $selectedItem, menuVM: menuVM, showAdminTools: showAdminTools, categoryId: category.id, disableItemSelection: shouldDisableItemSelection)
                         }
 
                         // Bottom spacing so the last row can scroll above the floating Order Online pill
@@ -195,6 +212,16 @@ struct CategoryDetailView: View {
         .onAppear {
             // Items already loaded via fetchMenu() listeners - no refresh needed
             // This prevents the "Gathering your..." loading screen from showing
+            // Reload cached images when view appears (in case they were cleared)
+            if !menuVM.menuCategories.isEmpty {
+                menuVM.reloadCachedImages()
+            }
+        }
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            // Reload cached images when app becomes active (after being in background)
+            if newPhase == .active && oldPhase != .active && !menuVM.menuCategories.isEmpty {
+                menuVM.reloadCachedImages()
+            }
         }
         // Loading overlay (no animation)
         .overlay(
@@ -269,7 +296,8 @@ struct CategoryDetailView_Previews: PreviewProvider {
         CategoryDetailView(
             category: MenuCategory(id: "Desserts", items: [], subCategories: nil),
             menuVM: MenuViewModel(),
-            showAdminTools: .constant(false)
+            showAdminTools: .constant(false),
+            isViewOnly: false
         )
     }
 } 

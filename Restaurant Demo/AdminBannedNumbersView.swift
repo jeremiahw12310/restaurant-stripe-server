@@ -4,6 +4,10 @@ struct AdminBannedNumbersView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel = AdminBannedNumbersViewModel()
     @State private var showUnbanConfirmation: BannedNumber?
+    @State private var showBanPhoneSheet: Bool = false
+    @State private var phoneNumberInput: String = ""
+    @State private var banReasonInput: String = ""
+    @State private var showBanConfirmation: Bool = false
     
     var body: some View {
         NavigationStack {
@@ -43,7 +47,160 @@ struct AdminBannedNumbersView: View {
                     await viewModel.loadBannedNumbers()
                 }
             }
+            .sheet(isPresented: $showBanPhoneSheet) {
+                banPhoneSheet
+            }
+            .alert("Success", isPresented: $viewModel.showBanSuccess) {
+                Button("OK") {
+                    showBanPhoneSheet = false
+                    phoneNumberInput = ""
+                    banReasonInput = ""
+                }
+            } message: {
+                Text(viewModel.banSuccessMessage)
+            }
+            .alert("Ban Phone Number", isPresented: $showBanConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Ban", role: .destructive) {
+                    Task {
+                        await viewModel.banPhoneNumber(
+                            phone: phoneNumberInput,
+                            reason: banReasonInput.isEmpty ? nil : banReasonInput
+                        )
+                    }
+                }
+            } message: {
+                Text("Are you sure you want to ban \(phoneNumberInput)? This will prevent signups and ban any existing account with this number.")
+            }
         }
+    }
+    
+    // MARK: - Ban Phone Sheet
+    
+    private var banPhoneSheet: some View {
+        NavigationStack {
+            ZStack {
+                Color(red: 0.98, green: 0.96, blue: 0.94)
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: 24) {
+                        // Header info
+                        VStack(spacing: 8) {
+                            Image(systemName: "phone.fill.badge.xmark")
+                                .font(.system(size: 50))
+                                .foregroundColor(.red)
+                            
+                            Text("Ban Phone Number")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                            
+                            Text("Enter a phone number to ban. Any existing account with this number will be banned, and future signups will be blocked.")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
+                        }
+                        .padding(.top, 20)
+                        
+                        // Phone input
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Phone Number")
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                            
+                            TextField("+1 (555) 123-4567", text: $phoneNumberInput)
+                                .keyboardType(.phonePad)
+                                .textContentType(.telephoneNumber)
+                                .padding()
+                                .background(Color.white)
+                                .cornerRadius(10)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(phoneNumberInput.isEmpty ? Color.clear : (isValidPhone(phoneNumberInput) ? Color.green : Color.red), lineWidth: 2)
+                                )
+                            
+                            if !phoneNumberInput.isEmpty && !isValidPhone(phoneNumberInput) {
+                                Text("Please enter a valid 10-digit phone number")
+                                    .font(.caption)
+                                    .foregroundColor(.red)
+                            }
+                        }
+                        
+                        // Reason input (optional)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Reason (Optional)")
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                            
+                            TextField("Enter reason for banning...", text: $banReasonInput, axis: .vertical)
+                                .lineLimit(3...6)
+                                .padding()
+                                .background(Color.white)
+                                .cornerRadius(10)
+                        }
+                        
+                        // Error message
+                        if let error = viewModel.banPhoneError {
+                            Text(error)
+                                .font(.subheadline)
+                                .foregroundColor(.red)
+                                .padding()
+                                .frame(maxWidth: .infinity)
+                                .background(Color.red.opacity(0.1))
+                                .cornerRadius(10)
+                        }
+                        
+                        // Ban button
+                        Button(action: {
+                            if isValidPhone(phoneNumberInput) {
+                                showBanConfirmation = true
+                            }
+                        }) {
+                            HStack {
+                                if viewModel.isBanningPhone {
+                                    ProgressView()
+                                        .tint(.white)
+                                } else {
+                                    Image(systemName: "xmark.circle.fill")
+                                    Text("Ban Phone Number")
+                                        .fontWeight(.semibold)
+                                }
+                            }
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(isValidPhone(phoneNumberInput) && !viewModel.isBanningPhone ? Color.red : Color.gray)
+                            .cornerRadius(10)
+                        }
+                        .disabled(!isValidPhone(phoneNumberInput) || viewModel.isBanningPhone)
+                        
+                        Spacer(minLength: 20)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 10)
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        showBanPhoneSheet = false
+                        phoneNumberInput = ""
+                        banReasonInput = ""
+                        viewModel.banPhoneError = nil
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Phone Validation
+    
+    private func isValidPhone(_ phone: String) -> Bool {
+        let digits = phone.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)
+        // Accept 10 or 11 digits (10 digits or 1 + 10 digits)
+        return digits.count == 10 || (digits.count == 11 && digits.hasPrefix("1"))
     }
     
     // MARK: - Header
@@ -65,14 +222,24 @@ struct AdminBannedNumbersView: View {
                 
                 Spacer()
                 
-                Button(action: {
-                    Task {
-                        await viewModel.loadBannedNumbers()
+                HStack(spacing: 16) {
+                    Button(action: {
+                        showBanPhoneSheet = true
+                    }) {
+                        Image(systemName: "plus")
+                            .font(.title2)
+                            .foregroundColor(.primary)
                     }
-                }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.title2)
-                        .foregroundColor(.primary)
+                    
+                    Button(action: {
+                        Task {
+                            await viewModel.loadBannedNumbers()
+                        }
+                    }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.title2)
+                            .foregroundColor(.primary)
+                    }
                 }
             }
             

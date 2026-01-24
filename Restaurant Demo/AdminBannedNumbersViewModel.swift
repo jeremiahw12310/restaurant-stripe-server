@@ -150,6 +150,86 @@ class AdminBannedNumbersViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Ban Phone Number
+    
+    @Published var isBanningPhone: Bool = false
+    @Published var banPhoneError: String?
+    @Published var showBanSuccess: Bool = false
+    @Published var banSuccessMessage: String = ""
+    
+    struct BanPhoneResponse: Codable {
+        let success: Bool
+        let phone: String
+        let existingAccountFound: Bool
+        let bannedUserId: String?
+        let bannedUserName: String?
+    }
+    
+    func banPhoneNumber(phone: String, reason: String?) async {
+        guard !isBanningPhone else { return }
+        isBanningPhone = true
+        banPhoneError = nil
+        
+        do {
+            guard let user = Auth.auth().currentUser else {
+                banPhoneError = "You must be signed in to ban phone numbers"
+                isBanningPhone = false
+                return
+            }
+            
+            let token = try await user.getIDTokenResult(forcingRefresh: false).token
+            guard let url = URL(string: "\(Config.backendURL)/admin/ban-phone") else {
+                banPhoneError = "Invalid server URL"
+                isBanningPhone = false
+                return
+            }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            
+            var body: [String: Any] = ["phone": phone]
+            if let reason = reason, !reason.isEmpty {
+                body["reason"] = reason
+            }
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                banPhoneError = "Unexpected response from server"
+                isBanningPhone = false
+                return
+            }
+            
+            guard (200..<300).contains(http.statusCode) else {
+                let bodyText = String(data: data, encoding: .utf8) ?? ""
+                banPhoneError = "Failed to ban phone number (\(http.statusCode)). \(bodyText)"
+                isBanningPhone = false
+                return
+            }
+            
+            let decoded = try JSONDecoder().decode(BanPhoneResponse.self, from: data)
+            
+            // Build success message
+            if decoded.existingAccountFound, let userName = decoded.bannedUserName {
+                banSuccessMessage = "Phone number banned. Existing account for \(userName) has been banned."
+            } else {
+                banSuccessMessage = "Phone number banned. No existing account found - future signups with this number will be blocked."
+            }
+            
+            showBanSuccess = true
+            isBanningPhone = false
+            
+            // Refresh the banned numbers list
+            await loadBannedNumbers()
+            
+        } catch {
+            banPhoneError = "Failed to ban phone number: \(error.localizedDescription)"
+            isBanningPhone = false
+        }
+    }
+    
     // MARK: - Unban Number
     
     @Published var isUnbanning: Bool = false

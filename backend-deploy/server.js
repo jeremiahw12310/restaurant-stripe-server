@@ -7425,6 +7425,11 @@ IMPORTANT:
       
       const weekAgo = new Date(todayStart);
       weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
+      
+      // Calculate current month boundaries for rewards redeemed this month
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
+      const nextMonthStart = new Date(monthStart);
+      nextMonthStart.setUTCMonth(nextMonthStart.getUTCMonth() + 1);
 
       // Run all queries in parallel for efficiency
       // Use count() aggregation for large collections to avoid reading all documents
@@ -7473,11 +7478,12 @@ IMPORTANT:
           .get()
           .then(snap => snap.data().count),
         
-        // Total rewards redeemed (using count aggregation) - only rewards with usedAt
-        // so total matches reward history (which requires usedAt for date grouping)
+        // Rewards redeemed this month (using count aggregation) - only rewards with usedAt
+        // Changed from all-time to this month to match Admin Overview display
         db.collection('redeemedRewards')
           .where('isUsed', '==', true)
-          .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(new Date(0)))
+          .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
+          .where('usedAt', '<', admin.firestore.Timestamp.fromDate(nextMonthStart))
           .count()
           .get()
           .then(snap => snap.data().count),
@@ -7812,6 +7818,360 @@ IMPORTANT:
     } catch (error) {
       console.error('❌ Error fetching reward history:', error);
       res.status(500).json({ error: 'Failed to fetch reward history' });
+    }
+  });
+
+  /**
+   * GET /admin/rewards/history/all-time-summary
+   * 
+   * Get all-time summary statistics for reward history page header.
+   * Returns total rewards, total points redeemed, and unique users.
+   */
+  app.get('/admin/rewards/history/all-time-summary', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const db = admin.firestore();
+      
+      // Use SAME batching pattern as monthly summary for consistency
+      let totalRewards = 0;
+      let totalPointsRedeemed = 0;
+      const uniqueUserIds = new Set();
+      let summaryLastDoc = null;
+      let summaryHasMore = true;
+      const summaryBatchSize = 1000;
+      
+      while (summaryHasMore) {
+        let summaryQuery = db.collection('redeemedRewards')
+          .where('isUsed', '==', true)
+          .orderBy('usedAt', 'desc') // Required for startAfter pagination
+          .select('pointsRequired', 'userId') // Only fetch needed fields
+          .limit(summaryBatchSize);
+        
+        if (summaryLastDoc) {
+          summaryQuery = summaryQuery.startAfter(summaryLastDoc);
+        }
+        
+        const summaryBatch = await summaryQuery.get();
+        summaryHasMore = summaryBatch.size === summaryBatchSize;
+        totalRewards += summaryBatch.size;
+        
+        summaryBatch.forEach(doc => {
+          const data = doc.data();
+          if (typeof data.pointsRequired === 'number') {
+            totalPointsRedeemed += data.pointsRequired;
+          }
+          if (data.userId) {
+            uniqueUserIds.add(data.userId);
+          }
+        });
+        
+        if (summaryHasMore && summaryBatch.docs.length > 0) {
+          summaryLastDoc = summaryBatch.docs[summaryBatch.docs.length - 1];
+        } else {
+          summaryHasMore = false;
+        }
+      }
+
+      res.json({
+        totalRewards,
+        totalPointsRedeemed,
+        uniqueUsers: uniqueUserIds.size
+      });
+
+    } catch (error) {
+      console.error('❌ Error fetching all-time summary:', error);
+      res.status(500).json({ error: 'Failed to fetch all-time summary' });
+    }
+  });
+
+  /**
+   * GET /admin/rewards/history/all-time
+   * 
+   * Get paginated list of all redeemed rewards (all-time, no date filter).
+   * Includes user first names and summary statistics.
+   */
+  app.get('/admin/rewards/history/all-time', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const limit = parseInt(req.query.limit) || 50;
+      const startAfter = req.query.startAfter;
+
+      const db = admin.firestore();
+
+      // Build query - SAME as monthly but NO date filter
+      let query = db.collection('redeemedRewards')
+        .where('isUsed', '==', true)
+        .orderBy('usedAt', 'desc')
+        .limit(limit + 1); // Fetch one extra to check if there's more
+
+      // Apply pagination cursor if provided
+      if (startAfter) {
+        const cursorDoc = await db.collection('redeemedRewards').doc(startAfter).get();
+        if (cursorDoc.exists) {
+          query = query.startAfter(cursorDoc);
+        }
+      }
+
+      const rewardsSnapshot = await query.get();
+      const hasMore = rewardsSnapshot.size > limit;
+      const rewardsDocs = hasMore ? rewardsSnapshot.docs.slice(0, limit) : rewardsSnapshot.docs;
+
+      // Get all unique user IDs
+      const userIds = [...new Set(rewardsDocs.map(doc => doc.data().userId).filter(Boolean))];
+
+      // Batch fetch user first names (Firestore 'in' queries support up to 10 items)
+      const userNamesMap = new Map();
+      if (userIds.length > 0) {
+        const batchSize = 10;
+        for (let i = 0; i < userIds.length; i += batchSize) {
+          const batch = userIds.slice(i, i + batchSize);
+          const usersSnapshot = await db.collection('users')
+            .where(admin.firestore.FieldPath.documentId(), 'in', batch)
+            .get();
+          
+          usersSnapshot.forEach(userDoc => {
+            const userData = userDoc.data();
+            const firstName = userData.firstName || userData.name?.split(' ')[0] || 'Unknown';
+            userNamesMap.set(userDoc.id, firstName);
+          });
+        }
+      }
+
+      // Get summary statistics using SAME batching pattern as monthly endpoint
+      let totalRewards = 0;
+      let totalPointsRedeemed = 0;
+      const uniqueUserIds = new Set();
+      
+      let summaryLastDoc = null;
+      let summaryHasMore = true;
+      const summaryBatchSize = 1000;
+      
+      while (summaryHasMore) {
+        let summaryQuery = db.collection('redeemedRewards')
+          .where('isUsed', '==', true)
+          .orderBy('usedAt', 'desc') // Required for startAfter pagination
+          .select('pointsRequired', 'userId')
+          .limit(summaryBatchSize);
+        
+        if (summaryLastDoc) {
+          summaryQuery = summaryQuery.startAfter(summaryLastDoc);
+        }
+        
+        const summaryBatch = await summaryQuery.get();
+        summaryHasMore = summaryBatch.size === summaryBatchSize;
+        totalRewards += summaryBatch.size;
+        
+        summaryBatch.forEach(doc => {
+          const data = doc.data();
+          if (typeof data.pointsRequired === 'number') {
+            totalPointsRedeemed += data.pointsRequired;
+          }
+          if (data.userId) {
+            uniqueUserIds.add(data.userId);
+          }
+        });
+        
+        if (summaryHasMore && summaryBatch.docs.length > 0) {
+          summaryLastDoc = summaryBatch.docs[summaryBatch.docs.length - 1];
+        } else {
+          summaryHasMore = false;
+        }
+      }
+
+      // Format rewards with user names
+      const rewards = rewardsDocs.map(doc => {
+        const data = doc.data();
+        const userId = data.userId;
+        const userFirstName = userId ? (userNamesMap.get(userId) || 'Unknown') : 'Unknown';
+        
+        return {
+          id: doc.id,
+          userFirstName,
+          rewardTitle: data.rewardTitle || 'Reward',
+          rewardDescription: data.rewardDescription || '',
+          rewardCategory: data.rewardCategory || '',
+          selectedItemName: data.selectedItemName || null,
+          selectedItemName2: data.selectedItemName2 || null,
+          selectedToppingName: data.selectedToppingName || null,
+          cookingMethod: data.cookingMethod || null,
+          drinkType: data.drinkType || null,
+          pointsRequired: data.pointsRequired || 0,
+          redemptionCode: data.redemptionCode || '',
+          usedAt: data.usedAt?.toDate?.().toISOString() || null
+        };
+      });
+
+      const result = {
+        month: 'all-time',
+        summary: {
+          totalRewards,
+          totalPointsRedeemed,
+          uniqueUsers: uniqueUserIds.size
+        },
+        rewards,
+        hasMore,
+        nextCursor: hasMore && rewardsDocs.length > 0 ? rewardsDocs[rewardsDocs.length - 1].id : null
+      };
+
+      console.log(`📊 Fetched ${rewards.length} all-time rewards (hasMore: ${hasMore})`);
+      res.json(result);
+
+    } catch (error) {
+      console.error('❌ Error fetching all-time reward history:', error);
+      res.status(500).json({ error: 'Failed to fetch all-time reward history' });
+    }
+  });
+
+  /**
+   * GET /admin/rewards/history/this-year
+   * 
+   * Get paginated list of redeemed rewards for the current year.
+   * Includes user first names and summary statistics.
+   */
+  app.get('/admin/rewards/history/this-year', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const limit = parseInt(req.query.limit) || 50;
+      const startAfter = req.query.startAfter;
+
+      const db = admin.firestore();
+
+      // Calculate year boundaries (same pattern as month boundaries)
+      const now = new Date();
+      const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0, 0));
+      const nextYearStart = new Date(Date.UTC(now.getUTCFullYear() + 1, 0, 1, 0, 0, 0, 0));
+
+      // Build query - SAME as monthly but with year boundaries
+      let query = db.collection('redeemedRewards')
+        .where('isUsed', '==', true)
+        .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(yearStart))
+        .where('usedAt', '<', admin.firestore.Timestamp.fromDate(nextYearStart))
+        .orderBy('usedAt', 'desc')
+        .limit(limit + 1); // Fetch one extra to check if there's more
+
+      // Apply pagination cursor if provided
+      if (startAfter) {
+        const cursorDoc = await db.collection('redeemedRewards').doc(startAfter).get();
+        if (cursorDoc.exists) {
+          query = query.startAfter(cursorDoc);
+        }
+      }
+
+      const rewardsSnapshot = await query.get();
+      const hasMore = rewardsSnapshot.size > limit;
+      const rewardsDocs = hasMore ? rewardsSnapshot.docs.slice(0, limit) : rewardsSnapshot.docs;
+
+      // Get all unique user IDs
+      const userIds = [...new Set(rewardsDocs.map(doc => doc.data().userId).filter(Boolean))];
+
+      // Batch fetch user first names (Firestore 'in' queries support up to 10 items)
+      const userNamesMap = new Map();
+      if (userIds.length > 0) {
+        const batchSize = 10;
+        for (let i = 0; i < userIds.length; i += batchSize) {
+          const batch = userIds.slice(i, i + batchSize);
+          const usersSnapshot = await db.collection('users')
+            .where(admin.firestore.FieldPath.documentId(), 'in', batch)
+            .get();
+          
+          usersSnapshot.forEach(userDoc => {
+            const userData = userDoc.data();
+            const firstName = userData.firstName || userData.name?.split(' ')[0] || 'Unknown';
+            userNamesMap.set(userDoc.id, firstName);
+          });
+        }
+      }
+
+      // Get summary statistics using SAME batching pattern as monthly endpoint
+      let totalRewards = 0;
+      let totalPointsRedeemed = 0;
+      const uniqueUserIds = new Set();
+      
+      let summaryLastDoc = null;
+      let summaryHasMore = true;
+      const summaryBatchSize = 1000;
+      
+      while (summaryHasMore) {
+        let summaryQuery = db.collection('redeemedRewards')
+          .where('isUsed', '==', true)
+          .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(yearStart))
+          .where('usedAt', '<', admin.firestore.Timestamp.fromDate(nextYearStart))
+          .orderBy('usedAt', 'desc') // Required for startAfter pagination
+          .select('pointsRequired', 'userId')
+          .limit(summaryBatchSize);
+        
+        if (summaryLastDoc) {
+          summaryQuery = summaryQuery.startAfter(summaryLastDoc);
+        }
+        
+        const summaryBatch = await summaryQuery.get();
+        summaryHasMore = summaryBatch.size === summaryBatchSize;
+        totalRewards += summaryBatch.size;
+        
+        summaryBatch.forEach(doc => {
+          const data = doc.data();
+          if (typeof data.pointsRequired === 'number') {
+            totalPointsRedeemed += data.pointsRequired;
+          }
+          if (data.userId) {
+            uniqueUserIds.add(data.userId);
+          }
+        });
+        
+        if (summaryHasMore && summaryBatch.docs.length > 0) {
+          summaryLastDoc = summaryBatch.docs[summaryBatch.docs.length - 1];
+        } else {
+          summaryHasMore = false;
+        }
+      }
+
+      // Format rewards with user names
+      const rewards = rewardsDocs.map(doc => {
+        const data = doc.data();
+        const userId = data.userId;
+        const userFirstName = userId ? (userNamesMap.get(userId) || 'Unknown') : 'Unknown';
+        
+        return {
+          id: doc.id,
+          userFirstName,
+          rewardTitle: data.rewardTitle || 'Reward',
+          rewardDescription: data.rewardDescription || '',
+          rewardCategory: data.rewardCategory || '',
+          selectedItemName: data.selectedItemName || null,
+          selectedItemName2: data.selectedItemName2 || null,
+          selectedToppingName: data.selectedToppingName || null,
+          cookingMethod: data.cookingMethod || null,
+          drinkType: data.drinkType || null,
+          pointsRequired: data.pointsRequired || 0,
+          redemptionCode: data.redemptionCode || '',
+          usedAt: data.usedAt?.toDate?.().toISOString() || null
+        };
+      });
+
+      const result = {
+        month: 'this-year',
+        summary: {
+          totalRewards,
+          totalPointsRedeemed,
+          uniqueUsers: uniqueUserIds.size
+        },
+        rewards,
+        hasMore,
+        nextCursor: hasMore && rewardsDocs.length > 0 ? rewardsDocs[rewardsDocs.length - 1].id : null
+      };
+
+      console.log(`📊 Fetched ${rewards.length} rewards for this year (hasMore: ${hasMore})`);
+      res.json(result);
+
+    } catch (error) {
+      console.error('❌ Error fetching this-year reward history:', error);
+      res.status(500).json({ error: 'Failed to fetch this-year reward history' });
     }
   });
 

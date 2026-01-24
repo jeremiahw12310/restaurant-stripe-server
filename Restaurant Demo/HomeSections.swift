@@ -43,13 +43,6 @@ struct HomeRewardsSection: View {
                 .onTapGesture { showRedeemedCard = true }
                 .padding(.bottom, 8)
             }
-            .alert("Points Refunded", isPresented: $sharedRewardsVM.showRefundNotification) {
-                Button("OK") {
-                    sharedRewardsVM.showRefundNotification = false
-                }
-            } message: {
-                Text(sharedRewardsVM.refundNotificationMessage)
-            }
             HStack {
                 HStack(spacing: 8) {
                     ZStack {
@@ -280,6 +273,13 @@ struct HomeRewardsSection: View {
                     onDismiss: { showRedeemedCard = false }
                 )
             }
+        }
+        .alert("Points Refunded", isPresented: $sharedRewardsVM.showRefundNotification) {
+            Button("OK") {
+                sharedRewardsVM.showRefundNotification = false
+            }
+        } message: {
+            Text(sharedRewardsVM.refundNotificationMessage)
         }
     }
 }

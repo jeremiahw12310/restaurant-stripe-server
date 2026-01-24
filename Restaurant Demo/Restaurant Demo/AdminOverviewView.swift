@@ -274,7 +274,7 @@ struct AdminOverviewView: View {
                 GridItem(.flexible(), spacing: 12)
             ], spacing: 12) {
                 AdminStatCard(
-                    title: "Total Redeemed",
+                    title: "Redeemed This Month",
                     value: "\(stats.totalRewardsRedeemed)",
                     icon: "gift.fill",
                     color: .purple

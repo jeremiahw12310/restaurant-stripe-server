@@ -300,7 +300,7 @@ class AdminUserDetailViewModel: ObservableObject {
                     ? currentLifetime + delta  // Add delta when points increase
                     : currentLifetime          // Keep same when points decrease
                 
-                var updateData: [String: Any] = [
+                let updateData: [String: Any] = [
                     "phone": phone,
                     "points": pointsInt,
                     "lifetimePoints": newLifetimePoints,

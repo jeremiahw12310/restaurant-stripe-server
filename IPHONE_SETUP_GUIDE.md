@@ -163,7 +163,7 @@ case .production:
 **Use any:**
 - Future expiry date (e.g., 12/34)
 - Any 3-digit CVC (e.g., 123)
-- Any postal code (e.g., 12345)
+- Any postal code (e.g., 10001)
 
 ### What Happens During Testing
 

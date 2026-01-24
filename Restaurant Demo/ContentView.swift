@@ -7,6 +7,7 @@ extension Notification.Name {
     static let switchToCommunityTab = Notification.Name("switchToCommunityTab")
     static let switchToMoreTab = Notification.Name("switchToMoreTab")
     static let incomingReferralCode = Notification.Name("incomingReferralCode")
+    static let openRewardsHistory = Notification.Name("openRewardsHistory")
 }
 
 struct ContentView: View {
@@ -82,6 +83,11 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .switchToMoreTab)) { _ in
                 selectedTab = 4
             }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("openReceiptHistory"))) { _ in
+                selectedTab = 3
+                // Post notification to show history in rewards screen
+                NotificationCenter.default.post(name: .openRewardsHistory, object: nil)
+            }
             .onAppear {
                 setupThemeTracking()
                 // Start/attach the user snapshot listener once for the app session.
@@ -100,13 +106,7 @@ struct ContentView: View {
                     NotificationService.shared.handlePushNotificationTap(userInfo: userInfo)
                 }
             }
-            .alert("Account Banned", isPresented: $userVM.showBannedAlert) {
-                Button("OK", role: .cancel) {
-                    userVM.showBannedAlert = false
-                }
-            } message: {
-                Text("Your account has been banned. You will be signed out. Please contact support if you believe this is an error.")
-            }
+            // Ban alert removed - banned users are redirected to deletion screen in LaunchView
             .onChange(of: selectedTab) { _, newTab in
                 updateThemeContext(for: newTab)
                 trackUserInteraction(for: newTab)

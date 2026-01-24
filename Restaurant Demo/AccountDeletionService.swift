@@ -44,13 +44,21 @@ class AccountDeletionService {
             if failed { didFail = true }
         }
         
+        anonymizeRedeemedRewards(uid: uid, group: group) { failed in
+            if failed { didFail = true }
+        }
+        
+        anonymizeBannedNumbers(uid: uid, group: group) { failed in
+            if failed { didFail = true }
+        }
+        
         // MARK: - Deletion (remove user-specific data)
         
         deletePointsTransactions(uid: uid, group: group) { failed in
             if failed { didFail = true }
         }
         
-        deleteRedeemedRewards(uid: uid, group: group) { failed in
+        deletePostLikesAndReactions(uid: uid, group: group) { failed in
             if failed { didFail = true }
         }
         
@@ -411,12 +419,188 @@ class AccountDeletionService {
         }
     }
     
-    private func deleteRedeemedRewards(uid: String, group: DispatchGroup, completion: @escaping (Bool) -> Void) {
-        group.enter()
-        deleteWhereUserIdEquals("redeemedRewards", uid: uid) { failed in
-            group.leave()
-            completion(failed)
+    private func deletePostLikesAndReactions(uid: String, group: DispatchGroup, completion: @escaping (Bool) -> Void) {
+        let innerGroup = DispatchGroup()
+        var didFail = false
+        
+        // Delete likes where document ID is the userId
+        // Note: Firestore doesn't support querying by document ID directly,
+        // so we need to query all posts and check their likes subcollections
+        innerGroup.enter()
+        db.collection("posts").getDocuments { [weak self] snapshot, error in
+            guard let self = self else {
+                innerGroup.leave()
+                return
+            }
+            
+            if let error = error {
+                print("⚠️ Could not query posts for likes/reactions deletion: \(error.localizedDescription)")
+                didFail = true
+                innerGroup.leave()
+                return
+            }
+            
+            let posts = snapshot?.documents ?? []
+            guard !posts.isEmpty else {
+                innerGroup.leave()
+                return
+            }
+            
+            var totalDeleted = 0
+            let deleteGroup = DispatchGroup()
+            
+            for postDoc in posts.prefix(100) { // Limit to 100 posts to avoid too many operations
+                deleteGroup.enter()
+                
+                // Delete like document (document ID is userId)
+                let likeRef = postDoc.reference.collection("likes").document(uid)
+                likeRef.delete { error in
+                    if let error = error {
+                        // Document might not exist, which is fine
+                        if (error as NSError).code != 5 { // 5 = NOT_FOUND
+                            print("⚠️ Error deleting like for post \(postDoc.documentID): \(error.localizedDescription)")
+                        }
+                    } else {
+                        totalDeleted += 1
+                    }
+                    deleteGroup.leave()
+                }
+                
+                deleteGroup.enter()
+                
+                // Delete reaction document (document ID is userId)
+                let reactionRef = postDoc.reference.collection("reactions").document(uid)
+                reactionRef.delete { error in
+                    if let error = error {
+                        // Document might not exist, which is fine
+                        if (error as NSError).code != 5 { // 5 = NOT_FOUND
+                            print("⚠️ Error deleting reaction for post \(postDoc.documentID): \(error.localizedDescription)")
+                        }
+                    } else {
+                        totalDeleted += 1
+                    }
+                    deleteGroup.leave()
+                }
+            }
+            
+            deleteGroup.notify(queue: .main) {
+                if totalDeleted > 0 {
+                    print("✅ Deleted \(totalDeleted) post like(s) and/or reaction(s)")
+                }
+                innerGroup.leave()
+            }
         }
+        
+        innerGroup.notify(queue: .main) {
+            group.leave()
+            completion(didFail)
+        }
+    }
+    
+    private func anonymizeRedeemedRewards(uid: String, group: DispatchGroup, completion: @escaping (Bool) -> Void) {
+        group.enter()
+        db.collection("redeemedRewards")
+            .whereField("userId", isEqualTo: uid)
+            .getDocuments { [weak self] snapshot, error in
+                guard let self = self else {
+                    group.leave()
+                    completion(true)
+                    return
+                }
+                
+                if let error = error {
+                    print("⚠️ Could not query redeemedRewards for anonymization: \(error.localizedDescription)")
+                    group.leave()
+                    completion(true)
+                    return
+                }
+                
+                let docs = snapshot?.documents ?? []
+                guard !docs.isEmpty else {
+                    group.leave()
+                    completion(false)
+                    return
+                }
+                
+                let batch = self.db.batch()
+                for doc in docs.prefix(450) {
+                    batch.updateData([
+                        "userName": "Deleted User",
+                        "userPhone": ""
+                    ], forDocument: doc.reference)
+                }
+                
+                batch.commit { batchError in
+                    if let batchError = batchError {
+                        print("⚠️ Failed anonymizing redeemedRewards: \(batchError.localizedDescription)")
+                        group.leave()
+                        completion(true)
+                    } else {
+                        print("✅ Anonymized \(min(docs.count, 450)) redeemed reward(s)")
+                        if docs.count > 450 {
+                            print("⚠️ More than 450 redeemed rewards; additional rewards were not anonymized in this pass.")
+                        }
+                        group.leave()
+                        completion(false)
+                    }
+                }
+            }
+    }
+    
+    private func anonymizeBannedNumbers(uid: String, group: DispatchGroup, completion: @escaping (Bool) -> Void) {
+        group.enter()
+        // Query bannedNumbers where originalUserId matches
+        // Note: We can't query by originalUserId directly, so we'll need to query all and filter
+        // This is less efficient but necessary since bannedNumbers is keyed by phone number
+        db.collection("bannedNumbers")
+            .getDocuments { [weak self] snapshot, error in
+                guard let self = self else {
+                    group.leave()
+                    completion(true)
+                    return
+                }
+                
+                if let error = error {
+                    print("⚠️ Could not query bannedNumbers for anonymization: \(error.localizedDescription)")
+                    group.leave()
+                    completion(true)
+                    return
+                }
+                
+                let docs = snapshot?.documents.filter { doc in
+                    let data = doc.data()
+                    return (data["originalUserId"] as? String) == uid
+                }
+                
+                guard let matchingDocs = docs, !matchingDocs.isEmpty else {
+                    group.leave()
+                    completion(false)
+                    return
+                }
+                
+                let batch = self.db.batch()
+                for doc in matchingDocs.prefix(450) {
+                    // Only anonymize originalUserName - keep the ban intact
+                    batch.updateData([
+                        "originalUserName": "Deleted User"
+                    ], forDocument: doc.reference)
+                }
+                
+                batch.commit { batchError in
+                    if let batchError = batchError {
+                        print("⚠️ Failed anonymizing bannedNumbers: \(batchError.localizedDescription)")
+                        group.leave()
+                        completion(true)
+                    } else {
+                        print("✅ Anonymized \(min(matchingDocs.count, 450)) banned number record(s)")
+                        if matchingDocs.count > 450 {
+                            print("⚠️ More than 450 banned number records; additional records were not anonymized in this pass.")
+                        }
+                        group.leave()
+                        completion(false)
+                    }
+                }
+            }
     }
     
     private func deleteReferrals(uid: String, group: DispatchGroup, completion: @escaping (Bool) -> Void) {

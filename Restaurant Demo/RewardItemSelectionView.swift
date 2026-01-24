@@ -22,17 +22,8 @@ struct RewardItemSelectionView: View {
     
     var body: some View {
         ZStack {
-            // Background gradient matching reward color
-            LinearGradient(
-                gradient: Gradient(colors: [
-                    reward.color.opacity(0.9),
-                    reward.color.opacity(0.7),
-                    Color.black.opacity(0.85)
-                ]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            // Background with dark base and subtle reward color accent
+            RewardSelectionBackground(rewardColor: reward.color)
             
             VStack(spacing: 0) {
                 // Header
@@ -157,14 +148,26 @@ struct RewardItemSelectionView: View {
             Text(reward.icon)
                 .font(.system(size: 60))
             
-            Text("No specific items configured")
-                .font(.system(size: 18, weight: .bold))
-                .foregroundColor(.white)
-            
-            Text("You'll receive a \(reward.title)")
-                .font(.system(size: 14))
-                .foregroundColor(.white.opacity(0.7))
-                .multilineTextAlignment(.center)
+            if let tierId = reward.rewardTierId {
+                Text("No items configured for this reward tier")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(.white)
+                
+                Text("This reward tier may need to be configured with items. You can skip and proceed with the generic reward.")
+                    .font(.system(size: 14))
+                    .foregroundColor(.white.opacity(0.7))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 16)
+            } else {
+                Text("No specific items configured")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(.white)
+                
+                Text("You'll receive a \(reward.title)")
+                    .font(.system(size: 14))
+                    .foregroundColor(.white.opacity(0.7))
+                    .multilineTextAlignment(.center)
+            }
             
             Spacer()
         }
@@ -282,6 +285,10 @@ struct RewardItemSelectionView: View {
         isLoading = true
         errorMessage = nil
         
+        let tierId = reward.rewardTierId ?? "none"
+        let tierInfo = "Reward: '\(reward.title)', TierId: '\(tierId)', Points: \(reward.pointsRequired)"
+        print("🎁 Loading eligible items - \(tierInfo)")
+        
         let result = await redemptionService.fetchEligibleItems(
             pointsRequired: reward.pointsRequired,
             tierId: reward.rewardTierId
@@ -290,9 +297,21 @@ struct RewardItemSelectionView: View {
         await MainActor.run {
             switch result {
             case .success(let items):
+                let originalCount = items.count
                 eligibleItems = filteredItemsForReward(items)
+                let filteredCount = eligibleItems.count
+                
+                print("✅ Loaded items - \(tierInfo): \(originalCount) items from backend, \(filteredCount) items after filtering")
+                
+                if eligibleItems.isEmpty && originalCount > 0 {
+                    print("⚠️ Warning: All items were filtered out. Category filter: '\(reward.eligibleCategoryId ?? "none")'")
+                } else if eligibleItems.isEmpty {
+                    print("⚠️ Warning: Backend returned empty items array for tier. This tier may not be configured in Firestore 'rewardTierItems' collection.")
+                }
+                
                 isLoading = false
             case .failure(let error):
+                print("❌ Failed to load items - \(tierInfo): \(error.localizedDescription)")
                 errorMessage = error.localizedDescription
                 isLoading = false
             }
@@ -302,15 +321,22 @@ struct RewardItemSelectionView: View {
     private func filteredItemsForReward(_ items: [RewardEligibleItem]) -> [RewardEligibleItem] {
         guard let categoryFilter = reward.eligibleCategoryId?.trimmingCharacters(in: .whitespacesAndNewlines),
               !categoryFilter.isEmpty else {
+            // No category filter - return all items as-is
+            print("📋 No category filter applied, showing all \(items.count) items from backend")
             return items
         }
-        return items.filter { item in
+        
+        // Filter by category
+        let filtered = items.filter { item in
             guard let categoryId = item.categoryId?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !categoryId.isEmpty else {
                 return false
             }
             return categoryId.caseInsensitiveCompare(categoryFilter) == .orderedSame
         }
+        
+        print("📋 Filtered \(items.count) items to \(filtered.count) items matching category '\(categoryFilter)'")
+        return filtered
     }
 }
 
@@ -319,8 +345,19 @@ struct ItemSelectionCard: View {
     let item: RewardEligibleItem
     let isSelected: Bool
     let onSelect: () -> Void
+    let showImage: Bool // Whether to show images (false for toppings)
+    
+    init(item: RewardEligibleItem, isSelected: Bool, onSelect: @escaping () -> Void, showImage: Bool = true) {
+        self.item = item
+        self.isSelected = isSelected
+        self.onSelect = onSelect
+        self.showImage = showImage
+    }
     
     private var hasImage: Bool {
+        if !showImage {
+            return false // Force text-only if showImage is false
+        }
         if let imageURL = item.imageURL {
             return !imageURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
@@ -339,11 +376,11 @@ struct ItemSelectionCard: View {
             .padding(12)
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(isSelected ? Color.white.opacity(0.25) : Color.white.opacity(0.1))
+                    .fill(isSelected ? Color.white.opacity(0.25) : Color.black.opacity(0.2))
                     .overlay(
                         RoundedRectangle(cornerRadius: 16)
                             .stroke(
-                                isSelected ? Color(red: 1.0, green: 0.85, blue: 0.4) : Color.white.opacity(0.15),
+                                isSelected ? Color(red: 1.0, green: 0.85, blue: 0.4) : Color.white.opacity(0.2),
                                 lineWidth: isSelected ? 2 : 1
                             )
                     )

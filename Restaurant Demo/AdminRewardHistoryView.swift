@@ -16,8 +16,16 @@ struct AdminRewardHistoryView: View {
                         // Header
                         header
                         
-                        // Month Picker
-                        if !viewModel.availableMonths.isEmpty {
+                        // All-Time Summary Card (always visible at top)
+                        if let allTimeSummary = viewModel.allTimeSummary {
+                            allTimeSummaryCard(summary: allTimeSummary)
+                        }
+                        
+                        // Time Period Selector
+                        timePeriodSelector
+                        
+                        // Month Picker (only shown when This Month is selected)
+                        if viewModel.selectedTimePeriod == .thisMonth && !viewModel.availableMonths.isEmpty {
                             monthPicker
                         }
                         
@@ -50,7 +58,13 @@ struct AdminRewardHistoryView: View {
             .navigationBarHidden(true)
             .onAppear {
                 Task {
-                    await viewModel.loadAvailableMonths()
+                    await viewModel.loadAllTimeSummary()
+                    if viewModel.selectedTimePeriod == .thisMonth {
+                        await viewModel.loadAvailableMonths()
+                    } else {
+                        // Load data for selected time period
+                        await viewModel.loadRewardsForPeriod(viewModel.selectedTimePeriod)
+                    }
                 }
             }
         }
@@ -85,9 +99,97 @@ struct AdminRewardHistoryView: View {
             }
             
             // Subtitle
-            Text("Monthly redemption activity overview")
+            Text(viewModel.selectedTimePeriod == .thisMonth ? 
+                 "Monthly redemption activity overview" : 
+                 "\(viewModel.selectedTimePeriod.displayName) redemption activity")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
+        }
+    }
+    
+    // MARK: - All-Time Summary Card
+    
+    private func allTimeSummaryCard(summary: RewardHistorySummary) -> some View {
+        VStack(spacing: 16) {
+            HStack(spacing: 8) {
+                Image(systemName: "chart.bar.xaxis")
+                    .font(.subheadline)
+                    .foregroundColor(.purple)
+                
+                Text("All-Time Summary")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                
+                Spacer()
+            }
+            
+            LazyVGrid(columns: [
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12)
+            ], spacing: 12) {
+                AdminStatCard(
+                    title: "Total Rewards",
+                    value: "\(summary.totalRewards)",
+                    icon: "gift.fill",
+                    color: .purple
+                )
+                
+                AdminStatCard(
+                    title: "Points Redeemed",
+                    value: formatNumber(summary.totalPointsRedeemed),
+                    icon: "star.fill",
+                    color: .orange
+                )
+                
+                AdminStatCard(
+                    title: "Unique Users",
+                    value: "\(summary.uniqueUsers)",
+                    icon: "person.2.fill",
+                    color: .blue
+                )
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white)
+                .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
+        )
+    }
+    
+    // MARK: - Time Period Selector
+    
+    private var timePeriodSelector: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Time Period")
+                .font(.headline)
+                .foregroundColor(.primary)
+            
+            HStack(spacing: 12) {
+                ForEach(TimePeriod.allCases, id: \.self) { period in
+                    Button(action: {
+                        viewModel.selectedTimePeriod = period
+                        Task {
+                            await viewModel.loadRewardsForPeriod(period)
+                        }
+                    }) {
+                        Text(period.displayName)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(viewModel.selectedTimePeriod == period ? .white : .primary)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(viewModel.selectedTimePeriod == period ? Color.blue : Color.white)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
+                            )
+                    }
+                }
+            }
         }
     }
     
@@ -103,6 +205,7 @@ struct AdminRewardHistoryView: View {
                 HStack(spacing: 12) {
                     ForEach(viewModel.availableMonths) { month in
                         Button(action: {
+                            viewModel.selectedTimePeriod = .thisMonth
                             viewModel.selectedMonth = month.month
                             Task {
                                 await viewModel.loadRewardsForMonth(month.month)
@@ -273,12 +376,23 @@ struct AdminRewardHistoryView: View {
                 .font(.system(size: 60))
                 .foregroundColor(.gray)
             
-            Text("No rewards redeemed this month")
+            Text(emptyStateMessage)
                 .font(.headline)
                 .foregroundColor(.gray)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 60)
+    }
+    
+    private var emptyStateMessage: String {
+        switch viewModel.selectedTimePeriod {
+        case .thisMonth:
+            return "No rewards redeemed this month"
+        case .thisYear:
+            return "No rewards redeemed this year"
+        case .allTime:
+            return "No rewards redeemed"
+        }
     }
     
     // MARK: - Helper

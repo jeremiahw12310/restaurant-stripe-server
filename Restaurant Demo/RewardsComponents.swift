@@ -195,7 +195,14 @@ struct RewardDetailView: View {
     private var requiresCookingMethodSelection: Bool {
         // Check if this reward needs cooking method selection (6-piece dumpling rewards)
         let title = reward.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return title == "6-Piece Lunch Special Dumplings" || title == "Pizza Dumplings (6)"
+        return title == "6-Piece Lunch Special Dumplings"
+        // Pizza Dumplings removed - they skip cooking method selection
+    }
+    
+    private var isPizzaDumplings: Bool {
+        // Check if this is the Pizza Dumplings reward
+        let title = reward.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title == "Pizza Dumplings (6)"
     }
     
     private var isFullComboReward: Bool {
@@ -596,8 +603,17 @@ struct RewardDetailView: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                             showToppingSelection = true
                         }
+                    } else if isPizzaDumplings, let dumplingItem = item {
+                        // Pizza Dumplings skip cooking method - auto-set to "Pan-fried"
+                        Task {
+                            await redeemReward(
+                                selectedItem: dumplingItem,
+                                selectedItem2: nil,
+                                cookingMethod: "Pan-fried"
+                            )
+                        }
                     } else if requiresCookingMethodSelection, let dumplingItem = item {
-                        // For 6-piece lunch special and pizza dumplings, show cooking method selection
+                        // For 6-piece lunch special, show cooking method selection
                         selectedSingleDumpling = dumplingItem
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                             showCookingMethodSelection = true

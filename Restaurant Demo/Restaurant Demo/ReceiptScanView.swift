@@ -88,10 +88,10 @@ struct ReceiptScanView: View {
                 .environmentObject(menuVM)
             }
         }
-        .onChange(of: showLoadingOverlay) { _ in
+        .onChange(of: showLoadingOverlay) { _, _ in
             // Combo generation removed
         }
-        .onChange(of: shouldSwitchToHome) { newValue in
+        .onChange(of: shouldSwitchToHome) { newValue, _ in
             if newValue {
                 switchToHomeTab()
                 // Reset all relevant state
@@ -2222,6 +2222,7 @@ func uploadReceiptImage(_ image: UIImage, completion: @escaping (Result<[String:
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        DeviceFingerprint.addToRequest(&request)
         
         let boundary = UUID().uuidString
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")

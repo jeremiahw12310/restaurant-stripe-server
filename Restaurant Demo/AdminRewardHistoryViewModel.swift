@@ -2,6 +2,22 @@ import Foundation
 import SwiftUI
 import FirebaseAuth
 
+// MARK: - Time Period Enum
+
+enum TimePeriod: String, CaseIterable {
+    case thisMonth = "this-month"
+    case thisYear = "this-year"
+    case allTime = "all-time"
+    
+    var displayName: String {
+        switch self {
+        case .thisMonth: return "This Month"
+        case .thisYear: return "This Year"
+        case .allTime: return "All Time"
+        }
+    }
+}
+
 // MARK: - Reward History Models
 
 struct RewardHistoryMonth: Identifiable, Codable {
@@ -108,11 +124,14 @@ struct RewardHistoryResponse: Codable {
 class AdminRewardHistoryViewModel: ObservableObject {
     @Published var availableMonths: [RewardHistoryMonth] = []
     @Published var selectedMonth: String?
+    @Published var selectedTimePeriod: TimePeriod = .thisMonth
     @Published var currentRewards: [RewardHistoryItem] = []
     @Published var summary: RewardHistorySummary?
+    @Published var allTimeSummary: RewardHistorySummary?
     @Published var isLoadingMonths: Bool = false
     @Published var isLoadingRewards: Bool = false
     @Published var isLoadingMore: Bool = false
+    @Published var isLoadingAllTimeSummary: Bool = false
     @Published var errorMessage: String?
     
     // Pagination state
@@ -120,9 +139,51 @@ class AdminRewardHistoryViewModel: ObservableObject {
     private var nextCursor: String?
     private var currentMonth: String?
     
+    // MARK: - Load All-Time Summary
+    
+    func loadAllTimeSummary() async {
+        guard !isLoadingAllTimeSummary else { return }
+        isLoadingAllTimeSummary = true
+        
+        do {
+            guard let user = Auth.auth().currentUser else {
+                isLoadingAllTimeSummary = false
+                return
+            }
+            
+            let token = try await user.getIDTokenResult(forcingRefresh: false).token
+            guard let url = URL(string: "\(Config.backendURL)/admin/rewards/history/all-time-summary") else {
+                isLoadingAllTimeSummary = false
+                return
+            }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
+                isLoadingAllTimeSummary = false
+                return
+            }
+            
+            let decoded = try JSONDecoder().decode(RewardHistorySummary.self, from: data)
+            allTimeSummary = decoded
+            isLoadingAllTimeSummary = false
+            
+        } catch {
+            isLoadingAllTimeSummary = false
+            // Silently fail - all-time summary is nice-to-have
+        }
+    }
+    
     // MARK: - Load Available Months
     
     func loadAvailableMonths() async {
+        // Only load months when This Month is selected
+        guard selectedTimePeriod == .thisMonth else { return }
+        
         guard !isLoadingMonths else { return }
         isLoadingMonths = true
         errorMessage = nil
@@ -165,7 +226,7 @@ class AdminRewardHistoryViewModel: ObservableObject {
             // Auto-select most recent month if none selected
             if selectedMonth == nil, let firstMonth = decoded.months.first {
                 selectedMonth = firstMonth.month
-                await loadRewardsForMonth(firstMonth.month)
+                await loadRewardsForPeriod(.thisMonth)
             }
             
             isLoadingMonths = false
@@ -176,13 +237,12 @@ class AdminRewardHistoryViewModel: ObservableObject {
         }
     }
     
-    // MARK: - Load Rewards for Month
+    // MARK: - Load Rewards for Period
     
-    func loadRewardsForMonth(_ month: String) async {
+    func loadRewardsForPeriod(_ period: TimePeriod) async {
         guard !isLoadingRewards else { return }
         isLoadingRewards = true
         errorMessage = nil
-        currentMonth = month
         currentRewards = []
         summary = nil
         nextCursor = nil
@@ -196,10 +256,45 @@ class AdminRewardHistoryViewModel: ObservableObject {
             }
             
             let token = try await user.getIDTokenResult(forcingRefresh: false).token
-            guard let url = URL(string: "\(Config.backendURL)/admin/rewards/history?month=\(month)") else {
-                errorMessage = "Invalid history URL."
-                isLoadingRewards = false
-                return
+            let url: URL
+            
+            switch period {
+            case .thisMonth:
+                // Use selected month if available, otherwise use current month
+                let monthString: String
+                if let selectedMonth = selectedMonth {
+                    monthString = selectedMonth
+                } else {
+                    let now = Date()
+                    let calendar = Calendar.current
+                    let year = calendar.component(.year, from: now)
+                    let month = calendar.component(.month, from: now)
+                    monthString = String(format: "%04d-%02d", year, month)
+                    selectedMonth = monthString
+                }
+                currentMonth = monthString
+                guard let monthUrl = URL(string: "\(Config.backendURL)/admin/rewards/history?month=\(monthString)") else {
+                    errorMessage = "Invalid history URL."
+                    isLoadingRewards = false
+                    return
+                }
+                url = monthUrl
+                
+            case .thisYear:
+                guard let yearUrl = URL(string: "\(Config.backendURL)/admin/rewards/history/this-year") else {
+                    errorMessage = "Invalid history URL."
+                    isLoadingRewards = false
+                    return
+                }
+                url = yearUrl
+                
+            case .allTime:
+                guard let allTimeUrl = URL(string: "\(Config.backendURL)/admin/rewards/history/all-time") else {
+                    errorMessage = "Invalid history URL."
+                    isLoadingRewards = false
+                    return
+                }
+                url = allTimeUrl
             }
             
             var request = URLRequest(url: url)
@@ -234,10 +329,18 @@ class AdminRewardHistoryViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Load Rewards for Month (kept for backward compatibility)
+    
+    func loadRewardsForMonth(_ month: String) async {
+        currentMonth = month
+        selectedTimePeriod = .thisMonth
+        await loadRewardsForPeriod(.thisMonth)
+    }
+    
     // MARK: - Load More Rewards (Pagination)
     
     func loadMoreRewards() async {
-        guard !isLoadingMore, hasMore, let cursor = nextCursor, let month = currentMonth else { return }
+        guard !isLoadingMore, hasMore, let cursor = nextCursor else { return }
         isLoadingMore = true
         
         do {
@@ -247,9 +350,30 @@ class AdminRewardHistoryViewModel: ObservableObject {
             }
             
             let token = try await user.getIDTokenResult(forcingRefresh: false).token
-            guard let url = URL(string: "\(Config.backendURL)/admin/rewards/history?month=\(month)&startAfter=\(cursor)") else {
-                isLoadingMore = false
-                return
+            let url: URL
+            
+            switch selectedTimePeriod {
+            case .thisMonth:
+                guard let month = currentMonth,
+                      let monthUrl = URL(string: "\(Config.backendURL)/admin/rewards/history?month=\(month)&startAfter=\(cursor)") else {
+                    isLoadingMore = false
+                    return
+                }
+                url = monthUrl
+                
+            case .thisYear:
+                guard let yearUrl = URL(string: "\(Config.backendURL)/admin/rewards/history/this-year?startAfter=\(cursor)") else {
+                    isLoadingMore = false
+                    return
+                }
+                url = yearUrl
+                
+            case .allTime:
+                guard let allTimeUrl = URL(string: "\(Config.backendURL)/admin/rewards/history/all-time?startAfter=\(cursor)") else {
+                    isLoadingMore = false
+                    return
+                }
+                url = allTimeUrl
             }
             
             var request = URLRequest(url: url)
@@ -280,10 +404,12 @@ class AdminRewardHistoryViewModel: ObservableObject {
     
     func refresh() {
         Task {
-            if let month = selectedMonth {
-                await loadRewardsForMonth(month)
-            } else {
+            await loadAllTimeSummary()
+            if selectedTimePeriod == .thisMonth {
                 await loadAvailableMonths()
+                // loadAvailableMonths will auto-load the selected month
+            } else {
+                await loadRewardsForPeriod(selectedTimePeriod)
             }
         }
     }

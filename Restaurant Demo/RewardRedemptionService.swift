@@ -46,11 +46,33 @@ class RewardRedemptionService: ObservableObject {
             
             if httpResponse.statusCode == 200 {
                 let tierResponse = try JSONDecoder().decode(RewardTierItemsResponse.self, from: data)
-                print("✅ Fetched \(tierResponse.eligibleItems.count) eligible items")
+                let itemCount = tierResponse.eligibleItems.count
+                
+                if let tierId = tierId, !tierId.isEmpty {
+                    print("✅ Fetched \(itemCount) eligible items for tier \(tierId)")
+                } else {
+                    print("✅ Fetched \(itemCount) eligible items for \(pointsRequired) point tier")
+                }
+                
+                if itemCount == 0 {
+                    if let tierId = tierId, !tierId.isEmpty {
+                        print("⚠️ WARNING: Tier '\(tierId)' returned 0 items. This tier may not be configured in Firestore 'rewardTierItems' collection.")
+                    } else {
+                        print("⚠️ WARNING: \(pointsRequired) point tier returned 0 items. This tier may not be configured in Firestore 'rewardTierItems' collection.")
+                    }
+                }
+                
                 return .success(tierResponse.eligibleItems)
             } else {
                 let errorData = try JSONSerialization.jsonObject(with: data) as? [String: Any]
                 let errorMessage = errorData?["error"] as? String ?? "Unknown error occurred"
+                
+                if let tierId = tierId, !tierId.isEmpty {
+                    print("❌ Error fetching tier \(tierId): \(errorMessage)")
+                } else {
+                    print("❌ Error fetching \(pointsRequired) point tier: \(errorMessage)")
+                }
+                
                 throw NetworkError.serverError(errorMessage)
             }
             
@@ -68,7 +90,15 @@ class RewardRedemptionService: ObservableObject {
         pointsRequired: Int,
         rewardCategory: String,
         selectedItemId: String? = nil,
-        selectedItemName: String? = nil
+        selectedItemName: String? = nil,
+        selectedToppingId: String? = nil,
+        selectedToppingName: String? = nil,
+        selectedItemId2: String? = nil,
+        selectedItemName2: String? = nil,
+        cookingMethod: String? = nil,
+        drinkType: String? = nil,
+        selectedDrinkItemId: String? = nil,
+        selectedDrinkItemName: String? = nil
     ) async -> Result<RewardRedemptionResponse, Error> {
         
         await MainActor.run {
@@ -84,7 +114,15 @@ class RewardRedemptionService: ObservableObject {
                 pointsRequired: pointsRequired,
                 rewardCategory: rewardCategory,
                 selectedItemId: selectedItemId,
-                selectedItemName: selectedItemName
+                selectedItemName: selectedItemName,
+                selectedToppingId: selectedToppingId,
+                selectedToppingName: selectedToppingName,
+                selectedItemId2: selectedItemId2,
+                selectedItemName2: selectedItemName2,
+                cookingMethod: cookingMethod,
+                drinkType: drinkType,
+                selectedDrinkItemId: selectedDrinkItemId,
+                selectedDrinkItemName: selectedDrinkItemName
             )
             
             let url = URL(string: "\(baseURL)/redeem-reward")!
@@ -98,6 +136,18 @@ class RewardRedemptionService: ObservableObject {
             print("🎁 Redeeming reward: \(rewardTitle) for \(pointsRequired) points")
             if let selectedName = selectedItemName {
                 print("🍽️ Selected item: \(selectedName)")
+            }
+            if let toppingName = selectedToppingName {
+                print("🧋 Selected topping: \(toppingName)")
+            }
+            if let itemName2 = selectedItemName2 {
+                print("🥟 Second item: \(itemName2)")
+            }
+            if let method = cookingMethod {
+                print("🔥 Cooking method: \(method)")
+            }
+            if let type = drinkType {
+                print("🥤 Drink type: \(type)")
             }
             print("📡 API URL: \(url)")
             print("📦 Request data: \(String(data: jsonData, encoding: .utf8) ?? "")")
@@ -123,6 +173,18 @@ class RewardRedemptionService: ObservableObject {
                 print("💰 New balance: \(redemptionResponse.newPointsBalance)")
                 if let selectedName = redemptionResponse.selectedItemName {
                     print("🍽️ Selected item: \(selectedName)")
+                }
+                if let toppingName = redemptionResponse.selectedToppingName {
+                    print("🧋 Selected topping: \(toppingName)")
+                }
+                if let itemName2 = redemptionResponse.selectedItemName2 {
+                    print("🥟 Second item: \(itemName2)")
+                }
+                if let method = redemptionResponse.cookingMethod {
+                    print("🔥 Cooking method: \(method)")
+                }
+                if let type = redemptionResponse.drinkType {
+                    print("🥤 Drink type: \(type)")
                 }
                 
                 return .success(redemptionResponse)

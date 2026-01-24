@@ -28,6 +28,7 @@ class MenuImageCacheManager {
     
     // Track download tasks for cancellation
     private var downloadTasks: [String: URLSessionDataTask] = [:]
+    private let downloadTasksQueue = DispatchQueue(label: "com.restaurantdemo.menuImageCache.downloadTasks", attributes: .concurrent)
     
     // Priority queue for smart preloading
     private enum CachePriority {
@@ -132,24 +133,20 @@ class MenuImageCacheManager {
     
     /// Download image from URL and cache it
     private func downloadAndCache(url: String, priority: CachePriority = .normal, metadata: MenuImageMetadata, completion: @escaping (UIImage?) -> Void) {
-        // Check if already downloading
-        if downloadTasks[url] != nil {
-            print("⏳ Already downloading: \(url)")
-            return
-        }
-        
         guard let imageURL = URL(string: url) else {
             print("❌ Invalid URL: \(url)")
             completion(nil)
             return
         }
         
-        // Download image data
+        // Create task first
         let task = URLSession.shared.dataTask(with: imageURL) { [weak self] data, response, error in
             guard let self = self else { return }
             
-            // Remove from active downloads
-            self.downloadTasks.removeValue(forKey: url)
+            // Remove from active downloads (thread-safe)
+            self.downloadTasksQueue.async(flags: .barrier) {
+                self.downloadTasks.removeValue(forKey: url)
+            }
             
             if let error = error {
                 print("❌ Download failed: \(error.localizedDescription)")
@@ -200,8 +197,21 @@ class MenuImageCacheManager {
             }
         }
         
-        downloadTasks[url] = task
-        task.resume()
+        // Atomically check if already downloading and add task if not (thread-safe)
+        var shouldStart = false
+        downloadTasksQueue.sync(flags: .barrier) {
+            if downloadTasks[url] == nil {
+                downloadTasks[url] = task
+                shouldStart = true
+            }
+        }
+        
+        if shouldStart {
+            task.resume()
+        } else {
+            print("⏳ Already downloading: \(url)")
+            // Task will be deallocated since it's not stored or resumed
+        }
     }
     
     /// Preload category icons (high priority, small number)
@@ -301,11 +311,13 @@ class MenuImageCacheManager {
     
     /// Cancel all pending downloads
     func cancelAllDownloads() {
-        for (url, task) in downloadTasks {
-            task.cancel()
-            print("🛑 Cancelled download: \(url)")
+        downloadTasksQueue.async(flags: .barrier) {
+            for (url, task) in self.downloadTasks {
+                task.cancel()
+                print("🛑 Cancelled download: \(url)")
+            }
+            self.downloadTasks.removeAll()
         }
-        downloadTasks.removeAll()
     }
     
     /// Clear all cached images
@@ -456,7 +468,8 @@ class MenuImageCacheManager {
         }
     }
     
-    private func cleanupIfNeeded() {
+    /// Check cache size and cleanup old images if needed (public for external triggers)
+    func cleanupIfNeeded() {
         let currentSize = getCacheSize()
         
         if currentSize > maxCacheSize {
