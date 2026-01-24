@@ -102,6 +102,7 @@ struct ReferralView: View {
         let status: String // "Pending" | "Awarded"
         let isOutbound: Bool // true if I referred them; false if they referred me
         let pointsTowards50: Int // 0-50; 0 if unknown
+        let createdAt: Date? // When the referral was created
     }
     @State private var outboundConnections: [ReferralDisplay] = []
     @State private var inboundConnection: ReferralDisplay? = nil
@@ -302,7 +303,8 @@ struct ReferralView: View {
                                               relationText: item.isOutbound ? "You referred" : "Referred by",
                                               status: item.status,
                                               pointsTowards50: item.pointsTowards50,
-                                              tint: item.isOutbound ? .green : .orange)
+                                              tint: item.isOutbound ? .green : .orange,
+                                              createdAt: item.createdAt)
                     }
                 }
             }
@@ -565,11 +567,12 @@ struct ReferralView: View {
                     let referredId = data["referredUserId"] as? String
                     let statusRaw = (data["status"] as? String) ?? "pending"
                     let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
+                    let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
                     if let rid = referredId, !rid.isEmpty {
                         group.enter()
                         db.collection("users").document(rid).getDocument { userDoc, _ in
                             let name = (userDoc?.data()? ["firstName"] as? String) ?? "Friend"
-                            items.append(ReferralDisplay(id: d.documentID, name: name, status: status, isOutbound: true, pointsTowards50: 0))
+                            items.append(ReferralDisplay(id: d.documentID, name: name, status: status, isOutbound: true, pointsTowards50: 0, createdAt: createdAt))
                             group.leave()
                         }
                     }
@@ -593,11 +596,12 @@ struct ReferralView: View {
                 let referrerId = (data["referrerUserId"] as? String) ?? ""
                 let statusRaw = (data["status"] as? String) ?? "pending"
                 let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
+                let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
                 if !referrerId.isEmpty {
                     db.collection("users").document(referrerId).getDocument { userDoc, _ in
                         let name = (userDoc?.data()? ["firstName"] as? String) ?? "Friend"
                         DispatchQueue.main.async {
-                            self.inboundConnection = ReferralDisplay(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: 0)
+                            self.inboundConnection = ReferralDisplay(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: 0, createdAt: createdAt)
                         }
                     }
                 } else {
@@ -632,20 +636,22 @@ struct ReferralView: View {
                     // Default status pending until we check the referral doc
                     DispatchQueue.main.async {
                         if self.inboundConnection == nil {
-                            self.inboundConnection = ReferralDisplay(id: referralId.isEmpty ? UUID().uuidString : referralId, name: name, status: "Pending", isOutbound: false, pointsTowards50: 0)
+                            self.inboundConnection = ReferralDisplay(id: referralId.isEmpty ? UUID().uuidString : referralId, name: name, status: "Pending", isOutbound: false, pointsTowards50: 0, createdAt: nil)
                         } else {
-                            self.inboundConnection = ReferralDisplay(id: self.inboundConnection!.id, name: name, status: self.inboundConnection!.status, isOutbound: false, pointsTowards50: self.inboundConnection!.pointsTowards50)
+                            self.inboundConnection = ReferralDisplay(id: self.inboundConnection!.id, name: name, status: self.inboundConnection!.status, isOutbound: false, pointsTowards50: self.inboundConnection!.pointsTowards50, createdAt: self.inboundConnection!.createdAt)
                         }
                     }
                 }
                 // If we have referralId, fetch its status to reflect Awarded/Pending accurately
                 if !referralId.isEmpty {
                     db.collection("referrals").document(referralId).getDocument { refDoc, _ in
-                        let statusRaw = (refDoc?.data()? ["status"] as? String) ?? "pending"
+                        let data = refDoc?.data() ?? [:]
+                        let statusRaw = (data["status"] as? String) ?? "pending"
                         let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
+                        let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
                         DispatchQueue.main.async {
                             if let current = self.inboundConnection {
-                                self.inboundConnection = ReferralDisplay(id: current.id, name: current.name, status: status, isOutbound: false, pointsTowards50: current.pointsTowards50)
+                                self.inboundConnection = ReferralDisplay(id: current.id, name: current.name, status: status, isOutbound: false, pointsTowards50: current.pointsTowards50, createdAt: createdAt ?? current.createdAt)
                             }
                         }
                     }
@@ -653,11 +659,13 @@ struct ReferralView: View {
                     // Fallback: try to locate the referral doc by referredUserId once
                     db.collection("referrals").whereField("referredUserId", isEqualTo: uid).limit(to: 1).getDocuments { snap, _ in
                         if let doc = snap?.documents.first {
-                            let statusRaw = (doc.data()["status"] as? String) ?? "pending"
+                            let data = doc.data()
+                            let statusRaw = (data["status"] as? String) ?? "pending"
                             let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
+                            let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
                             DispatchQueue.main.async {
                                 if let current = self.inboundConnection {
-                                    self.inboundConnection = ReferralDisplay(id: doc.documentID, name: current.name, status: status, isOutbound: false, pointsTowards50: current.pointsTowards50)
+                                    self.inboundConnection = ReferralDisplay(id: doc.documentID, name: current.name, status: status, isOutbound: false, pointsTowards50: current.pointsTowards50, createdAt: createdAt ?? current.createdAt)
                                 }
                             }
                         }
@@ -678,7 +686,7 @@ struct ReferralView: View {
                 let name = (userDoc?.data()? ["firstName"] as? String) ?? "Friend"
                 DispatchQueue.main.async {
                     if self.inboundConnection == nil {
-                        self.inboundConnection = ReferralDisplay(id: UUID().uuidString, name: name, status: "Pending", isOutbound: false, pointsTowards50: 0)
+                        self.inboundConnection = ReferralDisplay(id: UUID().uuidString, name: name, status: "Pending", isOutbound: false, pointsTowards50: 0, createdAt: nil)
                     }
                 }
             }
@@ -703,7 +711,8 @@ struct ReferralView: View {
                         let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
                         DispatchQueue.main.async {
                             let pts = (inbound["pointsTowards50"] as? NSNumber)?.intValue ?? (inbound["pointsTowards50"] as? Int) ?? 0
-                            self.inboundConnection = ReferralDisplay(id: (inbound["referralId"] as? String) ?? UUID().uuidString, name: name, status: status, isOutbound: false, pointsTowards50: min(max(pts, 0), 50))
+                            // Note: Server API doesn't return createdAt, so we'll use nil and let the listener update it
+                            self.inboundConnection = ReferralDisplay(id: (inbound["referralId"] as? String) ?? UUID().uuidString, name: name, status: status, isOutbound: false, pointsTowards50: min(max(pts, 0), 50), createdAt: nil)
                             // Clear session since server confirms
                             UserDefaults.standard.removeObject(forKey: self.sessionKey)
                         }
@@ -714,7 +723,8 @@ struct ReferralView: View {
                             let statusRaw = (o["status"] as? String) ?? "pending"
                             let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
                             let pts = (o["pointsTowards50"] as? NSNumber)?.intValue ?? (o["pointsTowards50"] as? Int) ?? 0
-                            return ReferralDisplay(id: (o["referralId"] as? String) ?? UUID().uuidString, name: name, status: status, isOutbound: true, pointsTowards50: min(max(pts, 0), 50))
+                            // Note: Server API doesn't return createdAt, so we'll use nil and let the listener update it
+                            return ReferralDisplay(id: (o["referralId"] as? String) ?? UUID().uuidString, name: name, status: status, isOutbound: true, pointsTowards50: min(max(pts, 0), 50), createdAt: nil)
                         }
                         DispatchQueue.main.async { self.outboundConnections = mapped }
                     }
@@ -871,6 +881,7 @@ struct ReferralView: View {
             req.httpMethod = "POST"
             req.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             req.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            DeviceFingerprint.addToRequest(&req)
             let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? ""
             let body: [String: Any] = ["code": trimmed, "deviceId": deviceId]
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -905,7 +916,7 @@ struct ReferralView: View {
                             let db = Firestore.firestore()
                             db.collection("users").document(rid).getDocument { userDoc, _ in
                                 let name = (userDoc?.data()? ["firstName"] as? String) ?? "Friend"
-                                self.inboundConnection = ReferralDisplay(id: UUID().uuidString, name: name, status: "Pending", isOutbound: false, pointsTowards50: 0)
+                                self.inboundConnection = ReferralDisplay(id: UUID().uuidString, name: name, status: "Pending", isOutbound: false, pointsTowards50: 0, createdAt: nil)
                             }
                         }
                         // Also refresh the connections listeners to pick up the new referral doc
@@ -962,6 +973,7 @@ fileprivate struct ReferralConnectionRow: View {
     let status: String // "Pending" | "Awarded"
     let pointsTowards50: Int
     let tint: Color
+    let createdAt: Date?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -971,6 +983,11 @@ fileprivate struct ReferralConnectionRow: View {
                     (Text(relationText + " ") + Text(name).fontWeight(.bold))
                     Spacer()
                     badge(status)
+                }
+                if let date = createdAt {
+                    Text(date, style: .date)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundColor(.secondary)
                 }
                 if status == "Pending" {
                     GoldProgressBar(value: pointsTowards50)

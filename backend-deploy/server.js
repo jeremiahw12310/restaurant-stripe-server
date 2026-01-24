@@ -325,6 +325,20 @@ app.post('/referrals/accept', async (req, res) => {
       referralId: referralRef.id
     });
 
+    // Check if user already has enough points for immediate award
+    const userPoints = userData.points || 0;
+    if (userPoints >= 50) {
+      console.log(`✅ User ${uid} already has ${userPoints} points, awarding referral bonus immediately`);
+      // Award points immediately using the shared helper function
+      const awardResult = await awardReferralPoints(db, referralRef.id, referrerId, uid);
+      if (awardResult.success) {
+        console.log(`🎉 Referral ${referralRef.id} awarded immediately! Referrer: +${awardResult.referrerNewPoints !== null ? 50 : 0}, Referred: +50`);
+      } else {
+        console.warn(`⚠️ Failed to award referral immediately: ${awardResult.error}`);
+        // Don't fail the accept request - the award-check endpoint will handle it later
+      }
+    }
+
     // Check for suspicious referral patterns (async, don't block response)
     try {
       const service = new SuspiciousBehaviorService(db);
@@ -448,6 +462,268 @@ async function sendPushNotificationToToken(fcmToken, title, body, data = {}) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Helper function to award referral points to both referrer and referred user.
+ * This is used by both /referrals/award-check and /referrals/accept endpoints.
+ * 
+ * @param {Firestore} db - Firestore database instance
+ * @param {string} referralId - The referral document ID
+ * @param {string} referrerId - The referrer's user ID
+ * @param {string} referredUserId - The referred user's ID
+ * @returns {Promise<{success: boolean, referrerNewPoints: number|null, referredNewPoints: number, error?: string}>}
+ */
+async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
+  const REFERRAL_BONUS = 50;
+  
+  try {
+    // Get the referral document
+    const referralDoc = await db.collection('referrals').doc(referralId).get();
+    if (!referralDoc.exists) {
+      return { success: false, error: 'Referral not found' };
+    }
+    
+    const referralData = referralDoc.data();
+    
+    // Check if already awarded
+    if (referralData.status === 'awarded') {
+      return { success: false, error: 'ALREADY_AWARDED' };
+    }
+    
+    // Get the referred user's current points
+    const referredUserRef = db.collection('users').doc(referredUserId);
+    const referredUserDoc = await referredUserRef.get();
+    
+    if (!referredUserDoc.exists) {
+      return { success: false, error: 'Referred user not found' };
+    }
+    
+    const referredUserData = referredUserDoc.data();
+    const referredUserPoints = referredUserData.points || 0;
+    
+    // Check if referred user has reached the 50-point threshold
+    if (referredUserPoints < 50) {
+      return { 
+        success: false, 
+        error: 'THRESHOLD_NOT_MET',
+        currentPoints: referredUserPoints
+      };
+    }
+    
+    console.log(`✅ User ${referredUserId} has ${referredUserPoints} points, eligible for referral bonus!`);
+    
+    // Get the referrer's document
+    const referrerUserRef = db.collection('users').doc(referrerId);
+    const referrerUserDoc = await referrerUserRef.get();
+    
+    if (!referrerUserDoc.exists) {
+      console.warn(`⚠️ Referrer ${referrerId} not found, proceeding with referred user award only`);
+    }
+    
+    const referrerUserData = referrerUserDoc.exists ? referrerUserDoc.data() : null;
+    
+    // Use a transaction to award points atomically
+    let referrerNewPoints = null;
+    let referredNewPoints = null;
+    let referrerFcmToken = null;
+    let referredFcmToken = null;
+    let referrerName = 'Friend';
+    let referredName = 'Friend';
+    
+    await db.runTransaction(async (tx) => {
+      // Re-fetch the referral doc inside the transaction to ensure consistency
+      const txReferralDoc = await tx.get(db.collection('referrals').doc(referralId));
+      if (txReferralDoc.data().status === 'awarded') {
+        throw new Error('ALREADY_AWARDED');
+      }
+      
+      // Re-fetch user documents inside transaction
+      const txReferredUserDoc = await tx.get(referredUserRef);
+      const txReferredData = txReferredUserDoc.data() || {};
+      const currentReferredPoints = txReferredData.points || 0;
+      const currentReferredLifetime = (typeof txReferredData.lifetimePoints === 'number') 
+        ? txReferredData.lifetimePoints 
+        : currentReferredPoints;
+      referredFcmToken = txReferredData.fcmToken || null;
+      referredName = txReferredData.firstName || 'Friend';
+      
+      // Award +50 to referred user
+      referredNewPoints = currentReferredPoints + REFERRAL_BONUS;
+      const referredNewLifetime = currentReferredLifetime + REFERRAL_BONUS;
+      
+      tx.update(referredUserRef, {
+        points: referredNewPoints,
+        lifetimePoints: referredNewLifetime
+      });
+      
+      // Create points transaction for referred user
+      const referredTxId = `referral_referred_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      tx.set(db.collection('pointsTransactions').doc(referredTxId), {
+        userId: referredUserId,
+        type: 'referral',
+        amount: REFERRAL_BONUS,
+        description: 'Referral bonus - reached 50 points!',
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        metadata: {
+          referralId: referralId,
+          role: 'referred'
+        }
+      });
+      
+      // Award +50 to referrer if they exist
+      if (referrerUserDoc.exists) {
+        const txReferrerUserDoc = await tx.get(referrerUserRef);
+        const txReferrerData = txReferrerUserDoc.data() || {};
+        const currentReferrerPoints = txReferrerData.points || 0;
+        const currentReferrerLifetime = (typeof txReferrerData.lifetimePoints === 'number')
+          ? txReferrerData.lifetimePoints
+          : currentReferrerPoints;
+        referrerFcmToken = txReferrerData.fcmToken || null;
+        referrerName = txReferrerData.firstName || 'Friend';
+        
+        referrerNewPoints = currentReferrerPoints + REFERRAL_BONUS;
+        const referrerNewLifetime = currentReferrerLifetime + REFERRAL_BONUS;
+        
+        tx.update(referrerUserRef, {
+          points: referrerNewPoints,
+          lifetimePoints: referrerNewLifetime
+        });
+        
+        // Create points transaction for referrer
+        const referrerTxId = `referral_referrer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        tx.set(db.collection('pointsTransactions').doc(referrerTxId), {
+          userId: referrerId,
+          type: 'referral',
+          amount: REFERRAL_BONUS,
+          description: `Referral bonus - ${referredName} reached 50 points!`,
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          metadata: {
+            referralId: referralId,
+            role: 'referrer',
+            referredUserId: referredUserId
+          }
+        });
+      }
+      
+      // Update referral status to 'awarded'
+      tx.update(db.collection('referrals').doc(referralId), {
+        status: 'awarded',
+        awardedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    
+    console.log(`🎉 Referral ${referralId} awarded! Referrer: +${referrerNewPoints !== null ? REFERRAL_BONUS : 0}, Referred: +${REFERRAL_BONUS}`);
+    
+    // Create Firestore notification documents for both users
+    const notificationPromises = [];
+    
+    // Create notification for referrer
+    if (referrerId) {
+      const referrerNotifRef = db.collection('notifications').doc();
+      notificationPromises.push(
+        referrerNotifRef.set({
+          userId: referrerId,
+          title: 'Referral Bonus Awarded! 🎉',
+          body: `${referredName} reached 50 points! You earned +${REFERRAL_BONUS} bonus points.`,
+          type: 'referral',
+          read: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          metadata: {
+            referralId: referralId,
+            role: 'referrer'
+          }
+        })
+      );
+    }
+    
+    // Create notification for referred user
+    const referredNotifRef = db.collection('notifications').doc();
+    notificationPromises.push(
+      referredNotifRef.set({
+        userId: referredUserId,
+        title: 'Referral Bonus Awarded! 🎉',
+        body: `You reached 50 points! You and ${referrerName} each earned +${REFERRAL_BONUS} bonus points.`,
+        type: 'referral',
+        read: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        metadata: {
+          referralId: referralId,
+          role: 'referred'
+        }
+      })
+    );
+    
+    // Send push notifications to both users (fire-and-forget, don't block response)
+    const pushPromises = [];
+    
+    // Push to referrer
+    if (referrerFcmToken) {
+      pushPromises.push(
+        sendPushNotificationToToken(
+          referrerFcmToken,
+          'Referral Bonus Awarded! 🎉',
+          `${referredName} reached 50 points! You earned +${REFERRAL_BONUS} bonus points.`,
+          { type: 'referral_awarded', role: 'referrer', referralId }
+        ).then(result => {
+          console.log(`📱 Referrer push result:`, result);
+        })
+      );
+    } else {
+      console.log(`ℹ️ Referrer ${referrerId} has no FCM token, skipping push`);
+    }
+    
+    // Push to referred user
+    if (referredFcmToken) {
+      pushPromises.push(
+        sendPushNotificationToToken(
+          referredFcmToken,
+          'Referral Bonus Awarded! 🎉',
+          `You reached 50 points! You and ${referrerName} each earned +${REFERRAL_BONUS} bonus points.`,
+          { type: 'referral_awarded', role: 'referred', referralId }
+        ).then(result => {
+          console.log(`📱 Referred user push result:`, result);
+        })
+      );
+    } else {
+      console.log(`ℹ️ Referred user ${referredUserId} has no FCM token, skipping push`);
+    }
+    
+    // Don't await push notifications - let them complete in background
+    Promise.all(pushPromises).catch(err => {
+      console.warn('⚠️ Some push notifications failed:', err);
+    });
+    
+    // Don't await notification documents - let them complete in background
+    Promise.all(notificationPromises).catch(err => {
+      console.warn('⚠️ Failed to create notification documents:', err);
+    });
+    
+    // Check for suspicious referral patterns (async, don't block response)
+    try {
+      const service = new SuspiciousBehaviorService(db);
+      // Check timing - how fast did user reach 50 points?
+      await service.checkReferralPatterns(referredUserId, {
+        referrerId,
+        referralId,
+        pointsReached: referredUserPoints
+      });
+    } catch (detectionError) {
+      console.error('❌ Error in referral pattern detection (non-blocking):', detectionError);
+    }
+    
+    return {
+      success: true,
+      referrerNewPoints,
+      referredNewPoints
+    };
+  } catch (error) {
+    if (error.message === 'ALREADY_AWARDED') {
+      return { success: false, error: 'ALREADY_AWARDED' };
+    }
+    console.error('❌ Error in awardReferralPoints:', error);
+    return { success: false, error: error.message || 'Unknown error' };
+  }
+}
+
+/**
  * POST /referrals/award-check
  * 
  * Called by the iOS app when a user's points cross the 50-point threshold.
@@ -512,6 +788,17 @@ app.post('/referrals/award-check', async (req, res) => {
     const referredUserData = referredUserDoc.data();
     const referredUserPoints = referredUserData.points || 0;
 
+    // Get the referred user's current points to check threshold
+    const referredUserRef = db.collection('users').doc(uid);
+    const referredUserDoc = await referredUserRef.get();
+    
+    if (!referredUserDoc.exists) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const referredUserData = referredUserDoc.data();
+    const referredUserPoints = referredUserData.points || 0;
+
     // Check if referred user has reached the 50-point threshold
     if (referredUserPoints < 50) {
       console.log(`ℹ️ User ${uid} has ${referredUserPoints} points, needs 50 for referral bonus`);
@@ -523,215 +810,31 @@ app.post('/referrals/award-check', async (req, res) => {
       });
     }
 
-    console.log(`✅ User ${uid} has ${referredUserPoints} points, eligible for referral bonus!`);
-
-    // Get the referrer's document
-    const referrerUserRef = db.collection('users').doc(referrerId);
-    const referrerUserDoc = await referrerUserRef.get();
+    // Use the shared helper function to award points
+    const awardResult = await awardReferralPoints(db, referralId, referrerId, uid);
     
-    if (!referrerUserDoc.exists) {
-      console.warn(`⚠️ Referrer ${referrerId} not found, proceeding with referred user award only`);
-      // We'll still award the referred user but skip the referrer
-    }
-
-    const referrerUserData = referrerUserDoc.exists ? referrerUserDoc.data() : null;
-
-    // Use a transaction to award points atomically
-    let referrerNewPoints = null;
-    let referredNewPoints = null;
-    let referrerFcmToken = null;
-    let referredFcmToken = null;
-    let referrerName = 'Friend';
-    let referredName = 'Friend';
-
-    await db.runTransaction(async (tx) => {
-      // Re-fetch the referral doc inside the transaction to ensure consistency
-      const txReferralDoc = await tx.get(db.collection('referrals').doc(referralId));
-      if (txReferralDoc.data().status === 'awarded') {
-        throw new Error('ALREADY_AWARDED');
+    if (!awardResult.success) {
+      if (awardResult.error === 'ALREADY_AWARDED') {
+        return res.json({ status: 'already_awarded', referralId });
       }
-
-      // Re-fetch user documents inside transaction
-      const txReferredUserDoc = await tx.get(referredUserRef);
-      const txReferredData = txReferredUserDoc.data() || {};
-      const currentReferredPoints = txReferredData.points || 0;
-      const currentReferredLifetime = (typeof txReferredData.lifetimePoints === 'number') 
-        ? txReferredData.lifetimePoints 
-        : currentReferredPoints;
-      referredFcmToken = txReferredData.fcmToken || null;
-      referredName = txReferredData.firstName || 'Friend';
-
-      // Award +50 to referred user
-      referredNewPoints = currentReferredPoints + REFERRAL_BONUS;
-      const referredNewLifetime = currentReferredLifetime + REFERRAL_BONUS;
-
-      tx.update(referredUserRef, {
-        points: referredNewPoints,
-        lifetimePoints: referredNewLifetime
-      });
-
-      // Create points transaction for referred user
-      const referredTxId = `referral_referred_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      tx.set(db.collection('pointsTransactions').doc(referredTxId), {
-        userId: uid,
-        type: 'referral',
-        amount: REFERRAL_BONUS,
-        description: 'Referral bonus - reached 50 points!',
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        metadata: {
-          referralId: referralId,
-          role: 'referred'
-        }
-      });
-
-      // Award +50 to referrer if they exist
-      if (referrerUserDoc.exists) {
-        const txReferrerUserDoc = await tx.get(referrerUserRef);
-        const txReferrerData = txReferrerUserDoc.data() || {};
-        const currentReferrerPoints = txReferrerData.points || 0;
-        const currentReferrerLifetime = (typeof txReferrerData.lifetimePoints === 'number')
-          ? txReferrerData.lifetimePoints
-          : currentReferrerPoints;
-        referrerFcmToken = txReferrerData.fcmToken || null;
-        referrerName = txReferrerData.firstName || 'Friend';
-
-        referrerNewPoints = currentReferrerPoints + REFERRAL_BONUS;
-        const referrerNewLifetime = currentReferrerLifetime + REFERRAL_BONUS;
-
-        tx.update(referrerUserRef, {
-          points: referrerNewPoints,
-          lifetimePoints: referrerNewLifetime
-        });
-
-        // Create points transaction for referrer
-        const referrerTxId = `referral_referrer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        tx.set(db.collection('pointsTransactions').doc(referrerTxId), {
-          userId: referrerId,
-          type: 'referral',
-          amount: REFERRAL_BONUS,
-          description: `Referral bonus - ${referredName} reached 50 points!`,
-          timestamp: admin.firestore.FieldValue.serverTimestamp(),
-          metadata: {
-            referralId: referralId,
-            role: 'referrer',
-            referredUserId: uid
-          }
+      if (awardResult.error === 'THRESHOLD_NOT_MET') {
+        return res.json({ 
+          status: 'not_eligible', 
+          reason: 'threshold_not_met',
+          currentPoints: awardResult.currentPoints,
+          requiredPoints: 50
         });
       }
-
-      // Update referral status to 'awarded'
-      tx.update(db.collection('referrals').doc(referralId), {
-        status: 'awarded',
-        awardedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-    });
-
-    console.log(`🎉 Referral ${referralId} awarded! Referrer: +${referrerNewPoints !== null ? REFERRAL_BONUS : 0}, Referred: +${REFERRAL_BONUS}`);
-
-    // Create Firestore notification documents for both users
-    const notificationPromises = [];
-    
-    // Create notification for referrer
-    if (referrerId) {
-      const referrerNotifRef = db.collection('notifications').doc();
-      notificationPromises.push(
-        referrerNotifRef.set({
-          userId: referrerId,
-          title: 'Referral Bonus Awarded! 🎉',
-          body: `${referredName} reached 50 points! You earned +${REFERRAL_BONUS} bonus points.`,
-          type: 'referral',
-          read: false,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          metadata: {
-            referralId: referralId,
-            role: 'referrer'
-          }
-        })
-      );
-    }
-    
-    // Create notification for referred user
-    const referredNotifRef = db.collection('notifications').doc();
-    notificationPromises.push(
-      referredNotifRef.set({
-        userId: uid,
-        title: 'Referral Bonus Awarded! 🎉',
-        body: `You reached 50 points! You and ${referrerName} each earned +${REFERRAL_BONUS} bonus points.`,
-        type: 'referral',
-        read: false,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        metadata: {
-          referralId: referralId,
-          role: 'referred'
-        }
-      })
-    );
-
-    // Send push notifications to both users (fire-and-forget, don't block response)
-    const pushPromises = [];
-
-    // Push to referrer
-    if (referrerFcmToken) {
-      pushPromises.push(
-        sendPushNotificationToToken(
-          referrerFcmToken,
-          'Referral Bonus Awarded! 🎉',
-          `${referredName} reached 50 points! You earned +${REFERRAL_BONUS} bonus points.`,
-          { type: 'referral_awarded', role: 'referrer', referralId }
-        ).then(result => {
-          console.log(`📱 Referrer push result:`, result);
-        })
-      );
-    } else {
-      console.log(`ℹ️ Referrer ${referrerId} has no FCM token, skipping push`);
-    }
-
-    // Push to referred user
-    if (referredFcmToken) {
-      pushPromises.push(
-        sendPushNotificationToToken(
-          referredFcmToken,
-          'Referral Bonus Awarded! 🎉',
-          `You reached 50 points! You and ${referrerName} each earned +${REFERRAL_BONUS} bonus points.`,
-          { type: 'referral_awarded', role: 'referred', referralId }
-        ).then(result => {
-          console.log(`📱 Referred user push result:`, result);
-        })
-      );
-    } else {
-      console.log(`ℹ️ Referred user ${uid} has no FCM token, skipping push`);
-    }
-
-    // Don't await push notifications - let them complete in background
-    Promise.all(pushPromises).catch(err => {
-      console.warn('⚠️ Some push notifications failed:', err);
-    });
-    
-    // Don't await notification documents - let them complete in background
-    Promise.all(notificationPromises).catch(err => {
-      console.warn('⚠️ Failed to create notification documents:', err);
-    });
-
-    // Check for suspicious referral patterns (async, don't block response)
-    try {
-      const service = new SuspiciousBehaviorService(db);
-      // Check timing - how fast did user reach 50 points?
-      await service.checkReferralPatterns(uid, {
-        referrerId,
-        referralId,
-        pointsReached: referredUserPoints
-      });
-    } catch (detectionError) {
-      console.error('❌ Error in referral pattern detection (non-blocking):', detectionError);
+      return res.status(500).json({ error: awardResult.error || 'Failed to award points' });
     }
 
     return res.json({
       status: 'awarded',
       referralId,
-      referrerBonus: referrerNewPoints !== null ? REFERRAL_BONUS : 0,
+      referrerBonus: awardResult.referrerNewPoints !== null ? REFERRAL_BONUS : 0,
       referredBonus: REFERRAL_BONUS,
-      referrerNewPoints,
-      referredNewPoints
+      referrerNewPoints: awardResult.referrerNewPoints,
+      referredNewPoints: awardResult.referredNewPoints
     });
 
   } catch (error) {
