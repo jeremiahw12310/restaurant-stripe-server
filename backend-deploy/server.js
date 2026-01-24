@@ -747,11 +747,30 @@ app.post('/referrals/award-check', async (req, res) => {
     }
     const idToken = authHeader.split('Bearer ')[1];
     const decodedToken = await admin.auth().verifyIdToken(idToken);
-    const uid = decodedToken.uid;
+    const authenticatedUid = decodedToken.uid;
+    
+    const db = admin.firestore();
+    
+    // Check if this is an admin-initiated check for another user
+    const targetUserId = req.body.targetUserId;
+    let uid = authenticatedUid; // Default to authenticated user
+    
+    if (targetUserId && targetUserId !== authenticatedUid) {
+      // Admin is checking another user - verify admin status
+      const adminUserDoc = await db.collection('users').doc(authenticatedUid).get();
+      if (!adminUserDoc.exists) {
+        return res.status(403).json({ error: 'Only admins can check other users' });
+      }
+      const adminUserData = adminUserDoc.data();
+      if (!adminUserData || !adminUserData.isAdmin) {
+        return res.status(403).json({ error: 'Only admins can check other users' });
+      }
+      uid = targetUserId; // Use target user for referral check
+      console.log(`🔧 Admin ${authenticatedUid} checking referral for user ${uid}`);
+    }
 
     console.log(`🎯 Referral award-check for user: ${uid}`);
 
-    const db = admin.firestore();
     const REFERRAL_BONUS = 50;
 
     // Find the referral document where this user is the referred person
@@ -1580,7 +1599,7 @@ if (!process.env.OPENAI_API_KEY) {
       .where('timestamp', '>=', admin.firestore.Timestamp.fromDate(twentyFourHoursAgo))
       .get();
     
-    if (failedAttempts.size >= 5) {
+    if (failedAttempts.size >= 8) {
       // Get current lockout count
       const userDoc = await userRef.get();
       const userData = userDoc.data() || {};
@@ -2524,6 +2543,7 @@ If a field is missing, use null.`;
       let newPointsBalance = null;
       let newLifetimePoints = null;
       let savedReceiptId = null;
+      let currentPoints = 0; // Capture current points for referral check
 
       try {
         await db.runTransaction(async (tx) => {
@@ -2562,7 +2582,7 @@ If a field is missing, use null.`;
             throw err;
           }
           const userData = userDoc.data() || {};
-          const currentPoints = userData.points || 0;
+          currentPoints = userData.points || 0; // Update outer variable
           const currentLifetime = (typeof userData.lifetimePoints === 'number')
             ? userData.lifetimePoints
             : currentPoints;
@@ -2620,6 +2640,36 @@ If a field is missing, use null.`;
         console.error('❌ submit-receipt transaction failed:', e);
         await logFailureAndCheckLockout(uid, "SERVER_AWARD_FAILED", db, ipAddress);
         return sendError(res, 500, "SERVER_AWARD_FAILED", "Server error while awarding points - please try again");
+      }
+
+      // Check if user crossed 50-point threshold and award referral if eligible
+      // Note: currentPoints and newPointsBalance are set inside the transaction
+      if (currentPoints < 50 && newPointsBalance >= 50) {
+        console.log(`✅ User ${uid} crossed 50-point threshold via receipt scan (${currentPoints} → ${newPointsBalance}), checking referral...`);
+        try {
+          const referralSnap = await db.collection('referrals')
+            .where('referredUserId', '==', uid)
+            .limit(1)
+            .get();
+          
+          if (!referralSnap.empty) {
+            const referralDoc = referralSnap.docs[0];
+            const referralId = referralDoc.id;
+            const referralData = referralDoc.data();
+            
+            if (referralData.status === 'pending') {
+              const awardResult = await awardReferralPoints(db, referralId, referralData.referrerUserId, uid);
+              if (awardResult.success) {
+                console.log(`🎉 Referral ${referralId} awarded via receipt scan! Referrer: +${awardResult.referrerNewPoints !== null ? 50 : 0}, Referred: +50`);
+              } else {
+                console.warn(`⚠️ Failed to award referral via receipt scan: ${awardResult.error}`);
+              }
+            }
+          }
+        } catch (referralError) {
+          console.error('❌ Error checking referral after receipt scan (non-blocking):', referralError);
+          // Don't fail the receipt submission if referral check fails
+        }
       }
 
       // Log successful scan
