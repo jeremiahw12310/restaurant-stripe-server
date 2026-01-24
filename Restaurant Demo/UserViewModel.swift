@@ -25,6 +25,7 @@ class UserViewModel: ObservableObject {
     @Published var isVerified: Bool = false // Verification status
     @Published var isAdmin: Bool = false // Admin status
     @Published var isEmployee: Bool = false // Employee status
+    @Published var isBanned: Bool = false // Ban status
     @Published var oldReceiptTestingEnabled: Bool = false // Admin-only: allow scanning old receipts for testing
     @Published var phoneNumber: String = "" // Phone number
     @Published var accountCreatedDate: Date = Date() // Account creation date
@@ -147,21 +148,11 @@ class UserViewModel: ObservableObject {
                 self.hasReceivedWelcomePoints = data["hasReceivedWelcomePoints"] as? Bool ?? false
                 self.isNewUser = data["isNewUser"] as? Bool ?? false
                 
-                // Check if user is banned - if so, sign them out immediately
+                // Check if user is banned - just set flag (LaunchView handles showing deletion screen)
                 let isBanned = data["isBanned"] as? Bool ?? false
+                self.isBanned = isBanned
                 if isBanned {
-                    print("❌ UserViewModel: User is banned. Forcing logout.")
-                    DispatchQueue.main.async {
-                        self.isLoading = false
-                        UserDefaults.standard.set(false, forKey: "isLoggedIn")
-                        // Show alert before signing out
-                        self.showBannedAlert = true
-                        // Sign out after a brief delay to allow alert to show
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            self.signOut()
-                        }
-                    }
-                    return
+                    print("⚠️ UserViewModel: User is banned. LaunchView will show deletion screen.")
                 }
                 
                 // Load account creation date
@@ -1219,6 +1210,172 @@ class UserViewModel: ObservableObject {
             profilePhotoURL: self.profilePhotoURL,
             completion: completion
         )
+    }
+    
+    // MARK: - Banned Account Deletion (with Archive)
+    
+    /// Archives banned user data to bannedAccountHistory collection, then deletes the account.
+    /// This endpoint handles all Firestore cleanup server-side, so we only need to delete Auth locally.
+    func archiveAndDeleteBannedAccount(completion: @escaping (Bool) -> Void) {
+        guard let user = Auth.auth().currentUser else {
+            print("❌ No authenticated user found")
+            UserDefaults.standard.set(false, forKey: "isLoggedIn")
+            completion(false)
+            return
+        }
+        
+        // Clear UserDefaults flag for this user before deletion
+        UserDefaults.standard.removeObject(forKey: "hasSeenWelcome_\(user.uid)")
+        print("🧹 Cleared welcome popup flag for user: \(user.uid)")
+        
+        print("📦 Archiving banned account data via backend...")
+        
+        // Get ID token and call the archive endpoint
+        user.getIDToken { [weak self] token, error in
+            if let error = error {
+                print("❌ Failed to get ID token: \(error.localizedDescription)")
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            
+            guard let token = token,
+                  let url = URL(string: "\(Config.backendURL)/admin/banned-account-archive") else {
+                print("❌ Invalid token or URL")
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = Data("{}".utf8)
+            
+            URLSession.shared.dataTask(with: request) { data, response, error in
+                if let error = error {
+                    print("❌ Archive request failed: \(error.localizedDescription)")
+                    DispatchQueue.main.async { completion(false) }
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    print("❌ Invalid response")
+                    DispatchQueue.main.async { completion(false) }
+                    return
+                }
+                
+                if httpResponse.statusCode >= 200 && httpResponse.statusCode < 300 {
+                    print("✅ Backend archive complete. Now deleting Auth user...")
+                    
+                    // Delete the Firebase Auth user locally
+                    user.delete { deleteError in
+                        DispatchQueue.main.async {
+                            if let deleteError = deleteError as NSError?,
+                               deleteError.code == AuthErrorCode.requiresRecentLogin.rawValue {
+                                print("ℹ️ Recent login required. Starting SMS re-auth flow…")
+                                self?.startBannedAccountDeletionReauth { started in
+                                    completion(started)
+                                }
+                                return
+                            }
+                            
+                            if let deleteError = deleteError {
+                                print("❌ Error deleting Auth user: \(deleteError.localizedDescription)")
+                                // Archive was successful but Auth deletion failed
+                                // This is acceptable - user doc is already deleted
+                                completion(false)
+                                return
+                            }
+                            
+                            print("✅ Auth user deleted successfully")
+                            completion(true)
+                        }
+                    }
+                } else {
+                    // Parse error message from response
+                    var errorMsg = "Archive failed with status \(httpResponse.statusCode)"
+                    if let data = data,
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let msg = json["error"] as? String {
+                        errorMsg = msg
+                    }
+                    print("❌ Archive failed: \(errorMsg)")
+                    DispatchQueue.main.async { completion(false) }
+                }
+            }.resume()
+        }
+    }
+    
+    /// Starts phone re-authentication specifically for banned account deletion.
+    private func startBannedAccountDeletionReauth(completion: @escaping (Bool) -> Void) {
+        guard let user = Auth.auth().currentUser else {
+            completion(false)
+            return
+        }
+        guard let phoneNumber = user.phoneNumber, !phoneNumber.isEmpty else {
+            print("❌ Current user does not have a phone number attached")
+            completion(false)
+            return
+        }
+        print("📲 Sending re-auth SMS for banned account deletion to: \(phoneNumber)")
+        PhoneAuthProvider.provider().verifyPhoneNumber(phoneNumber, uiDelegate: nil) { [weak self] verificationID, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    print("❌ Error sending verification SMS: \(error.localizedDescription)")
+                    self?.pendingDeletionVerificationID = nil
+                    self?.isAwaitingDeletionSMSCode = false
+                    completion(false)
+                    return
+                }
+                self?.pendingDeletionVerificationID = verificationID
+                self?.isAwaitingDeletionSMSCode = true
+                print("✅ Verification ID received for banned deletion re-auth")
+                completion(true)
+            }
+        }
+    }
+    
+    /// Finalizes banned account deletion after SMS re-authentication.
+    /// Called when user enters SMS code after archiveAndDeleteBannedAccount required re-auth.
+    func finalizeBannedAccountDeletion(withSMSCode smsCode: String, completion: @escaping (Bool) -> Void) {
+        guard let user = Auth.auth().currentUser else {
+            print("❌ No authenticated user found")
+            UserDefaults.standard.set(false, forKey: "isLoggedIn")
+            completion(false)
+            return
+        }
+        guard let verificationID = pendingDeletionVerificationID, !verificationID.isEmpty else {
+            print("❌ No pending verification ID")
+            completion(false)
+            return
+        }
+        
+        let credential = PhoneAuthProvider.provider().credential(withVerificationID: verificationID, verificationCode: smsCode)
+        print("🔐 Reauthenticating user for banned account deletion…")
+        
+        user.reauthenticate(with: credential) { [weak self] _, error in
+            if let error = error {
+                print("❌ Re-authentication failed: \(error.localizedDescription)")
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            
+            print("✅ Re-authenticated. Now deleting Auth user…")
+            user.delete { deleteError in
+                DispatchQueue.main.async {
+                    self?.pendingDeletionVerificationID = nil
+                    self?.isAwaitingDeletionSMSCode = false
+                    
+                    if let deleteError = deleteError {
+                        print("❌ Error deleting Auth user: \(deleteError.localizedDescription)")
+                        completion(false)
+                        return
+                    }
+                    print("✅ Auth user deleted successfully")
+                    completion(true)
+                }
+            }
+        }
     }
     
     // MARK: - Testing Helper

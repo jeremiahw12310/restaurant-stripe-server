@@ -183,15 +183,13 @@ class AuthenticationViewModel: ObservableObject {
                             let isBannedByPhone = await self.checkPhoneBanned(normalizedPhone)
                             
                             if isBanned || isBannedByPhone {
-                                // Sign out immediately
-                                do {
-                                    try Auth.auth().signOut()
-                                } catch {
-                                    print("Error signing out banned user: \(error)")
-                                }
+                                // Allow banned users to sign in - LaunchView will show deletion screen
+                                print("⚠️ AuthenticationViewModel: User is banned. Allowing sign-in - LaunchView will show deletion screen.")
                                 await MainActor.run {
-                                    self.showBanAlert = true
                                     self.errorMessage = ""
+                                    // Allow authentication - LaunchView will detect ban and show deletion screen
+                                    self.didAuthenticate = true
+                                    self.preloadReferralCode()
                                 }
                                 return
                             }
@@ -205,14 +203,12 @@ class AuthenticationViewModel: ObservableObject {
                     } else {
                         // No phone number, just check isBanned field
                         if isBanned {
-                            // Sign out immediately
-                            do {
-                                try Auth.auth().signOut()
-                            } catch {
-                                print("Error signing out banned user: \(error)")
-                            }
-                            self.showBanAlert = true
+                            // Allow banned users to sign in - LaunchView will show deletion screen
+                            print("⚠️ AuthenticationViewModel: User is banned. Allowing sign-in - LaunchView will show deletion screen.")
                             self.errorMessage = ""
+                            // Allow authentication - LaunchView will detect ban and show deletion screen
+                            self.didAuthenticate = true
+                            self.preloadReferralCode()
                             return
                         }
                         
@@ -318,98 +314,67 @@ class AuthenticationViewModel: ObservableObject {
         return digits
     }
     
-    /// Checks for orphaned Firestore documents with the same phone number
-    /// Orphaned = Firestore document exists but no corresponding Firebase Auth account
-    private func checkForOrphanedAccounts(phoneNumber: String, currentUID: String, completion: @escaping ([String]) -> Void) {
-        let normalizedPhone = normalizePhoneNumber(phoneNumber)
-        print("🔍 Checking for orphaned accounts with phone: \(normalizedPhone)")
-        
-        // Query Firestore for all documents with this phone number
-        db.collection("users")
-            .whereField("phone", isEqualTo: normalizedPhone)
-            .getDocuments { [weak self] snapshot, error in
-                guard let self = self else {
-                    completion([])
-                    return
-                }
-                
-                if let error = error {
-                    print("⚠️ Error querying for existing accounts: \(error.localizedDescription)")
-                    // Don't block account creation on query errors
-                    completion([])
-                    return
-                }
-                
-                guard let documents = snapshot?.documents, !documents.isEmpty else {
-                    print("✅ No existing accounts found with this phone number")
-                    completion([])
-                    return
-                }
-                
-                print("🔍 Found \(documents.count) document(s) with phone number \(normalizedPhone)")
-                
-                // When creating a new account, any existing documents with the same phone number
-                // but different UIDs are likely duplicates from previous account deletions.
-                // Delete all of them to prevent duplicates in admin view.
-                var duplicateUIDs: [String] = []
-                
-                for doc in documents {
-                    let docUID = doc.documentID
-                    
-                    // Skip the current UID (in case we're updating)
-                    if docUID == currentUID {
-                        print("ℹ️ Skipping current UID: \(docUID)")
-                        continue
-                    }
-                    
-                    // If we're creating a new account and find documents with same phone but different UID,
-                    // they're duplicates that should be deleted. This happens when:
-                    // 1. User deletes account (Auth deleted, Firestore doc might not be)
-                    // 2. User recreates account with same phone (new UID, old Firestore doc still exists)
-                    print("🔍 Found duplicate account with same phone: \(docUID)")
-                    duplicateUIDs.append(docUID)
-                }
-                
-                DispatchQueue.main.async {
-                    print("✅ Found \(duplicateUIDs.count) duplicate account(s) to clean up")
-                    completion(duplicateUIDs)
-                }
-            }
-    }
-    
-    /// Deletes orphaned Firestore documents
-    private func deleteOrphanedAccounts(orphanedUIDs: [String], completion: @escaping (Bool) -> Void) {
-        guard !orphanedUIDs.isEmpty else {
-            completion(true)
+    /// Cleans up orphaned Firestore documents via backend API.
+    /// Uses Admin SDK on server to bypass security rules that would block client-side deletion.
+    private func cleanupOrphanedAccountsViaBackend(phoneNumber: String, currentUID: String, completion: @escaping () -> Void) {
+        guard let user = Auth.auth().currentUser else {
+            print("⚠️ No authenticated user for orphan cleanup")
+            completion()
             return
         }
         
-        print("🧹 Deleting \(orphanedUIDs.count) orphaned account(s)...")
-        let group = DispatchGroup()
-        var deleteErrors: [Error] = []
+        print("🧹 Cleaning up orphaned accounts via backend for phone: \(phoneNumber)")
         
-        for uid in orphanedUIDs {
-            group.enter()
-            db.collection("users").document(uid).delete { error in
+        user.getIDToken { token, error in
+            if let error = error {
+                print("⚠️ Failed to get token for orphan cleanup: \(error.localizedDescription)")
+                // Don't block account creation on token errors
+                completion()
+                return
+            }
+            
+            guard let token = token,
+                  let url = URL(string: "\(Config.backendURL)/users/cleanup-orphan-by-phone") else {
+                print("⚠️ Invalid token or URL for orphan cleanup")
+                completion()
+                return
+            }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            
+            let body: [String: Any] = [
+                "phone": phoneNumber,
+                "newUid": currentUID
+            ]
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            
+            URLSession.shared.dataTask(with: request) { data, response, error in
                 if let error = error {
-                    print("⚠️ Failed to delete orphaned account \(uid): \(error.localizedDescription)")
-                    deleteErrors.append(error)
-                } else {
-                    print("✅ Deleted orphaned account: \(uid)")
+                    print("⚠️ Orphan cleanup request failed: \(error.localizedDescription)")
+                    // Don't block account creation
+                    DispatchQueue.main.async { completion() }
+                    return
                 }
-                group.leave()
-            }
-        }
-        
-        group.notify(queue: .main) {
-            let success = deleteErrors.isEmpty
-            if success {
-                print("✅ Successfully cleaned up \(orphanedUIDs.count) orphaned account(s)")
-            } else {
-                print("⚠️ Cleaned up \(orphanedUIDs.count - deleteErrors.count) of \(orphanedUIDs.count) orphaned account(s)")
-            }
-            // Don't block account creation even if some deletions failed
-            completion(true)
+                
+                if let httpResponse = response as? HTTPURLResponse,
+                   httpResponse.statusCode >= 200 && httpResponse.statusCode < 300,
+                   let data = data,
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let deletedCount = json["deletedCount"] as? Int {
+                    if deletedCount > 0 {
+                        print("✅ Backend cleaned up \(deletedCount) orphaned account(s)")
+                    } else {
+                        print("✅ No orphaned accounts found")
+                    }
+                } else {
+                    print("⚠️ Orphan cleanup response unexpected, continuing anyway")
+                }
+                
+                DispatchQueue.main.async { completion() }
+            }.resume()
         }
     }
     
@@ -440,20 +405,11 @@ class AuthenticationViewModel: ObservableObject {
             print("⚠️ Warning: Phone number appears incomplete: \(phoneToSave)")
         }
         
-        // Check for orphaned accounts with the same phone number before creating new account
-        checkForOrphanedAccounts(phoneNumber: phoneToSave, currentUID: uid) { [weak self] orphanedUIDs in
-            guard let self = self else { return }
-            
-            // Delete orphaned accounts if any found
-            if !orphanedUIDs.isEmpty {
-                self.deleteOrphanedAccounts(orphanedUIDs: orphanedUIDs) { [weak self] _ in
-                    // Continue with account creation regardless of cleanup result
-                    self?.createUserDocument(uid: uid, phoneToSave: phoneToSave)
-                }
-            } else {
-                // No orphaned accounts, proceed directly to account creation
-                self.createUserDocument(uid: uid, phoneToSave: phoneToSave)
-            }
+        // Clean up any orphaned accounts with the same phone number via backend
+        // This uses Admin SDK to bypass security rules that block client-side deletion
+        cleanupOrphanedAccountsViaBackend(phoneNumber: phoneToSave, currentUID: uid) { [weak self] in
+            // Continue with account creation after cleanup (regardless of result)
+            self?.createUserDocument(uid: uid, phoneToSave: phoneToSave)
         }
     }
     
@@ -531,6 +487,7 @@ class AuthenticationViewModel: ObservableObject {
             req.httpMethod = "POST"
             req.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             req.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            DeviceFingerprint.addToRequest(&req)
             let body: [String: Any] = ["code": code.uppercased(), "deviceId": UIDevice.current.identifierForVendor?.uuidString ?? ""]
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
             URLSession.shared.dataTask(with: req) { data, resp, _ in

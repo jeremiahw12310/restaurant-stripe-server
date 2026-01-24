@@ -275,6 +275,30 @@ service cloud.firestore {
       allow write: if isAdmin(); // Only admins can ban/unban
     }
     
+    // Suspicious flags collection - admin only
+    match /suspiciousFlags/{flagId} {
+      allow read: if isAdmin(); // Only admins can view flags
+      allow write: if false; // Server-only writes
+    }
+    
+    // Banned account history collection - admin only
+    // Stores archived user data for 24 hours after a banned user deletes their account
+    match /bannedAccountHistory/{historyId} {
+      allow read: if isAdmin(); // Only admins can view banned account history
+      allow write: if false; // Server-only writes via Admin SDK
+    }
+    
+    // User risk scores collection - admin only
+    match /userRiskScores/{userId} {
+      allow read: if isAdmin(); // Only admins can view risk scores
+      allow write: if false; // Server-only writes
+    }
+    
+    // Device fingerprints collection - server-only
+    match /deviceFingerprints/{hash} {
+      allow read, write: if false; // Server-only
+    }
+    
     // Deny all other access
     match /{document=**} {
       allow read, write: if false;

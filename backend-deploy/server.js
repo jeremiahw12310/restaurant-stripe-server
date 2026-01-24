@@ -4900,6 +4900,376 @@ IMPORTANT:
     }
   });
 
+  /**
+   * POST /admin/banned-account-archive
+   *
+   * Archives a banned user's data to bannedAccountHistory collection before deletion.
+   * Called by banned users when they delete their account from BannedAccountDeletionView.
+   * 
+   * This endpoint:
+   * 1. Copies user document to bannedAccountHistory (with 24hr expiration)
+   * 2. Anonymizes redeemedRewards, receipts, posts, etc.
+   * 3. Deletes the original users/{uid} document
+   * 4. Returns success so client can delete Firebase Auth user
+   *
+   * Request: Requires Bearer token of the banned user
+   * Response: { success: true, historyId: string } or error
+   */
+  app.post('/admin/banned-account-archive', async (req, res) => {
+    try {
+      // Verify the user's token
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+      if (!token) {
+        return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+      }
+
+      const decoded = await admin.auth().verifyIdToken(token);
+      const uid = decoded.uid;
+      console.log(`🗑️ Starting banned account archive for user: ${uid}`);
+
+      const db = admin.firestore();
+
+      // Get the user document
+      const userDoc = await db.collection('users').doc(uid).get();
+      if (!userDoc.exists) {
+        return res.status(404).json({ error: 'User document not found' });
+      }
+      const userData = userDoc.data();
+
+      // Verify user is banned (extra safety check)
+      const isBanned = userData.isBanned === true;
+      const phone = userData.phone || '';
+      
+      // Also check bannedNumbers collection
+      let banInfo = null;
+      if (phone) {
+        const bannedDoc = await db.collection('bannedNumbers').doc(phone).get();
+        if (bannedDoc.exists) {
+          banInfo = bannedDoc.data();
+        }
+      }
+
+      if (!isBanned && !banInfo) {
+        return res.status(403).json({ error: 'User is not banned. Use regular account deletion.' });
+      }
+
+      // Get summary counts
+      const [receiptsSnap, redeemedSnap, postsSnap, referralsSnap] = await Promise.all([
+        db.collection('receipts').where('userId', '==', uid).get(),
+        db.collection('redeemedRewards').where('userId', '==', uid).get(),
+        db.collection('posts').where('userId', '==', uid).get(),
+        db.collection('referrals').where('referrerUserId', '==', uid).get()
+      ]);
+
+      const receiptCount = receiptsSnap.size;
+      const redeemedRewardsCount = redeemedSnap.size;
+      const postCount = postsSnap.size;
+      const referralCount = referralsSnap.size;
+
+      // Create the archive document
+      const now = admin.firestore.Timestamp.now();
+      const expiresAt = admin.firestore.Timestamp.fromDate(
+        new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours from now
+      );
+      
+      const historyId = `${uid}_${Date.now()}`;
+      const archiveData = {
+        originalUserId: uid,
+        archivedAt: now,
+        expiresAt: expiresAt,
+        userData: {
+          firstName: userData.firstName || '',
+          lastName: userData.lastName || '',
+          phone: userData.phone || '',
+          points: userData.points || 0,
+          lifetimePoints: userData.lifetimePoints || 0,
+          accountCreatedDate: userData.accountCreatedDate || userData.createdAt || null,
+          avatarEmoji: userData.avatarEmoji || '👤',
+          avatarColor: userData.avatarColor || 'gray',
+          isVerified: userData.isVerified || false,
+          hasCompletedPreferences: userData.hasCompletedPreferences || false
+        },
+        receiptCount,
+        redeemedRewardsCount,
+        postCount,
+        referralCount,
+        banReason: banInfo?.reason || 'Banned',
+        bannedAt: banInfo?.bannedAt || null,
+        bannedBy: banInfo?.bannedBy || null
+      };
+
+      console.log(`📦 Creating archive document: ${historyId}`);
+      await db.collection('bannedAccountHistory').doc(historyId).set(archiveData);
+
+      // Anonymize data (similar to AccountDeletionService)
+      const batch = db.batch();
+      let batchCount = 0;
+      const BATCH_LIMIT = 450;
+
+      // Anonymize redeemedRewards
+      for (const doc of redeemedSnap.docs.slice(0, BATCH_LIMIT)) {
+        batch.update(doc.ref, {
+          userName: 'Deleted User',
+          userPhone: ''
+        });
+        batchCount++;
+      }
+
+      // Anonymize receipts
+      for (const doc of receiptsSnap.docs.slice(0, BATCH_LIMIT - batchCount)) {
+        if (batchCount >= BATCH_LIMIT) break;
+        batch.update(doc.ref, {
+          userName: 'Deleted User',
+          userPhone: '',
+          userEmail: ''
+        });
+        batchCount++;
+      }
+
+      // Anonymize posts
+      for (const doc of postsSnap.docs.slice(0, BATCH_LIMIT - batchCount)) {
+        if (batchCount >= BATCH_LIMIT) break;
+        batch.update(doc.ref, {
+          userName: 'Deleted User',
+          userDisplayName: 'Deleted User'
+        });
+        batchCount++;
+      }
+
+      // Commit anonymization batch
+      if (batchCount > 0) {
+        await batch.commit();
+        console.log(`✅ Anonymized ${batchCount} documents`);
+      }
+
+      // Delete points transactions
+      const pointsSnap = await db.collection('pointsTransactions').where('userId', '==', uid).get();
+      if (!pointsSnap.empty) {
+        const deleteBatch = db.batch();
+        for (const doc of pointsSnap.docs.slice(0, BATCH_LIMIT)) {
+          deleteBatch.delete(doc.ref);
+        }
+        await deleteBatch.commit();
+        console.log(`✅ Deleted ${Math.min(pointsSnap.size, BATCH_LIMIT)} points transactions`);
+      }
+
+      // Delete referrals (both as referrer and referred)
+      const referredSnap = await db.collection('referrals').where('referredUserId', '==', uid).get();
+      if (!referralsSnap.empty || !referredSnap.empty) {
+        const refBatch = db.batch();
+        let refCount = 0;
+        for (const doc of referralsSnap.docs.slice(0, BATCH_LIMIT / 2)) {
+          refBatch.delete(doc.ref);
+          refCount++;
+        }
+        for (const doc of referredSnap.docs.slice(0, BATCH_LIMIT / 2)) {
+          refBatch.delete(doc.ref);
+          refCount++;
+        }
+        if (refCount > 0) {
+          await refBatch.commit();
+          console.log(`✅ Deleted ${refCount} referrals`);
+        }
+      }
+
+      // Delete notifications
+      const notifSnap = await db.collection('notifications').where('userId', '==', uid).get();
+      if (!notifSnap.empty) {
+        const notifBatch = db.batch();
+        for (const doc of notifSnap.docs.slice(0, BATCH_LIMIT)) {
+          notifBatch.delete(doc.ref);
+        }
+        await notifBatch.commit();
+        console.log(`✅ Deleted ${Math.min(notifSnap.size, BATCH_LIMIT)} notifications`);
+      }
+
+      // Delete user subcollections (clientState, activity)
+      const clientStateSnap = await db.collection('users').doc(uid).collection('clientState').get();
+      const activitySnap = await db.collection('users').doc(uid).collection('activity').get();
+      
+      if (!clientStateSnap.empty || !activitySnap.empty) {
+        const subBatch = db.batch();
+        for (const doc of clientStateSnap.docs) {
+          subBatch.delete(doc.ref);
+        }
+        for (const doc of activitySnap.docs) {
+          subBatch.delete(doc.ref);
+        }
+        await subBatch.commit();
+        console.log(`✅ Deleted user subcollections`);
+      }
+
+      // Delete userRiskScore if exists
+      await db.collection('userRiskScores').doc(uid).delete().catch(() => {});
+
+      // Delete the user document
+      await db.collection('users').doc(uid).delete();
+      console.log(`✅ Deleted user document: ${uid}`);
+
+      console.log(`✅ Banned account archive complete for user: ${uid}`);
+      return res.json({ 
+        success: true, 
+        historyId,
+        message: 'Account archived and data cleaned up. You can now delete your Firebase Auth account.'
+      });
+
+    } catch (error) {
+      console.error('❌ Error in /admin/banned-account-archive:', error);
+      res.status(500).json({ error: 'Failed to archive banned account' });
+    }
+  });
+
+  /**
+   * POST /admin/cleanup-expired-history
+   *
+   * Cleans up expired bannedAccountHistory records (older than 24 hours).
+   * Can be called by admin or triggered on admin view load.
+   *
+   * Request: Requires admin Bearer token
+   * Response: { deletedCount: number, message: string }
+   */
+  app.post('/admin/cleanup-expired-history', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const db = admin.firestore();
+      const now = admin.firestore.Timestamp.now();
+
+      console.log('🧹 Cleaning up expired banned account history...');
+
+      // Query expired records
+      const expiredSnap = await db.collection('bannedAccountHistory')
+        .where('expiresAt', '<=', now)
+        .get();
+
+      if (expiredSnap.empty) {
+        console.log('✅ No expired history records found');
+        return res.json({ deletedCount: 0, message: 'No expired records to clean up' });
+      }
+
+      // Delete in batches
+      const batch = db.batch();
+      let deletedCount = 0;
+      
+      for (const doc of expiredSnap.docs.slice(0, 450)) {
+        batch.delete(doc.ref);
+        deletedCount++;
+      }
+
+      await batch.commit();
+      console.log(`✅ Deleted ${deletedCount} expired history records`);
+
+      return res.json({ 
+        deletedCount, 
+        message: `Cleaned up ${deletedCount} expired history record(s)` 
+      });
+
+    } catch (error) {
+      console.error('❌ Error in /admin/cleanup-expired-history:', error);
+      res.status(500).json({ error: 'Failed to cleanup expired history' });
+    }
+  });
+
+  /**
+   * POST /users/cleanup-orphan-by-phone
+   *
+   * Cleans up orphaned user documents during signup.
+   * When a user signs up with a phone number that has orphaned Firestore docs,
+   * this endpoint deletes those orphans using Admin SDK (bypasses security rules).
+   *
+   * Request body: { phone: string, newUid: string }
+   * Response: { deletedCount: number }
+   */
+  app.post('/users/cleanup-orphan-by-phone', async (req, res) => {
+    try {
+      // Verify the user's token
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+      if (!token) {
+        return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+      }
+
+      const decoded = await admin.auth().verifyIdToken(token);
+      const callerUid = decoded.uid;
+
+      const { phone, newUid } = req.body;
+      if (!phone) {
+        return res.status(400).json({ error: 'Phone number is required' });
+      }
+
+      // Verify the caller is the new user (for security)
+      if (newUid && newUid !== callerUid) {
+        return res.status(403).json({ error: 'UID mismatch' });
+      }
+
+      console.log(`🧹 Cleaning up orphaned accounts for phone: ${phone}, newUid: ${callerUid}`);
+
+      const db = admin.firestore();
+      const auth = admin.auth();
+
+      // Normalize phone number
+      let normalizedPhone = phone.trim();
+      const digits = normalizedPhone.replace(/[^\d]/g, '');
+      if (digits.length === 10) {
+        normalizedPhone = '+1' + digits;
+      } else if (digits.length === 11 && digits.startsWith('1')) {
+        normalizedPhone = '+' + digits;
+      }
+
+      // Find all user documents with this phone number
+      const usersSnap = await db.collection('users')
+        .where('phone', '==', normalizedPhone)
+        .get();
+
+      if (usersSnap.empty) {
+        console.log('✅ No orphaned accounts found');
+        return res.json({ deletedCount: 0 });
+      }
+
+      let deletedCount = 0;
+      const batch = db.batch();
+
+      for (const doc of usersSnap.docs) {
+        const docUid = doc.id;
+        
+        // Skip the current user's document
+        if (docUid === callerUid) {
+          console.log(`ℹ️ Skipping current user: ${docUid}`);
+          continue;
+        }
+
+        // Check if this UID has a corresponding Firebase Auth account
+        try {
+          await auth.getUser(docUid);
+          // Auth account exists - this is not an orphan, skip it
+          console.log(`ℹ️ Skipping non-orphan (Auth exists): ${docUid}`);
+        } catch (error) {
+          if (error.code === 'auth/user-not-found') {
+            // This is an orphaned document - delete it
+            console.log(`🗑️ Deleting orphaned user doc: ${docUid}`);
+            batch.delete(doc.ref);
+            deletedCount++;
+          } else {
+            console.warn(`⚠️ Error checking user ${docUid}: ${error.code}`);
+          }
+        }
+      }
+
+      if (deletedCount > 0) {
+        await batch.commit();
+        console.log(`✅ Deleted ${deletedCount} orphaned user document(s)`);
+      }
+
+      return res.json({ deletedCount });
+
+    } catch (error) {
+      console.error('❌ Error in /users/cleanup-orphan-by-phone:', error);
+      res.status(500).json({ error: 'Failed to cleanup orphaned accounts' });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // Staff-only Rewards Validation / Consumption (QR scanning)
   // ---------------------------------------------------------------------------
