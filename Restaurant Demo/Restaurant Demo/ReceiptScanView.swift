@@ -581,6 +581,11 @@ struct ReceiptScanView: View {
                         self.receiptPassedValidation = true
                         // Allow the interstitial to finish early now that the server work is done.
                         self.interstitialEarlyCutRequested = true
+                        // Post notification in next run loop cycle to ensure state is visible
+                        // This prevents race condition where interstitialDidFinish() checks state before it's set
+                        DispatchQueue.main.async {
+                            NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
+                        }
 
                         print("✅ Server awarded receipt points: \(self.pointsEarned), Total: \(self.receiptTotal)")
                     } else {

@@ -169,9 +169,38 @@ class AuthenticationViewModel: ObservableObject {
             DispatchQueue.main.async {
                 self.isLoading = false
                 if let error = error {
+                    // If document doesn't exist (error code 5) or permission denied, treat as new user
+                    let nsError = error as NSError
+                    if nsError.code == 5 { // NOT_FOUND
+                        print("ℹ️ User document not found for \(uid), treating as new user")
+                        self.shouldNavigateToUserDetails = true
+                        return
+                    }
                     self.errorMessage = "Error: \(error.localizedDescription)"; return
                 }
-                if let data = snapshot?.data(), !data.isEmpty {
+                
+                // Check if document exists and has valid data
+                guard let snapshot = snapshot, snapshot.exists else {
+                    print("ℹ️ User document doesn't exist for \(uid), treating as new user")
+                    self.shouldNavigateToUserDetails = true
+                    return
+                }
+                
+                guard let data = snapshot.data(), !data.isEmpty else {
+                    print("ℹ️ User document exists but is empty for \(uid), treating as new user")
+                    self.shouldNavigateToUserDetails = true
+                    return
+                }
+                
+                // Validate required fields exist
+                let hasRequiredFields = data["phone"] != nil && data["firstName"] != nil
+                if !hasRequiredFields {
+                    print("ℹ️ User document missing required fields for \(uid), treating as new user")
+                    self.shouldNavigateToUserDetails = true
+                    return
+                }
+                
+                if !data.isEmpty {
                     // Final ban check after sign-in - check both isBanned field and bannedNumbers collection
                     let isBanned = data["isBanned"] as? Bool ?? false
                     

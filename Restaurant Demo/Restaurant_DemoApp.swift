@@ -31,10 +31,23 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         // This MUST run before ANY cache managers are accessed
         CacheEmergencyCleanup.performEmergencyCleanup()
         
-        // Add App Check debug provider for development
+        // Configure App Check provider BEFORE FirebaseApp.configure().
+        //
+        // - Local development (Xcode): use debug provider (no App Store receipt).
+        // - TestFlight/App Store: use production provider (App Attest / DeviceCheck).
+        //
+        // This prevents TestFlight builds from ever attempting exchangeDebugToken,
+        // and avoids "placeholder token" behavior that can break Firestore ops like account deletion.
         #if DEBUG
-        AppCheck.setAppCheckProviderFactory(AppCheckDebugProviderFactory())
+        if Bundle.main.appStoreReceiptURL == nil {
+            AppCheck.setAppCheckProviderFactory(AppCheckDebugProviderFactory())
+        } else {
+            AppCheck.setAppCheckProviderFactory(ProductionAppCheckProviderFactory())
+        }
+        #else
+        AppCheck.setAppCheckProviderFactory(ProductionAppCheckProviderFactory())
         #endif
+
         // Configure Firebase when the app launches.
         FirebaseApp.configure()
 
@@ -329,5 +342,17 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         clearAllUserDefaultsData()
         
         DebugLogger.debug("All caches cleared to prevent storage bloat", category: "App")
+    }
+}
+
+/// Production App Check provider factory for TestFlight/App Store builds.
+/// Uses App Attest when available, otherwise falls back to DeviceCheck.
+final class ProductionAppCheckProviderFactory: NSObject, AppCheckProviderFactory {
+    func createProvider(with app: FirebaseApp) -> AppCheckProvider? {
+        if #available(iOS 14.0, *) {
+            return AppAttestProvider(app: app)
+        } else {
+            return DeviceCheckProvider(app: app)
+        }
     }
 }

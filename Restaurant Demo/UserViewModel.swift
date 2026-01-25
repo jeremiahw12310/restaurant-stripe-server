@@ -75,6 +75,9 @@ class UserViewModel: ObservableObject {
     private var userDocListenerUserId: String?
     private var lastLoadedProfilePhotoURL: String?
     
+    /// Flag to prevent snapshot listener from reacting during intentional account deletion
+    private var isDeletingAccount = false
+    
     deinit {
         stopUserListener()
     }
@@ -117,7 +120,12 @@ class UserViewModel: ObservableObject {
             
             // If the profile doc is missing, treat this as a corrupted session and return to logged-out UI.
             // This can happen if the Auth user exists but users/{uid} was deleted (or never created).
+            // EXCEPT: if we're intentionally deleting the account, don't interrupt the deletion flow.
             if let snapshot = snapshot, snapshot.exists == false {
+                if self.isDeletingAccount {
+                    print("ℹ️ UserViewModel: User doc missing during intentional deletion - this is expected, not forcing logout.")
+                    return
+                }
                 print("❌ UserViewModel: users/\(uid) doc missing. Forcing logout to avoid half-signed-in state.")
                 DispatchQueue.main.async {
                     self.isLoading = false
@@ -1103,17 +1111,21 @@ class UserViewModel: ObservableObject {
         }
     }
 
-    /// Completes re-authentication with the provided SMS code and deletes the Firebase Auth account and user data.
+    /// Completes re-authentication with the provided SMS code and deletes the account via backend.
+    /// Note: With the new backend-based deletion, re-auth should rarely be needed since
+    /// the server uses Admin SDK to delete Auth users directly.
     func finalizeAccountDeletion(withSMSCode smsCode: String, completion: @escaping (Bool) -> Void) {
         guard let user = Auth.auth().currentUser else {
             print("❌ No authenticated user found")
             // Force UI back to Get Started if auth state is missing
             UserDefaults.standard.set(false, forKey: "isLoggedIn")
+            isDeletingAccount = false
             completion(false)
             return
         }
         guard let verificationID = pendingDeletionVerificationID, !verificationID.isEmpty else {
             print("❌ No pending verification ID. Call startAccountDeletionReauthentication() first.")
+            isDeletingAccount = false
             completion(false)
             return
         }
@@ -1122,39 +1134,20 @@ class UserViewModel: ObservableObject {
         user.reauthenticate(with: credential) { [weak self] _, error in
             if let error = error {
                 print("❌ Re-authentication failed: \(error.localizedDescription)")
-                completion(false)
+                DispatchQueue.main.async {
+                    self?.isDeletingAccount = false
+                    self?.pendingDeletionVerificationID = nil
+                    self?.isAwaitingDeletionSMSCode = false
+                    completion(false)
+                }
                 return
             }
-            print("✅ Re-authenticated. Deleting Firestore data FIRST (while still authenticated)…")
+            print("✅ Re-authenticated. Calling backend to delete account...")
             
-            // IMPORTANT: Delete Firestore data FIRST while user is still authenticated
-            // Otherwise Firestore security rules will reject the deletion
-            let storage = Storage.storage()
-            self?.deleteUserDataFromFirestore(user: user, storage: storage) { firestoreSuccess in
-                if firestoreSuccess {
-                    print("✅ User data cleanup complete")
-                } else {
-                    print("⚠️ User data cleanup encountered errors (continuing with Auth deletion)")
-                }
-                
-                // NOW delete the Auth user after Firestore cleanup
-                print("🗑️ Now deleting Auth user…")
-                user.delete { deleteError in
-                    DispatchQueue.main.async {
-                        self?.pendingDeletionVerificationID = nil
-                        self?.isAwaitingDeletionSMSCode = false
-                        
-                        if let deleteError = deleteError {
-                            print("❌ Error deleting Auth user: \(deleteError.localizedDescription)")
-                            // Firestore data was deleted but Auth failed - still consider partial success
-                            completion(false)
-                            return
-                        }
-                        print("✅ Auth user deleted successfully")
-                        completion(true)
-                    }
-                }
-            }
+            // After re-auth, call the same backend endpoint
+            self?.pendingDeletionVerificationID = nil
+            self?.isAwaitingDeletionSMSCode = false
+            self?.deleteAccount(completion: completion)
         }
     }
 
@@ -1170,46 +1163,79 @@ class UserViewModel: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "hasSeenWelcome_\(user.uid)")
         print("🧹 Cleared welcome popup flag for user: \(user.uid)")
 
-        // IMPORTANT: Delete Firestore data FIRST while user is still authenticated
-        // Otherwise Firestore security rules will reject the deletion after Auth is deleted
-        print("🗑️ Deleting Firestore data FIRST (while still authenticated)…")
-        let storage = Storage.storage()
-        self.deleteUserDataFromFirestore(user: user, storage: storage) { [weak self] firestoreSuccess in
-            if firestoreSuccess {
-                print("✅ User data cleanup complete")
-            } else {
-                print("⚠️ User data cleanup encountered errors (continuing with Auth deletion)")
+        // Mark that we're intentionally deleting to prevent listener interference
+        isDeletingAccount = true
+        
+        // Stop all listeners BEFORE deletion to prevent errors
+        stopUserListener()
+        print("🛑 Stopped user listeners before deletion")
+
+        // Call backend endpoint to handle all deletion (Firestore + Auth) via Admin SDK
+        // This bypasses App Check and permission issues entirely
+        print("🗑️ Calling backend /user/delete-account endpoint...")
+        user.getIDToken { [weak self] token, error in
+            if let error = error {
+                print("❌ Failed to get ID token: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self?.isDeletingAccount = false
+                    completion(false)
+                }
+                return
             }
             
-            // NOW delete the Auth user after Firestore cleanup
-            print("🗑️ Now attempting to delete Auth user…")
-            user.delete { error in
-                if let error = error as NSError?, error.code == AuthErrorCode.requiresRecentLogin.rawValue {
-                    print("ℹ️ Recent login required. Starting SMS re-auth flow…")
-                    self?.startAccountDeletionReauthentication { started in
-                        completion(started) // UI should now collect SMS code and call finalizeAccountDeletion
-                    }
-                    return
-                }
-                if let error = error {
-                    print("❌ Error deleting Auth user: \(error.localizedDescription)")
-                    // Firestore data was already deleted, Auth deletion failed
+            guard let token = token,
+                  let url = URL(string: "\(Config.backendURL)/user/delete-account") else {
+                print("❌ Invalid token or URL")
+                DispatchQueue.main.async {
+                    self?.isDeletingAccount = false
                     completion(false)
-                    return
                 }
-                print("✅ Auth user deleted successfully")
-                completion(true)
+                return
             }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            
+            URLSession.shared.dataTask(with: request) { data, response, error in
+                DispatchQueue.main.async {
+                    if let error = error {
+                        print("❌ Delete account request failed: \(error.localizedDescription)")
+                        self?.isDeletingAccount = false
+                        completion(false)
+                        return
+                    }
+                    
+                    guard let httpResponse = response as? HTTPURLResponse else {
+                        print("❌ Invalid response from delete account endpoint")
+                        self?.isDeletingAccount = false
+                        completion(false)
+                        return
+                    }
+                    
+                    if httpResponse.statusCode == 200 {
+                        // Server successfully deleted everything including Auth user
+                        print("✅ Backend deleted account successfully")
+                        self?.isDeletingAccount = false
+                        // Sign out locally to clear any cached state
+                        self?.signOut()
+                        completion(true)
+                    } else {
+                        // Parse error message from response
+                        var errorMsg = "Delete account failed with status \(httpResponse.statusCode)"
+                        if let data = data,
+                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                           let msg = json["error"] as? String {
+                            errorMsg = msg
+                        }
+                        print("❌ Delete account failed: \(errorMsg)")
+                        self?.isDeletingAccount = false
+                        completion(false)
+                    }
+                }
+            }.resume()
         }
-    }
-    
-    private func deleteUserDataFromFirestore(user: User, storage: Storage, completion: @escaping (Bool) -> Void) {
-        // Use centralized deletion service for comprehensive cleanup
-        AccountDeletionService.shared.deleteAccount(
-            uid: user.uid,
-            profilePhotoURL: self.profilePhotoURL,
-            completion: completion
-        )
     }
     
     // MARK: - Banned Account Deletion (with Archive)

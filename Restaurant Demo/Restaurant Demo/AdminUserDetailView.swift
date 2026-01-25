@@ -388,6 +388,13 @@ struct AdminUserDetailView: View {
                     }
                 }
             }
+
+            if !viewModel.referralAwardCheckDebug.isEmpty {
+                Text(viewModel.referralAwardCheckDebug)
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundColor(.white.opacity(0.7))
+                    .padding(.top, 4)
+            }
         }
         .padding()
         .background(

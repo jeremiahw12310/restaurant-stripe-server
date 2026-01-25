@@ -58,23 +58,17 @@ struct ReferralHistoryView: View {
                     self.outbound = []
                     return
                 }
-                var items: [HistoryItem] = []
-                let group = DispatchGroup()
-                for d in docs {
+                // IMPORTANT: Do not read users/{uid} for other users here (blocked by Firestore rules).
+                // Use denormalized names stored on the referral doc.
+                let items: [HistoryItem] = docs.map { d in
                     let data = d.data()
-                    let referredId = data["referredUserId"] as? String
                     let statusRaw = (data["status"] as? String) ?? "pending"
                     let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
-                    if let rid = referredId, !rid.isEmpty {
-                        group.enter()
-                        db.collection("users").document(rid).getDocument { userDoc, _ in
-                            let name = (userDoc?.data()?["firstName"] as? String) ?? "Friend"
-                            items.append(HistoryItem(id: d.documentID, name: name, status: status, isOutbound: true, pointsTowards50: 0))
-                            group.leave()
-                        }
-                    }
+                    let rawName = (data["referredFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let name = rawName.isEmpty ? "Friend" : rawName
+                    return HistoryItem(id: d.documentID, name: name, status: status, isOutbound: true, pointsTowards50: 0)
                 }
-                group.notify(queue: .main) {
+                DispatchQueue.main.async {
                     self.outbound = items.sorted { $0.name < $1.name }
                 }
             }
@@ -88,23 +82,17 @@ struct ReferralHistoryView: View {
                     self.inbound = []
                     return
                 }
-                var items: [HistoryItem] = []
-                let group = DispatchGroup()
-                for doc in docs {
+                // IMPORTANT: Do not read users/{uid} for other users here (blocked by Firestore rules).
+                // Use denormalized names stored on the referral doc.
+                let items: [HistoryItem] = docs.map { doc in
                     let data = doc.data()
-                    let referrerId = (data["referrerUserId"] as? String) ?? ""
                     let statusRaw = (data["status"] as? String) ?? "pending"
                     let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
-                    if !referrerId.isEmpty {
-                        group.enter()
-                        db.collection("users").document(referrerId).getDocument { userDoc, _ in
-                            let name = (userDoc?.data()?["firstName"] as? String) ?? "Friend"
-                            items.append(HistoryItem(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: 0))
-                            group.leave()
-                        }
-                    }
+                    let rawName = (data["referrerFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let name = rawName.isEmpty ? "Friend" : rawName
+                    return HistoryItem(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: 0)
                 }
-                group.notify(queue: .main) {
+                DispatchQueue.main.async {
                     self.inbound = items.sorted { $0.name < $1.name }
                 }
             }

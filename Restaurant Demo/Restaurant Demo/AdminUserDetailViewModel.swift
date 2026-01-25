@@ -47,6 +47,7 @@ class AdminUserDetailViewModel: ObservableObject {
     // MARK: - Loading / Error
     @Published var isLoading: Bool = false
     @Published var errorMessage: String = ""
+    @Published var referralAwardCheckDebug: String = ""
 
     private let db = Firestore.firestore()
 
@@ -358,8 +359,8 @@ class AdminUserDetailViewModel: ObservableObject {
                 // Log points adjustment if needed and update history
                 self.logAdminAdjustmentIfNeeded(previousPoints: previousPoints, newPoints: pointsInt, delta: delta)
 
-                // Trigger referral check if new points >= 50 (the referral threshold)
-                if pointsInt >= 50 {
+                // Trigger referral check only when crossing threshold from <50 to >=50
+                if previousPoints < 50 && pointsInt >= 50 {
                     self.triggerReferralCheckForUser()
                 }
 
@@ -415,6 +416,9 @@ class AdminUserDetailViewModel: ObservableObject {
             guard let self = self, let token = token else {
                 if let error = error {
                     print("❌ Failed to get admin token for referral check: \(error.localizedDescription)")
+                    DispatchQueue.main.async {
+                        self?.referralAwardCheckDebug = "Referral check failed: \(error.localizedDescription)"
+                    }
                 }
                 return
             }
@@ -433,11 +437,17 @@ class AdminUserDetailViewModel: ObservableObject {
             URLSession.shared.dataTask(with: request) { data, response, error in
                 if let error = error {
                     print("❌ Referral check request failed: \(error.localizedDescription)")
+                    DispatchQueue.main.async {
+                        self.referralAwardCheckDebug = "Referral check error: \(error.localizedDescription)"
+                    }
                     return
                 }
 
                 guard let http = response as? HTTPURLResponse else {
                     print("❌ No HTTP response received")
+                    DispatchQueue.main.async {
+                        self.referralAwardCheckDebug = "Referral check: no HTTP response"
+                    }
                     return
                 }
 
@@ -446,6 +456,9 @@ class AdminUserDetailViewModel: ObservableObject {
                 if let data = data,
                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     print("📥 Referral check response: \(json)")
+                    DispatchQueue.main.async {
+                        self.referralAwardCheckDebug = "Referral check HTTP \(http.statusCode): \(json)"
+                    }
                     
                     if let status = json["status"] as? String {
                         if status == "awarded" {
@@ -465,6 +478,13 @@ class AdminUserDetailViewModel: ObservableObject {
                     print("⚠️ Could not parse response, HTTP \(http.statusCode)")
                     if let data = data, let raw = String(data: data, encoding: .utf8) {
                         print("⚠️ Raw response: \(raw)")
+                        DispatchQueue.main.async {
+                            self.referralAwardCheckDebug = "Referral check HTTP \(http.statusCode) raw: \(raw)"
+                        }
+                    } else {
+                        DispatchQueue.main.async {
+                            self.referralAwardCheckDebug = "Referral check HTTP \(http.statusCode) (no body)"
+                        }
                     }
                 }
             }.resume()

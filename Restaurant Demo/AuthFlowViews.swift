@@ -521,6 +521,7 @@ struct EnterCodeView: View {
     @State private var countdown: Int = 60
     @State private var canResend: Bool = false
     @State private var timer: Timer?
+    @State private var localCode: String = ""
     @FocusState private var codeFieldFocused: Bool
     
     var body: some View {
@@ -570,21 +571,32 @@ struct EnterCodeView: View {
                         }
                         
                         // Simple OTP text field - plain SwiftUI for reliable autofill
-                        TextField("000000", text: $authVM.smsCode)
+                        // Using local state that syncs to view model to avoid interfering with autofill
+                        TextField("000000", text: $localCode)
                             .keyboardType(.numberPad)
                             .textContentType(.oneTimeCode)
+                            .autocorrectionDisabled()
                             .font(.system(size: 32, weight: .bold, design: .monospaced))
                             .multilineTextAlignment(.center)
                             .focused($codeFieldFocused)
-                            .onChange(of: authVM.smsCode) { newValue in
-                                // Only filter if needed (avoid re-triggering onChange)
-                                let digits = String(newValue.filter(\.isNumber).prefix(6))
-                                if digits != newValue {
-                                    authVM.smsCode = digits
+                            .onChange(of: localCode) { _, newValue in
+                                // Filter to only digits and limit to 6
+                                let filtered = String(newValue.filter(\.isNumber).prefix(6))
+                                if filtered != newValue {
+                                    localCode = filtered
+                                    return
                                 }
-                                // Auto-submit when 6 digits
-                                if digits.count == 6, !authVM.isVerifying {
-                                    authVM.verifyCodeAndSignIn()
+
+                                // IMPORTANT: Don't write into authVM on every keystroke/autofill.
+                                // Updating the EnvironmentObject mid-autofill can cause SwiftUI to re-render and
+                                // iOS to abandon the OTP insertion. Only sync when we have a complete code.
+                                if filtered.count == 6, !authVM.isVerifying {
+                                    // Small delay to ensure autofill completes, then sync+submit
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                        guard !authVM.isVerifying else { return }
+                                        authVM.smsCode = filtered
+                                        authVM.verifyCodeAndSignIn()
+                                    }
                                 }
                             }
                             .padding(.vertical, 16)
@@ -625,8 +637,11 @@ struct EnterCodeView: View {
                         
                         Spacer()
                         
-                        if !authVM.smsCode.isEmpty {
-                            Button(action: { authVM.smsCode = "" }) {
+                        if !localCode.isEmpty {
+                            Button(action: { 
+                                localCode = ""
+                                authVM.smsCode = ""
+                            }) {
                                 HStack(spacing: 4) {
                                     Image(systemName: "xmark.circle.fill")
                                         .font(.system(size: 12))
@@ -649,12 +664,12 @@ struct EnterCodeView: View {
                         .shadow(color: Theme.primaryGold.opacity(0.15), radius: 12, x: 0, y: 6)
                 )
                 .contentShape(Rectangle())
-                .onTapGesture {
-                    codeFieldFocused = true
-                }
                 .padding(.horizontal, 20)
                 .scaleEffect(cardAnimated ? 1.0 : 0.95)
-                .opacity(cardAnimated ? 1.0 : 0.0)
+                // CRITICAL: Keep opacity at 1.0 so TextField is always visible for autofill detection
+                // iOS autofill requires the TextField to be visible and laid out when it tries to detect it
+                // Scale animation still provides visual feedback without hiding the TextField
+                .opacity(1.0)
                 .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.3), value: cardAnimated)
                 
                 Spacer(minLength: 20)
@@ -673,6 +688,8 @@ struct EnterCodeView: View {
                         .padding()
                     } else {
                         Button(action: {
+                            // Ensure authVM has the latest value before verifying
+                            authVM.smsCode = localCode
                             authVM.verifyCodeAndSignIn()
                         }) {
                             HStack(spacing: 12) {
@@ -689,8 +706,8 @@ struct EnterCodeView: View {
                         }
                         .buttonStyle(PrimaryButtonStyle())
                         .padding(.horizontal, 20)
-                        .disabled(authVM.smsCode.filter { $0.isNumber }.count < 6)
-                        .opacity(authVM.smsCode.filter { $0.isNumber }.count == 6 ? 1.0 : 0.6)
+                        .disabled(localCode.filter { $0.isNumber }.count < 6)
+                        .opacity(localCode.filter { $0.isNumber }.count == 6 ? 1.0 : 0.6)
                         .scaleEffect(buttonAnimated ? 1.0 : 0.95)
                         .opacity(buttonAnimated ? 1.0 : 0.0)
                         .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.5), value: buttonAnimated)
@@ -715,16 +732,28 @@ struct EnterCodeView: View {
         }
         .navigationBarHidden(true)
         .onAppear {
+            // Sync local code with view model
+            localCode = authVM.smsCode
+            
+            // CRITICAL: Focus the TextField immediately so it's ready for autofill
+            // Since the TextField is now visible from the start, we can focus it right away
+            // This ensures iOS can detect it for autofill as soon as the view appears
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                codeFieldFocused = true
+            }
+            
             // Trigger animations
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 headerAnimated = true
                 cardAnimated = true
                 buttonAnimated = true
             }
+            
             // Start countdown timer
             startCountdown()
         }
         .onDisappear {
+            // Clean up
             timer?.invalidate()
         }
         // Ban alert removed - banned users are redirected to deletion screen in LaunchView
@@ -855,9 +884,12 @@ struct UserDetailsEntryView: View {
                             .focused($focusedField, equals: .firstName)
                             .submitLabel(.next)
                             .onSubmit { focusedField = .lastName }
-                            .onChange(of: authVM.firstName) { newValue in
-                                // When first name is filled (via autofill), move to last name
-                                if !newValue.trimmingCharacters(in: .whitespaces).isEmpty {
+                            .onChange(of: authVM.firstName) { oldValue, newValue in
+                                // Only trigger focus changes for autofill scenarios (multiple characters added at once)
+                                // Autofill typically adds multiple characters in one change
+                                let isAutofill = (oldValue.isEmpty && newValue.count > 1) || (newValue.count - oldValue.count > 1)
+                                
+                                if isAutofill && !newValue.trimmingCharacters(in: .whitespaces).isEmpty {
                                     if authVM.lastName.trimmingCharacters(in: .whitespaces).isEmpty {
                                         // Last name empty, move focus there for autofill
                                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -868,6 +900,7 @@ struct UserDetailsEntryView: View {
                                         focusedField = nil
                                     }
                                 }
+                                // For manual typing (single character changes), keep focus on firstName
                             }
                     }
                     
@@ -901,14 +934,18 @@ struct UserDetailsEntryView: View {
                             .focused($focusedField, equals: .lastName)
                             .submitLabel(.done)
                             .onSubmit { focusedField = nil }
-                            .onChange(of: authVM.lastName) { newValue in
-                                // When last name is filled (via autofill), dismiss keyboard
-                                if !newValue.trimmingCharacters(in: .whitespaces).isEmpty &&
+                            .onChange(of: authVM.lastName) { oldValue, newValue in
+                                // Only dismiss keyboard for autofill scenarios (multiple characters added at once)
+                                // Autofill typically adds multiple characters in one change
+                                let isAutofill = (oldValue.isEmpty && newValue.count > 1) || (newValue.count - oldValue.count > 1)
+                                
+                                if isAutofill && !newValue.trimmingCharacters(in: .whitespaces).isEmpty &&
                                    !authVM.firstName.trimmingCharacters(in: .whitespaces).isEmpty {
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                                         focusedField = nil
                                     }
                                 }
+                                // For manual typing (single character changes), keep focus on lastName
                             }
                     }
                     
@@ -980,7 +1017,6 @@ struct UserDetailsEntryView: View {
                             .focused($focusedField, equals: .referralCode)
                             .submitLabel(.done)
                             .onSubmit { authVM.createAccountAndSaveDetails() }
-                            .id(ScrollTarget.referralField)
                         
                         if !authVM.referralCodeEntered.isEmpty {
                             HStack(spacing: 4) {
@@ -993,6 +1029,7 @@ struct UserDetailsEntryView: View {
                             }
                         }
                     }
+                    .id(ScrollTarget.referralField)
                 }
                 .padding(20)
                 .background(
@@ -1013,25 +1050,57 @@ struct UserDetailsEntryView: View {
                 }
                 // Extra scroll space so the referral field can move above the keyboard
                 // while we keep the bottom action bar fixed.
-                .padding(.bottom, keyboardHeight > 0 ? (keyboardHeight + 160) : 0)
+                .padding(.bottom, max(0, min(keyboardHeight > 0 && keyboardHeight.isFinite ? (keyboardHeight + 160) : 0, 1000)))
             }
             .onChange(of: focusedField) { newValue in
                 guard newValue == .referralCode else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        proxy.scrollTo(ScrollTarget.referralField, anchor: .bottom)
+                // Scroll immediately when field is focused, then again after keyboard appears
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        proxy.scrollTo(ScrollTarget.referralField, anchor: .center)
+                    }
+                }
+                // Secondary scroll after keyboard is fully shown to ensure proper positioning
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    if focusedField == .referralCode {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            proxy.scrollTo(ScrollTarget.referralField, anchor: .center)
+                        }
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                // Scroll when keyboard is about to show
+                if focusedField == .referralCode {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            proxy.scrollTo(ScrollTarget.referralField, anchor: .center)
+                        }
                     }
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
-                guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+                guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+                      frame.origin.y.isFinite && frame.origin.y >= 0,
+                      frame.size.height.isFinite && frame.size.height >= 0,
+                      frame.size.width.isFinite && frame.size.width >= 0 else { 
+                    keyboardHeight = 0
+                    return 
+                }
                 let screenHeight = UIScreen.main.bounds.height
-                let newHeight = max(0, screenHeight - frame.origin.y)
-                keyboardHeight = newHeight
-                if focusedField == .referralCode && newHeight > 0 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                            proxy.scrollTo(ScrollTarget.referralField, anchor: .bottom)
+                guard screenHeight.isFinite && screenHeight > 0 else {
+                    keyboardHeight = 0
+                    return
+                }
+                let calculatedHeight = screenHeight - frame.origin.y
+                let newHeight = max(0, min(calculatedHeight, screenHeight))
+                // Ensure height is finite and valid
+                keyboardHeight = (newHeight.isFinite && newHeight >= 0) ? newHeight : 0
+                if focusedField == .referralCode && keyboardHeight > 0 && keyboardHeight.isFinite {
+                    // Scroll when keyboard frame changes to keep field visible
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            proxy.scrollTo(ScrollTarget.referralField, anchor: .center)
                         }
                     }
                 }

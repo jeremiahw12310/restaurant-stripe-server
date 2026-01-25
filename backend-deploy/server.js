@@ -306,6 +306,21 @@ app.post('/referrals/accept', async (req, res) => {
 
     const referrerDoc = referrerQuery.docs[0];
     const referrerId = referrerDoc.id;
+    const referrerData = referrerDoc.data() || {};
+
+    const referrerFirstName =
+      (typeof referrerData.firstName === 'string' && referrerData.firstName.trim().length > 0)
+        ? referrerData.firstName.trim()
+        : (typeof referrerData.name === 'string' && referrerData.name.trim().length > 0)
+          ? referrerData.name.trim().split(' ')[0]
+          : 'Friend';
+
+    const referredFirstName =
+      (typeof userData.firstName === 'string' && userData.firstName.trim().length > 0)
+        ? userData.firstName.trim()
+        : (typeof userData.name === 'string' && userData.name.trim().length > 0)
+          ? userData.name.trim().split(' ')[0]
+          : 'Friend';
 
     // Can't refer yourself
     if (referrerId === uid) {
@@ -316,6 +331,9 @@ app.post('/referrals/accept', async (req, res) => {
     const referralRef = await db.collection('referrals').add({
       referrerUserId: referrerId,
       referredUserId: uid,
+      // Denormalized names so clients can display without cross-user reads (blocked by Firestore rules)
+      referrerFirstName,
+      referredFirstName,
       status: 'pending',
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
@@ -356,7 +374,9 @@ app.post('/referrals/accept', async (req, res) => {
     res.json({
       success: true,
       referrerUserId: referrerId,
-      referralId: referralRef.id
+      referralId: referralRef.id,
+      referrerFirstName,
+      referredFirstName
     });
   } catch (error) {
     console.error('Error accepting referral:', error);
@@ -5260,6 +5280,320 @@ IMPORTANT:
     } catch (error) {
       console.error('❌ Error in /admin/banned-account-archive:', error);
       res.status(500).json({ error: 'Failed to archive banned account' });
+    }
+  });
+
+  /**
+   * POST /user/delete-account
+   *
+   * Self-service account deletion endpoint.
+   * Called by regular (non-banned) users to delete their own account.
+   * Uses Firebase Admin SDK to bypass App Check and Firestore permission issues.
+   *
+   * This endpoint:
+   * 1. Verifies user token and extracts UID
+   * 2. Anonymizes PII in: receipts, redeemedRewards, giftedRewardClaims, posts, suspiciousFlags, bannedNumbers
+   * 3. Deletes: pointsTransactions, referrals, notifications, receiptScanAttempts, user subcollections, userRiskScores
+   * 4. Deletes profile photo from Firebase Storage (if exists)
+   * 5. Deletes user document
+   * 6. Deletes Firebase Auth user
+   *
+   * Request: Requires Bearer token of the user requesting deletion
+   * Response: { success: true } or error
+   */
+  app.post('/user/delete-account', async (req, res) => {
+    try {
+      // Verify the user's token
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+      if (!token) {
+        return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+      }
+
+      const decoded = await admin.auth().verifyIdToken(token);
+      const uid = decoded.uid;
+      console.log(`🗑️ Starting account deletion for user: ${uid}`);
+
+      const db = admin.firestore();
+      const BATCH_LIMIT = 450;
+
+      // Get the user document to retrieve profile photo URL
+      const userDoc = await db.collection('users').doc(uid).get();
+      if (!userDoc.exists) {
+        // User document already deleted - try to delete Auth user anyway
+        console.log(`⚠️ User document not found for ${uid}, attempting Auth deletion only`);
+        try {
+          await admin.auth().deleteUser(uid);
+          console.log(`✅ Auth user deleted: ${uid}`);
+        } catch (authErr) {
+          console.log(`ℹ️ Auth user may already be deleted: ${authErr.message}`);
+        }
+        return res.json({ success: true, message: 'Account already deleted or cleanup completed' });
+      }
+      const userData = userDoc.data();
+      const profilePhotoURL = userData.profilePhotoURL || null;
+
+      // ========== PHASE 1: ANONYMIZATION ==========
+      console.log(`📝 Phase 1: Anonymizing PII for user ${uid}`);
+
+      // Get all documents to anonymize in parallel
+      const [receiptsSnap, redeemedSnap, giftedClaimsSnap, postsSnap, suspiciousFlagsSnap] = await Promise.all([
+        db.collection('receipts').where('userId', '==', uid).get(),
+        db.collection('redeemedRewards').where('userId', '==', uid).get(),
+        db.collection('giftedRewardClaims').where('userId', '==', uid).get(),
+        db.collection('posts').where('userId', '==', uid).get(),
+        db.collection('suspiciousFlags').where('userId', '==', uid).get()
+      ]);
+
+      // Anonymize in batches
+      let batch = db.batch();
+      let batchCount = 0;
+
+      // Anonymize receipts
+      for (const doc of receiptsSnap.docs) {
+        if (batchCount >= BATCH_LIMIT) {
+          await batch.commit();
+          batch = db.batch();
+          batchCount = 0;
+        }
+        batch.update(doc.ref, {
+          userName: 'Deleted User',
+          userPhone: '',
+          userEmail: ''
+        });
+        batchCount++;
+      }
+
+      // Anonymize redeemedRewards
+      for (const doc of redeemedSnap.docs) {
+        if (batchCount >= BATCH_LIMIT) {
+          await batch.commit();
+          batch = db.batch();
+          batchCount = 0;
+        }
+        batch.update(doc.ref, {
+          userName: 'Deleted User',
+          userPhone: ''
+        });
+        batchCount++;
+      }
+
+      // Anonymize giftedRewardClaims
+      for (const doc of giftedClaimsSnap.docs) {
+        if (batchCount >= BATCH_LIMIT) {
+          await batch.commit();
+          batch = db.batch();
+          batchCount = 0;
+        }
+        batch.update(doc.ref, {
+          userName: 'Deleted User',
+          userPhone: ''
+        });
+        batchCount++;
+      }
+
+      // Anonymize posts
+      for (const doc of postsSnap.docs) {
+        if (batchCount >= BATCH_LIMIT) {
+          await batch.commit();
+          batch = db.batch();
+          batchCount = 0;
+        }
+        batch.update(doc.ref, {
+          userName: 'Deleted User',
+          userDisplayName: 'Deleted User'
+        });
+        batchCount++;
+      }
+
+      // Anonymize suspiciousFlags (anonymize evidence fields)
+      for (const doc of suspiciousFlagsSnap.docs) {
+        if (batchCount >= BATCH_LIMIT) {
+          await batch.commit();
+          batch = db.batch();
+          batchCount = 0;
+        }
+        const data = doc.data();
+        const anonymizedEvidence = { ...(data.evidence || {}) };
+        if (anonymizedEvidence.userName) anonymizedEvidence.userName = 'Deleted User';
+        if (anonymizedEvidence.userPhone) anonymizedEvidence.userPhone = '';
+        if (anonymizedEvidence.userEmail) anonymizedEvidence.userEmail = '';
+        batch.update(doc.ref, { evidence: anonymizedEvidence });
+        batchCount++;
+      }
+
+      // Anonymize bannedNumbers (if user was banned, just update originalUserName)
+      const userPhone = userData.phone || '';
+      if (userPhone) {
+        const bannedDoc = await db.collection('bannedNumbers').doc(userPhone).get();
+        if (bannedDoc.exists) {
+          if (batchCount >= BATCH_LIMIT) {
+            await batch.commit();
+            batch = db.batch();
+            batchCount = 0;
+          }
+          batch.update(bannedDoc.ref, { originalUserName: 'Deleted User' });
+          batchCount++;
+        }
+      }
+
+      // Commit final anonymization batch
+      if (batchCount > 0) {
+        await batch.commit();
+        console.log(`✅ Anonymized documents (receipts: ${receiptsSnap.size}, redeemedRewards: ${redeemedSnap.size}, giftedRewardClaims: ${giftedClaimsSnap.size}, posts: ${postsSnap.size}, suspiciousFlags: ${suspiciousFlagsSnap.size})`);
+      }
+
+      // ========== PHASE 2: DELETION ==========
+      console.log(`🗑️ Phase 2: Deleting user data for ${uid}`);
+
+      // Get all documents to delete in parallel
+      const [pointsSnap, referrerSnap, referredSnap, notifSnap, scanAttemptsSnap] = await Promise.all([
+        db.collection('pointsTransactions').where('userId', '==', uid).get(),
+        db.collection('referrals').where('referrerUserId', '==', uid).get(),
+        db.collection('referrals').where('referredUserId', '==', uid).get(),
+        db.collection('notifications').where('userId', '==', uid).get(),
+        db.collection('receiptScanAttempts').where('userId', '==', uid).get()
+      ]);
+
+      // Delete pointsTransactions
+      if (!pointsSnap.empty) {
+        let deleteBatch = db.batch();
+        let deleteCount = 0;
+        for (const doc of pointsSnap.docs) {
+          if (deleteCount >= BATCH_LIMIT) {
+            await deleteBatch.commit();
+            deleteBatch = db.batch();
+            deleteCount = 0;
+          }
+          deleteBatch.delete(doc.ref);
+          deleteCount++;
+        }
+        if (deleteCount > 0) await deleteBatch.commit();
+        console.log(`✅ Deleted ${pointsSnap.size} pointsTransactions`);
+      }
+
+      // Delete referrals (both as referrer and referred)
+      const allReferrals = [...referrerSnap.docs, ...referredSnap.docs];
+      if (allReferrals.length > 0) {
+        let refBatch = db.batch();
+        let refCount = 0;
+        for (const doc of allReferrals) {
+          if (refCount >= BATCH_LIMIT) {
+            await refBatch.commit();
+            refBatch = db.batch();
+            refCount = 0;
+          }
+          refBatch.delete(doc.ref);
+          refCount++;
+        }
+        if (refCount > 0) await refBatch.commit();
+        console.log(`✅ Deleted ${allReferrals.length} referrals`);
+      }
+
+      // Delete notifications
+      if (!notifSnap.empty) {
+        let notifBatch = db.batch();
+        let notifCount = 0;
+        for (const doc of notifSnap.docs) {
+          if (notifCount >= BATCH_LIMIT) {
+            await notifBatch.commit();
+            notifBatch = db.batch();
+            notifCount = 0;
+          }
+          notifBatch.delete(doc.ref);
+          notifCount++;
+        }
+        if (notifCount > 0) await notifBatch.commit();
+        console.log(`✅ Deleted ${notifSnap.size} notifications`);
+      }
+
+      // Delete receiptScanAttempts
+      if (!scanAttemptsSnap.empty) {
+        let scanBatch = db.batch();
+        let scanCount = 0;
+        for (const doc of scanAttemptsSnap.docs) {
+          if (scanCount >= BATCH_LIMIT) {
+            await scanBatch.commit();
+            scanBatch = db.batch();
+            scanCount = 0;
+          }
+          scanBatch.delete(doc.ref);
+          scanCount++;
+        }
+        if (scanCount > 0) await scanBatch.commit();
+        console.log(`✅ Deleted ${scanAttemptsSnap.size} receiptScanAttempts`);
+      }
+
+      // Delete user subcollections (clientState, activity)
+      const [clientStateSnap, activitySnap] = await Promise.all([
+        db.collection('users').doc(uid).collection('clientState').get(),
+        db.collection('users').doc(uid).collection('activity').get()
+      ]);
+
+      if (!clientStateSnap.empty || !activitySnap.empty) {
+        const subBatch = db.batch();
+        for (const doc of clientStateSnap.docs) {
+          subBatch.delete(doc.ref);
+        }
+        for (const doc of activitySnap.docs) {
+          subBatch.delete(doc.ref);
+        }
+        await subBatch.commit();
+        console.log(`✅ Deleted user subcollections (clientState: ${clientStateSnap.size}, activity: ${activitySnap.size})`);
+      }
+
+      // Delete userRiskScore if exists
+      await db.collection('userRiskScores').doc(uid).delete().catch(() => {});
+      console.log(`✅ Deleted userRiskScore (if existed)`);
+
+      // ========== PHASE 3: PROFILE PHOTO DELETION ==========
+      if (profilePhotoURL) {
+        try {
+          const storage = admin.storage();
+          const bucket = storage.bucket();
+          
+          // Extract file path from URL
+          // URL format: https://firebasestorage.googleapis.com/v0/b/BUCKET/o/PATH?token=...
+          // or gs://BUCKET/PATH
+          let filePath = null;
+          if (profilePhotoURL.includes('firebasestorage.googleapis.com')) {
+            const match = profilePhotoURL.match(/\/o\/(.+?)\?/);
+            if (match) {
+              filePath = decodeURIComponent(match[1]);
+            }
+          } else if (profilePhotoURL.startsWith('gs://')) {
+            filePath = profilePhotoURL.replace(/^gs:\/\/[^/]+\//, '');
+          }
+
+          if (filePath) {
+            await bucket.file(filePath).delete();
+            console.log(`✅ Deleted profile photo: ${filePath}`);
+          }
+        } catch (storageErr) {
+          // Non-critical - photo may already be deleted or URL invalid
+          console.log(`ℹ️ Profile photo deletion skipped: ${storageErr.message}`);
+        }
+      }
+
+      // ========== PHASE 4: USER DOCUMENT DELETION ==========
+      await db.collection('users').doc(uid).delete();
+      console.log(`✅ Deleted user document: ${uid}`);
+
+      // ========== PHASE 5: FIREBASE AUTH USER DELETION ==========
+      try {
+        await admin.auth().deleteUser(uid);
+        console.log(`✅ Deleted Firebase Auth user: ${uid}`);
+      } catch (authErr) {
+        // Log but don't fail - Firestore data is already cleaned up
+        console.error(`⚠️ Error deleting Auth user (data already cleaned): ${authErr.message}`);
+      }
+
+      console.log(`✅ Account deletion complete for user: ${uid}`);
+      return res.json({ success: true });
+
+    } catch (error) {
+      console.error('❌ Error in /user/delete-account:', error);
+      res.status(500).json({ error: 'Failed to delete account' });
     }
   });
 

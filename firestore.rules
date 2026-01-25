@@ -230,6 +230,36 @@ service cloud.firestore {
       allow read, write: if false;  // Server-only
     }
     
+    // Receipts collection - server creates, users can read/anonymize their own for account deletion
+    match /receipts/{receiptId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      // Allow users to anonymize their own receipts (update only PII fields)
+      allow update: if isAuthenticated() && 
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['userName', 'userPhone', 'userEmail']);
+      allow create, delete: if false; // Server-only
+    }
+    
+    // Gifted rewards collection - server creates, users can update if they're a target
+    match /giftedRewards/{rewardId} {
+      allow read: if isAuthenticated() && request.auth.uid in resource.data.targetUserIds;
+      // Allow users to remove themselves from targetUserIds (account deletion cleanup)
+      allow update: if isAuthenticated() && 
+        request.auth.uid in resource.data.targetUserIds &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['targetUserIds']);
+      allow create, delete: if false; // Server-only
+    }
+    
+    // Gifted reward claims collection - server creates, users can read/anonymize their own
+    match /giftedRewardClaims/{claimId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      // Allow users to anonymize their own claims (update only PII fields)
+      allow update: if isAuthenticated() && 
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['userName', 'userPhone']);
+      allow create, delete: if false; // Server-only
+    }
+    
     // Redeemed rewards collection - readable by any authenticated user for verification purposes.
     match /redeemedRewards/{rewardId} {
       // Any signed-in user (e.g., employee) can READ reward documents.
@@ -237,6 +267,7 @@ service cloud.firestore {
       allow read: if isAuthenticated();
 
       // Writes remain restricted to the reward owner, admins, or backend server.
+      // (Keep broad write permissions here as originally implemented to avoid breaking reward flows.)
       allow write: if (isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin()));
     }
 

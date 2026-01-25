@@ -140,12 +140,9 @@ struct ReferralView: View {
                     }
                     .padding(.horizontal, 24)
                     .padding(.vertical, 24)
-                    .background(
-                        NavigationLink(destination: ReferralHistoryView(), isActive: $showHistory) {
-                            EmptyView()
-                        }
-                        .opacity(0)
-                    )
+                    .navigationDestination(isPresented: $showHistory) {
+                        ReferralHistoryView()
+                    }
                 }
             }
             .toolbar {
@@ -560,24 +557,21 @@ struct ReferralView: View {
                     self.outboundConnections = []
                     return
                 }
-                var items: [ReferralDisplay] = []
-                let group = DispatchGroup()
-                for d in docs {
+                // IMPORTANT: Do not read users/{uid} for other users here (blocked by Firestore rules).
+                // Use denormalized names stored on the referral doc.
+                let items: [ReferralDisplay] = docs.map { d in
                     let data = d.data()
-                    let referredId = data["referredUserId"] as? String
                     let statusRaw = (data["status"] as? String) ?? "pending"
                     let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
                     let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
-                    if let rid = referredId, !rid.isEmpty {
-                        group.enter()
-                        db.collection("users").document(rid).getDocument { userDoc, _ in
-                            let name = (userDoc?.data()? ["firstName"] as? String) ?? "Friend"
-                            items.append(ReferralDisplay(id: d.documentID, name: name, status: status, isOutbound: true, pointsTowards50: 0, createdAt: createdAt))
-                            group.leave()
-                        }
-                    }
+                    let rawName = (data["referredFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    // If this referral doc predates denormalized names, don't overwrite a better name
+                    // that may have come from the server fallback.
+                    let existingName = self.outboundConnections.first(where: { $0.id == d.documentID })?.name
+                    let name = rawName.isEmpty ? (existingName ?? "Friend") : rawName
+                    return ReferralDisplay(id: d.documentID, name: name, status: status, isOutbound: true, pointsTowards50: 0, createdAt: createdAt)
                 }
-                group.notify(queue: .main) {
+                DispatchQueue.main.async {
                     self.outboundConnections = items.sorted { $0.name < $1.name }
                 }
             }
@@ -598,11 +592,12 @@ struct ReferralView: View {
                 let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
                 let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
                 if !referrerId.isEmpty {
-                    db.collection("users").document(referrerId).getDocument { userDoc, _ in
-                        let name = (userDoc?.data()? ["firstName"] as? String) ?? "Friend"
-                        DispatchQueue.main.async {
-                            self.inboundConnection = ReferralDisplay(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: 0, createdAt: createdAt)
-                        }
+                    // IMPORTANT: Do not read users/{uid} for other users here (blocked by Firestore rules).
+                    // Use denormalized names stored on the referral doc.
+                    let rawName = (data["referrerFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let name = rawName.isEmpty ? (self.inboundConnection?.name ?? "Friend") : rawName
+                    DispatchQueue.main.async {
+                        self.inboundConnection = ReferralDisplay(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: 0, createdAt: createdAt)
                     }
                 } else {
                     self.inboundConnection = nil
@@ -630,45 +625,28 @@ struct ReferralView: View {
 
             // If a referral was linked during sign-up, show inbound pending immediately
             if used {
-                // Fetch referrer name
-                db.collection("users").document(referredById).getDocument { userDoc, _ in
-                    let name = (userDoc?.data()? ["firstName"] as? String) ?? "Friend"
-                    // Default status pending until we check the referral doc
+                // IMPORTANT: Do not read users/{uid} for other users here (blocked by Firestore rules).
+                // Fetch referral doc (read is allowed for referrer/referred) and use denormalized name fields.
+                let updateFromReferralDoc: (DocumentSnapshot?) -> Void = { refDoc in
+                    let refData = refDoc?.data() ?? [:]
+                    let statusRaw = (refData["status"] as? String) ?? "pending"
+                    let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
+                    let createdAt = (refData["createdAt"] as? Timestamp)?.dateValue()
+                    let rawName = (refData["referrerFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let name = rawName.isEmpty ? (self.inboundConnection?.name ?? "Friend") : rawName
                     DispatchQueue.main.async {
-                        if self.inboundConnection == nil {
-                            self.inboundConnection = ReferralDisplay(id: referralId.isEmpty ? UUID().uuidString : referralId, name: name, status: "Pending", isOutbound: false, pointsTowards50: 0, createdAt: nil)
-                        } else {
-                            self.inboundConnection = ReferralDisplay(id: self.inboundConnection!.id, name: name, status: self.inboundConnection!.status, isOutbound: false, pointsTowards50: self.inboundConnection!.pointsTowards50, createdAt: self.inboundConnection!.createdAt)
-                        }
+                        let idToUse = (refDoc?.documentID ?? (referralId.isEmpty ? UUID().uuidString : referralId))
+                        self.inboundConnection = ReferralDisplay(id: idToUse, name: name, status: status, isOutbound: false, pointsTowards50: 0, createdAt: createdAt ?? self.inboundConnection?.createdAt)
                     }
                 }
-                // If we have referralId, fetch its status to reflect Awarded/Pending accurately
+
                 if !referralId.isEmpty {
                     db.collection("referrals").document(referralId).getDocument { refDoc, _ in
-                        let data = refDoc?.data() ?? [:]
-                        let statusRaw = (data["status"] as? String) ?? "pending"
-                        let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
-                        let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
-                        DispatchQueue.main.async {
-                            if let current = self.inboundConnection {
-                                self.inboundConnection = ReferralDisplay(id: current.id, name: current.name, status: status, isOutbound: false, pointsTowards50: current.pointsTowards50, createdAt: createdAt ?? current.createdAt)
-                            }
-                        }
+                        updateFromReferralDoc(refDoc)
                     }
                 } else {
-                    // Fallback: try to locate the referral doc by referredUserId once
                     db.collection("referrals").whereField("referredUserId", isEqualTo: uid).limit(to: 1).getDocuments { snap, _ in
-                        if let doc = snap?.documents.first {
-                            let data = doc.data()
-                            let statusRaw = (data["status"] as? String) ?? "pending"
-                            let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
-                            let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
-                            DispatchQueue.main.async {
-                                if let current = self.inboundConnection {
-                                    self.inboundConnection = ReferralDisplay(id: doc.documentID, name: current.name, status: status, isOutbound: false, pointsTowards50: current.pointsTowards50, createdAt: createdAt ?? current.createdAt)
-                                }
-                            }
-                        }
+                        updateFromReferralDoc(snap?.documents.first)
                     }
                 }
             }
@@ -681,13 +659,11 @@ struct ReferralView: View {
         self.hasUsedReferral = true
         self.canShowEnterCode = false
         if let rid = dict["referrerUserId"], !rid.isEmpty {
-            let db = Firestore.firestore()
-            db.collection("users").document(rid).getDocument { userDoc, _ in
-                let name = (userDoc?.data()? ["firstName"] as? String) ?? "Friend"
-                DispatchQueue.main.async {
-                    if self.inboundConnection == nil {
-                        self.inboundConnection = ReferralDisplay(id: UUID().uuidString, name: name, status: "Pending", isOutbound: false, pointsTowards50: 0, createdAt: nil)
-                    }
+            // Can't read users/{rid} as a non-admin; show placeholder and let the
+            // referrals listener / server fallback populate the real name.
+            DispatchQueue.main.async {
+                if self.inboundConnection == nil {
+                    self.inboundConnection = ReferralDisplay(id: UUID().uuidString, name: "Friend", status: "Pending", isOutbound: false, pointsTowards50: 0, createdAt: nil)
                 }
             }
         }
@@ -897,9 +873,11 @@ struct ReferralView: View {
                 }
                 if http.statusCode >= 200 && http.statusCode < 300 {
                     var referrerId: String? = nil
+                    var referrerFirstName: String? = nil
                     if let data = data,
                        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                         referrerId = json["referrerUserId"] as? String
+                        referrerFirstName = json["referrerFirstName"] as? String
                     }
                     DispatchQueue.main.async {
                         // Update UI immediately without waiting for backend propagation
@@ -913,11 +891,9 @@ struct ReferralView: View {
                         if let rid = referrerId { payload["referrerUserId"] = rid }
                         UserDefaults.standard.set(payload, forKey: self.sessionKey)
                         if let rid = referrerId, !rid.isEmpty {
-                            let db = Firestore.firestore()
-                            db.collection("users").document(rid).getDocument { userDoc, _ in
-                                let name = (userDoc?.data()? ["firstName"] as? String) ?? "Friend"
-                                self.inboundConnection = ReferralDisplay(id: UUID().uuidString, name: name, status: "Pending", isOutbound: false, pointsTowards50: 0, createdAt: nil)
-                            }
+                            let rawName = (referrerFirstName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                            let name = rawName.isEmpty ? "Friend" : rawName
+                            self.inboundConnection = ReferralDisplay(id: UUID().uuidString, name: name, status: "Pending", isOutbound: false, pointsTowards50: 0, createdAt: nil)
                         }
                         // Also refresh the connections listeners to pick up the new referral doc
                         self.listenForConnections()
@@ -1159,7 +1135,7 @@ fileprivate struct ReferralCodeTicketCard: View {
                     .foregroundColor(.secondary)
 
                 HStack(spacing: 10) {
-                    if let url = shareURL {
+                    if shareURL != nil {
                         Button(action: onShare) {
                             Label("Refer a Friend", systemImage: "square.and.arrow.up")
                         }
