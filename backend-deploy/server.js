@@ -563,14 +563,19 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
     let referredName = 'Friend';
     
     await db.runTransaction(async (tx) => {
+      // STEP 1: All reads must happen first (Firestore transaction requirement)
+      
       // Re-fetch the referral doc inside the transaction to ensure consistency
       const txReferralDoc = await tx.get(db.collection('referrals').doc(referralId));
       if (txReferralDoc.data().status === 'awarded') {
         throw new Error('ALREADY_AWARDED');
       }
       
-      // Re-fetch user documents inside transaction
+      // Re-fetch referred user document inside transaction
       const txReferredUserDoc = await tx.get(referredUserRef);
+      if (!txReferredUserDoc.exists) {
+        throw new Error('Referred user not found');
+      }
       const txReferredData = txReferredUserDoc.data() || {};
       const currentReferredPoints = txReferredData.points || 0;
       const currentReferredLifetime = (typeof txReferredData.lifetimePoints === 'number') 
@@ -578,6 +583,27 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
         : currentReferredPoints;
       referredFcmToken = txReferredData.fcmToken || null;
       referredName = txReferredData.firstName || 'Friend';
+      
+      // Re-fetch referrer user document inside transaction (BEFORE any writes)
+      let txReferrerUserDoc = null;
+      let txReferrerData = null;
+      if (referrerUserDoc.exists) {
+        txReferrerUserDoc = await tx.get(referrerUserRef);
+        if (txReferrerUserDoc.exists) {
+          txReferrerData = txReferrerUserDoc.data() || {};
+          const currentReferrerPoints = txReferrerData.points || 0;
+          const currentReferrerLifetime = (typeof txReferrerData.lifetimePoints === 'number')
+            ? txReferrerData.lifetimePoints
+            : currentReferrerPoints;
+          referrerFcmToken = txReferrerData.fcmToken || null;
+          referrerName = txReferrerData.firstName || 'Friend';
+          
+          referrerNewPoints = currentReferrerPoints + REFERRAL_BONUS;
+          const referrerNewLifetime = currentReferrerLifetime + REFERRAL_BONUS;
+        }
+      }
+      
+      // STEP 2: Now do all writes (after all reads are complete)
       
       // Award +50 to referred user
       referredNewPoints = currentReferredPoints + REFERRAL_BONUS;
@@ -603,19 +629,7 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
       });
       
       // Award +50 to referrer if they exist
-      if (referrerUserDoc.exists) {
-        const txReferrerUserDoc = await tx.get(referrerUserRef);
-        const txReferrerData = txReferrerUserDoc.data() || {};
-        const currentReferrerPoints = txReferrerData.points || 0;
-        const currentReferrerLifetime = (typeof txReferrerData.lifetimePoints === 'number')
-          ? txReferrerData.lifetimePoints
-          : currentReferrerPoints;
-        referrerFcmToken = txReferrerData.fcmToken || null;
-        referrerName = txReferrerData.firstName || 'Friend';
-        
-        referrerNewPoints = currentReferrerPoints + REFERRAL_BONUS;
-        const referrerNewLifetime = currentReferrerLifetime + REFERRAL_BONUS;
-        
+      if (txReferrerUserDoc && txReferrerUserDoc.exists && txReferrerData) {
         tx.update(referrerUserRef, {
           points: referrerNewPoints,
           lifetimePoints: referrerNewLifetime

@@ -673,16 +673,11 @@ struct ReferralView: View {
         if let rid = dict["referrerUserId"], !rid.isEmpty {
             // Can't read users/{rid} as a non-admin; show placeholder and let the
             // referrals listener / server fallback populate the real name.
-            // For inbound progress, we can use current user's own points as a fast-path
-            // (since we can read our own user doc), but prefer referral doc value when available
-            let currentUserPoints = (data["points"] as? Int) ?? 0
-            let fallbackProgress = min(max(currentUserPoints, 0), 50)
+            // Progress will be updated by the referral doc listener (which reads from referral doc)
+            // or by the user doc listener (which can read our own points)
             DispatchQueue.main.async {
                 if self.inboundConnection == nil {
-                    self.inboundConnection = ReferralDisplay(id: UUID().uuidString, name: "Friend", status: "Pending", isOutbound: false, pointsTowards50: fallbackProgress, createdAt: nil)
-                } else if let existing = self.inboundConnection, existing.pointsTowards50 == 0 {
-                    // Update progress if referral doc hasn't been updated yet
-                    self.inboundConnection = ReferralDisplay(id: existing.id, name: existing.name, status: existing.status, isOutbound: existing.isOutbound, pointsTowards50: fallbackProgress, createdAt: existing.createdAt)
+                    self.inboundConnection = ReferralDisplay(id: UUID().uuidString, name: "Friend", status: "Pending", isOutbound: false, pointsTowards50: 0, createdAt: nil)
                 }
             }
         }
