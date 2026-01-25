@@ -587,6 +587,7 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
       // Re-fetch referrer user document inside transaction (BEFORE any writes)
       let txReferrerUserDoc = null;
       let txReferrerData = null;
+      let referrerNewLifetime = null;
       if (referrerUserDoc.exists) {
         txReferrerUserDoc = await tx.get(referrerUserRef);
         if (txReferrerUserDoc.exists) {
@@ -599,7 +600,7 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
           referrerName = txReferrerData.firstName || 'Friend';
           
           referrerNewPoints = currentReferrerPoints + REFERRAL_BONUS;
-          const referrerNewLifetime = currentReferrerLifetime + REFERRAL_BONUS;
+          referrerNewLifetime = currentReferrerLifetime + REFERRAL_BONUS;
         }
       }
       
