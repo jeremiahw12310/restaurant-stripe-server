@@ -5,13 +5,20 @@ import Firebase
 import FirebaseAuth
 import MapKit
 
+/// Wraps RedemptionSuccessData for use with SwiftUI sheet(item:).
+private struct IdentifiableSuccessData: Identifiable {
+    let id: String
+    let data: RedemptionSuccessData
+    init(_ d: RedemptionSuccessData) { id = d.redemptionCode; data = d }
+}
+
 // MARK: - Home Rewards Section (extracted from HomeView, UI unchanged)
 struct HomeRewardsSection: View {
     @EnvironmentObject var sharedRewardsVM: RewardsViewModel
     @EnvironmentObject var userVM: UserViewModel
 
-    // Show countdown & ability to reopen reward card
-    @State private var showRedeemedCard = false
+    /// Which reward's detail sheet to show; nil = closed.
+    @State private var sheetSuccessData: IdentifiableSuccessData?
 
 
     // Controls from parent
@@ -25,22 +32,16 @@ struct HomeRewardsSection: View {
     @ViewBuilder
     private var rewardsMainStack: some View {
         VStack(spacing: 5) {
-            // Active countdown at top if a reward was recently redeemed
-            if let active = sharedRewardsVM.activeRedemption {
+            // Active countdown(s) at top when rewards were recently redeemed
+            ForEach(sharedRewardsVM.activeRedemptions) { active in
                 RedeemedRewardsCountdownCard(activeRedemption: active) {
-                    // Trigger refund if we have the reward ID or code
-                    if !active.rewardId.isEmpty {
-                        Task { @MainActor in
-                            await sharedRewardsVM.refundExpiredReward(rewardId: active.rewardId)
-                        }
-                    } else {
-                        Task { @MainActor in
-                            await sharedRewardsVM.refundExpiredReward(redemptionCode: active.redemptionCode)
-                        }
-                    }
-                    sharedRewardsVM.activeRedemption = nil
+                    sharedRewardsVM.handleActiveRedemptionExpired(active)
                 }
-                .onTapGesture { showRedeemedCard = true }
+                .onTapGesture {
+                    if let sd = sharedRewardsVM.successDataByCode[active.redemptionCode] {
+                        sheetSuccessData = IdentifiableSuccessData(sd)
+                    }
+                }
                 .padding(.bottom, 8)
             }
             HStack {
@@ -123,22 +124,16 @@ struct HomeRewardsSection: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            // Active countdown at top if a reward was recently redeemed
-            if let active = sharedRewardsVM.activeRedemption {
+            // Active countdown(s) at top when rewards were recently redeemed
+            ForEach(sharedRewardsVM.activeRedemptions) { active in
                 RedeemedRewardsCountdownCard(activeRedemption: active) {
-                    // Trigger refund if we have the reward ID or code
-                    if !active.rewardId.isEmpty {
-                        Task { @MainActor in
-                            await sharedRewardsVM.refundExpiredReward(rewardId: active.rewardId)
-                        }
-                    } else {
-                        Task { @MainActor in
-                            await sharedRewardsVM.refundExpiredReward(redemptionCode: active.redemptionCode)
-                        }
-                    }
-                    sharedRewardsVM.activeRedemption = nil
+                    sharedRewardsVM.handleActiveRedemptionExpired(active)
                 }
-                .onTapGesture { showRedeemedCard = true }
+                .onTapGesture {
+                    if let sd = sharedRewardsVM.successDataByCode[active.redemptionCode] {
+                        sheetSuccessData = IdentifiableSuccessData(sd)
+                    }
+                }
                 .padding(.bottom, 8)
             }
             
@@ -247,7 +242,7 @@ struct HomeRewardsSection: View {
         }
         // Allow a bit more room when a redeemed countdown is present so cards
         // don’t visually overlap the "REWARDS" header
-        .frame(height: sharedRewardsVM.activeRedemption != nil ? 430 : 310)
+        .frame(height: CGFloat(310 + min(sharedRewardsVM.activeRedemptions.count, 5) * 80))
         .padding(.horizontal, 24)
         .padding(.vertical, 20)
         .background(
@@ -265,14 +260,12 @@ struct HomeRewardsSection: View {
         .scaleEffect(animate ? 1.0 : 0.9)
         .opacity(animate ? 1.0 : 0.0)
         .animation(.spring(response: 0.8, dampingFraction: 0.7).delay(0.1), value: animate)
-        .sheet(isPresented: $showRedeemedCard) {
-            if let success = sharedRewardsVM.lastSuccessData {
-                RewardCardScreen(
-                    userName: userVM.firstName.isEmpty ? "Your" : userVM.firstName,
-                    successData: success,
-                    onDismiss: { showRedeemedCard = false }
-                )
-            }
+        .sheet(item: $sheetSuccessData) { wrapper in
+            RewardCardScreen(
+                userName: userVM.firstName.isEmpty ? "Your" : userVM.firstName,
+                successData: wrapper.data,
+                onDismiss: { sheetSuccessData = nil }
+            )
         }
         .alert("Points Refunded", isPresented: $sharedRewardsVM.showRefundNotification) {
             Button("OK") {

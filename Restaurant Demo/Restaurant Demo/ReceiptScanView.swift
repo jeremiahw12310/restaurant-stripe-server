@@ -566,7 +566,7 @@ struct ReceiptScanView: View {
                         self.interstitialTimeoutWorkItem?.cancel()
                         self.interstitialTimeoutWorkItem = nil
                         self.isProcessing = false
-                        self.errorMessage = "Total section not visible — include Subtotal/Tax/Total."
+                        self.errorMessage = "Make sure all receipt text is visible and try again."
                         self.pendingErrorOutcome = .totalsNotVisible
                         self.interstitialEarlyCutRequested = true
                         NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
@@ -669,7 +669,8 @@ struct ReceiptScanView: View {
                         presentOutcome(errorOutcome)
                     }
                 }
-            }
+                    }
+                }
             }
         }
     }
@@ -819,6 +820,7 @@ struct ReceiptScanView: View {
         
         // 0) Totals section missing (fail closed to prevent guessed totals)
         if msg.contains("total section not visible") ||
+           msg.contains("make sure all receipt text is visible") ||
            (msg.contains("include subtotal") && msg.contains("tax") && msg.contains("total")) ||
            (msg.contains("subtotal") && msg.contains("tax") && msg.contains("total") && msg.contains("not visible")) {
             return .totalsNotVisible
@@ -2436,11 +2438,21 @@ private func preprocessReceiptImageForUpload(_ image: UIImage, debugSaveToPhotos
         let downscaled = downscaleIfNeeded(normalized, maxDimension: 2000)
 
         guard let processed = detectAndCorrectReceipt(in: downscaled, debugLog: debugSaveToPhotos) else {
-            print("🧾 Receipt preprocessing skipped (no rectangle detected) - using original image")
+            // Fallback: when rectangle detection fails, attempt a conservative text-box crop to reduce background.
+            // This is still guarded by the Subtotal/Tax/Total OCR gate upstream (fail closed).
+            let heuristic = heuristicTextCropReceipt(downscaled, debugLog: debugSaveToPhotos)
+            if heuristic != nil {
+                print("🧾 Receipt preprocessing fallback: using heuristic text crop (no rectangle detected)")
+            } else {
+                print("🧾 Receipt preprocessing skipped (no rectangle detected) - using original image")
+            }
             if debugSaveToPhotos {
                 saveToPhotoLibrary(downscaled, label: "receipt-debug-original")
+                if let heuristic {
+                    saveToPhotoLibrary(heuristic, label: "receipt-debug-heuristic")
+                }
             }
-            DispatchQueue.main.async { completion(downscaled) }
+            DispatchQueue.main.async { completion(heuristic ?? downscaled) }
             return
         }
         print("🧾 Receipt preprocessing succeeded - using cropped/perspective-corrected image")
@@ -2449,6 +2461,73 @@ private func preprocessReceiptImageForUpload(_ image: UIImage, debugSaveToPhotos
         }
         DispatchQueue.main.async { completion(processed) }
     }
+}
+
+/// Fallback crop when rectangle detection fails: union all recognized text boxes and crop conservatively.
+/// The crop is biased to keep the bottom portion (where totals usually live) and expands width generously.
+private func heuristicTextCropReceipt(_ image: UIImage, debugLog: Bool) -> UIImage? {
+    guard let cgImage = image.cgImage else { return nil }
+
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .fast
+    request.usesLanguageCorrection = false
+    request.minimumTextHeight = 0.02
+
+    let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
+    do {
+        try handler.perform([request])
+    } catch {
+        if debugLog {
+            print("🧾 Heuristic text crop OCR error: \(error)")
+        }
+        return nil
+    }
+
+    let boxes = request.results?.map { $0.boundingBox } ?? []
+    guard var union = boxes.first else { return nil }
+    for b in boxes.dropFirst() {
+        union = union.union(b)
+    }
+
+    // Vision bounding boxes are normalized with origin at bottom-left.
+    // Make a conservative crop that keeps the bottom of the image and includes all detected text.
+    let padX: CGFloat = 0.06
+    let padTop: CGFloat = 0.08
+
+    // Start from bottom (y=0) up to the top of detected text (+ padding).
+    var x0 = max(0.0, union.minX - padX)
+    var x1 = min(1.0, union.maxX + padX)
+    var h = min(1.0, union.maxY + padTop)
+
+    // Expand width aggressively to avoid clipping receipt edges.
+    if (x1 - x0) < 0.92 {
+        x0 = 0.0
+        x1 = 1.0
+    }
+
+    // Ensure we keep enough vertical content to include totals (even if text detection is sparse).
+    h = max(h, 0.60)
+    h = min(h, 1.0)
+
+    let cropNorm = CGRect(x: x0, y: 0.0, width: max(0.01, x1 - x0), height: max(0.01, h))
+
+    let imgW = CGFloat(cgImage.width)
+    let imgH = CGFloat(cgImage.height)
+
+    // Convert Vision-normalized (bottom-left origin) to CGImage pixel rect (top-left origin).
+    let cropX = cropNorm.minX * imgW
+    let cropW = cropNorm.width * imgW
+    let cropH = cropNorm.height * imgH
+    let cropYTopLeft = imgH - cropH
+
+    let rect = CGRect(x: cropX, y: cropYTopLeft, width: cropW, height: cropH).integral
+    guard rect.width > 10, rect.height > 10 else { return nil }
+    guard let croppedCG = cgImage.cropping(to: rect) else { return nil }
+
+    if debugLog {
+        print("🧾 Heuristic text crop: cropRect=\(rect) from (\(cgImage.width)x\(cgImage.height))")
+    }
+    return UIImage(cgImage: croppedCG, scale: 1.0, orientation: .up)
 }
 
 private func normalizeImageOrientation(_ image: UIImage) -> UIImage {

@@ -213,7 +213,7 @@ struct ReceiptResultView: View {
             return detail
         case .notFromRestaurant: return "We can only accept receipts from Dumpling House."
         case .unreadable: return "Try brighter lighting and fill the frame."
-        case .totalsNotVisible: return "Make sure the bottom shows Subtotal, Tax, and Total."
+        case .totalsNotVisible: return "Make sure all receipt text is visible and try again."
         case .tooOld: return "Receipts must be scanned within 48 hours of purchase."
         case .mismatch: return "We couldn’t match totals. Check your photo and try again."
         case .network: return "You can retry in a moment."

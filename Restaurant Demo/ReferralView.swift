@@ -82,6 +82,11 @@ struct ReferralView: View {
     // Entrance animation
     // Default to visible to avoid entrance animations/fx when opening referral.
     @State private var hasAppeared: Bool = true
+    
+    // Hero card animations
+    @State private var heroAnimated: Bool = false
+    @State private var stepsAnimated: Bool = false
+    @State private var ringProgress: CGFloat = 0
 
     // UI feedback
     @State private var showToast: Bool = false
@@ -130,9 +135,11 @@ struct ReferralView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        header
                         bigQRSection
                         codeSection
+                        header
+                        referralProgressHeroCard
+                        referralJourneySteps
                         if canShowEnterCode { enterCodeSection }
                         connectionsSection
                         if !errorMessage.isEmpty { errorSection }
@@ -145,7 +152,14 @@ struct ReferralView: View {
                     }
                 }
             }
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Give 50, Get 50")
+                        .font(.system(size: 18, weight: .black, design: .rounded))
+                        .foregroundStyle(Theme.darkGoldGradient)
+                        .accessibilityAddTraits(.isHeader)
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { dismiss() }
                 }
@@ -182,11 +196,32 @@ struct ReferralView: View {
             }
             listenForConnections()
             startUserDocListener()
+            
+            // Trigger hero card and journey animations
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation {
+                    heroAnimated = true
+                    stepsAnimated = true
+                }
+                
+                // Animate the ring progress with a delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    withAnimation(.easeOut(duration: 1.2)) {
+                        ringProgress = referralProgress
+                    }
+                }
+            }
         }
         .onDisappear {
             outboundListener?.remove(); outboundListener = nil
             inboundListener?.remove(); inboundListener = nil
             userDocListener?.remove(); userDocListener = nil
+        }
+        .onChange(of: outboundConnections.count) { _, newCount in
+            // Update ring progress when connections change
+            withAnimation(.easeOut(duration: 0.8)) {
+                ringProgress = CGFloat(newCount) / 10.0
+            }
         }
         .safeAreaInset(edge: .bottom) {
             if !myCode.isEmpty, let url = shareURL {
@@ -212,9 +247,6 @@ struct ReferralView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Give 50, Get 50")
-                .font(.system(size: 28, weight: .black, design: .rounded))
-                .foregroundStyle(Theme.darkGoldGradient)
             Text("Refer up to 10 friends. When they earn 50 points you will both receive an additional 50 points.")
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                 .foregroundColor(.secondary)
@@ -225,10 +257,24 @@ struct ReferralView: View {
     }
 
     @ViewBuilder
+    private func responsiveLargeQRCodeView(url: URL) -> some View {
+        if #available(iOS 16.0, *) {
+            ViewThatFits {
+                LargeQRCodeView(url: url, size: 300)
+                LargeQRCodeView(url: url, size: 260)
+                LargeQRCodeView(url: url, size: 240)
+                LargeQRCodeView(url: url, size: 220)
+            }
+        } else {
+            LargeQRCodeView(url: url, size: 240)
+        }
+    }
+
+    @ViewBuilder
     private var bigQRSection: some View {
         if let url = shareURL {
-            VStack(spacing: 10) {
-                LargeQRCodeView(url: url, size: 300)
+            VStack(spacing: 8) {
+                responsiveLargeQRCodeView(url: url)
                     .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
                 Text("Scan to join")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
@@ -237,7 +283,7 @@ struct ReferralView: View {
             .frame(maxWidth: .infinity)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(Text("QR code with your referral link"))
-            .padding(.vertical, 4)
+            .padding(.vertical, 2)
             .scaleEffect(hasAppeared ? 1.0 : 0.85)
             .opacity(hasAppeared ? 1 : 0)
             .animation(.spring(response: 0.7, dampingFraction: 0.75).delay(0.35), value: hasAppeared)
@@ -260,6 +306,239 @@ struct ReferralView: View {
     
     private var remainingReferrals: Int {
         max(0, 10 - referralCount)
+    }
+    
+    // Count of awarded referrals (for bonus points display)
+    private var awardedReferralCount: Int {
+        outboundConnections.filter { $0.status == "Awarded" }.count
+    }
+    
+    // Total bonus points earned from referrals
+    private var totalReferralBonusPoints: Int {
+        awardedReferralCount * 50
+    }
+    
+    // Progress percentage for the ring (0.0 to 1.0)
+    private var referralProgress: CGFloat {
+        CGFloat(referralCount) / 10.0
+    }
+
+    // MARK: - Hero Progress Card
+    
+    @ViewBuilder
+    private var referralProgressHeroCard: some View {
+        VStack(spacing: 16) {
+            HStack(alignment: .center, spacing: 24) {
+                // Circular Progress Ring
+                ZStack {
+                    // Background ring
+                    Circle()
+                        .stroke(
+                            Color.gray.opacity(0.2),
+                            lineWidth: 10
+                        )
+                    
+                    // Progress ring
+                    Circle()
+                        .trim(from: 0, to: ringProgress)
+                        .stroke(
+                            Theme.darkGoldGradient,
+                            style: StrokeStyle(lineWidth: 10, lineCap: .round)
+                        )
+                        .rotationEffect(.degrees(-90))
+                        .shadow(color: Theme.primaryGold.opacity(0.4), radius: 6, x: 0, y: 0)
+                    
+                    // Center content
+                    VStack(spacing: 2) {
+                        Text("\(referralCount)")
+                            .font(.system(size: 32, weight: .black, design: .rounded))
+                            .foregroundStyle(Theme.darkGoldGradient)
+                        Text("of 10")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .frame(width: 100, height: 100)
+                
+                // Points summary
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("REFERRAL PROGRESS")
+                        .font(.system(size: 13, weight: .black, design: .rounded))
+                        .tracking(1.2)
+                        .foregroundColor(.secondary)
+                    
+                    if totalReferralBonusPoints > 0 {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text("+\(totalReferralBonusPoints)")
+                                .font(.system(size: 34, weight: .black, design: .rounded))
+                                .foregroundStyle(Theme.darkGoldGradient)
+                            Text("pts")
+                                .font(.system(size: 20, weight: .bold, design: .rounded))
+                                .foregroundColor(.secondary)
+                        }
+                        Text("earned from referrals")
+                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("Share your code")
+                            .font(.system(size: 24, weight: .bold, design: .rounded))
+                            .foregroundColor(Theme.modernPrimary)
+                        Text("to start earning")
+                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    // Remaining count
+                    if remainingReferrals > 0 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "person.badge.plus")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(Theme.primaryGold)
+                            Text("\(remainingReferrals) spot\(remainingReferrals == 1 ? "" : "s") left")
+                                .font(.system(size: 15, weight: .bold, design: .rounded))
+                                .foregroundColor(Theme.primaryGold)
+                        }
+                        .padding(.top, 4)
+                    } else {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.green)
+                            Text("Limit reached")
+                                .font(.system(size: 15, weight: .bold, design: .rounded))
+                                .foregroundColor(.green)
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 28)
+                .fill(Theme.modernCard)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 28)
+                        .stroke(Theme.darkGoldGradient, lineWidth: 2)
+                )
+                .shadow(color: Theme.goldShadow, radius: 16, x: 0, y: 8)
+                .shadow(color: Theme.cardShadow, radius: 12, x: 0, y: 6)
+        )
+        .scaleEffect(heroAnimated ? 1.0 : 0.9)
+        .opacity(heroAnimated ? 1 : 0)
+        .animation(.spring(response: 0.7, dampingFraction: 0.75).delay(0.25), value: heroAnimated)
+    }
+    
+    // MARK: - Referral Journey Steps
+    
+    @ViewBuilder
+    private var referralJourneySteps: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("HOW IT WORKS")
+                .font(.system(size: 12, weight: .black, design: .rounded))
+                .tracking(1.5)
+                .foregroundColor(.secondary)
+                .opacity(stepsAnimated ? 1 : 0)
+                .animation(.easeInOut(duration: 0.4).delay(0.35), value: stepsAnimated)
+            
+            HStack(spacing: 0) {
+                // Step 1: Share
+                referralStepView(
+                    stepNumber: 1,
+                    icon: "square.and.arrow.up",
+                    title: "Share",
+                    isActive: true,
+                    delay: 0.4
+                )
+                
+                // Connector line
+                stepConnector(isCompleted: referralCount > 0, delay: 0.5)
+                
+                // Step 2: Sign Up
+                referralStepView(
+                    stepNumber: 2,
+                    icon: "person.badge.plus",
+                    title: "Sign Up",
+                    isActive: referralCount > 0,
+                    delay: 0.5
+                )
+                
+                // Connector line
+                stepConnector(isCompleted: awardedReferralCount > 0, delay: 0.6)
+                
+                // Step 3: Earn 50
+                referralStepView(
+                    stepNumber: 3,
+                    icon: "star.fill",
+                    title: "Earn 50",
+                    isActive: referralCount > 0 && outboundConnections.contains { $0.pointsTowards50 > 0 },
+                    delay: 0.6
+                )
+                
+                // Connector line
+                stepConnector(isCompleted: awardedReferralCount > 0, delay: 0.7)
+                
+                // Step 4: Bonus
+                referralStepView(
+                    stepNumber: 4,
+                    icon: "gift.fill",
+                    title: "Bonus!",
+                    isActive: awardedReferralCount > 0,
+                    delay: 0.7
+                )
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Theme.modernCard)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(Color.gray.opacity(0.15), lineWidth: 1)
+                )
+                .shadow(color: Theme.cardShadow, radius: 8, x: 0, y: 4)
+        )
+        .scaleEffect(stepsAnimated ? 1.0 : 0.95)
+        .opacity(stepsAnimated ? 1 : 0)
+        .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.3), value: stepsAnimated)
+    }
+    
+    @ViewBuilder
+    private func referralStepView(stepNumber: Int, icon: String, title: String, isActive: Bool, delay: Double) -> some View {
+        VStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(isActive ? Theme.darkGoldGradient : LinearGradient(colors: [Color.gray.opacity(0.2), Color.gray.opacity(0.15)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 44, height: 44)
+                    .shadow(color: isActive ? Theme.primaryGold.opacity(0.3) : Color.clear, radius: 6, x: 0, y: 3)
+                
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(isActive ? .white : .gray)
+            }
+            
+            Text(title)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundColor(isActive ? Theme.modernPrimary : .secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity)
+        .opacity(stepsAnimated ? 1 : 0)
+        .scaleEffect(stepsAnimated ? 1 : 0.8)
+        .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(delay), value: stepsAnimated)
+    }
+    
+    @ViewBuilder
+    private func stepConnector(isCompleted: Bool, delay: Double) -> some View {
+        Rectangle()
+            .fill(isCompleted ? Theme.darkGoldGradient : LinearGradient(colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.2)], startPoint: .leading, endPoint: .trailing))
+            .frame(height: 3)
+            .frame(maxWidth: 24)
+            .offset(y: -12)
+            .opacity(stepsAnimated ? 1 : 0)
+            .animation(.easeInOut(duration: 0.3).delay(delay), value: stepsAnimated)
     }
 
     // MARK: - Sections
@@ -284,29 +563,15 @@ struct ReferralView: View {
         referralCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("New connections (\(referralCountText))")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundColor(.secondary)
+                    Text("Your connections")
+                        .font(.system(size: 20, weight: .black, design: .rounded))
+                        .foregroundStyle(Theme.darkGoldGradient)
                     Spacer()
                     Button("Show all") {
                         showHistory = true
                     }
                     .font(.system(size: 13, weight: .bold, design: .rounded))
-                }
-                
-                // Explanation text about referral limit
-                if referralCount >= 8 {
-                    Text("You're close to the limit! \(remainingReferrals) referral\(remainingReferrals == 1 ? "" : "s") remaining.")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundColor(.orange)
-                } else if referralCount > 0 {
-                    Text("You can refer up to 10 people. \(remainingReferrals) referral\(remainingReferrals == 1 ? "" : "s") remaining.")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundColor(.secondary)
-                } else {
-                    Text("You can refer up to 10 people.")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundColor(.secondary)
+                    .foregroundColor(Theme.primaryGold)
                 }
 
                 if previewConnections.isEmpty {
@@ -316,7 +581,7 @@ struct ReferralView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("No invites yet")
                                 .font(.system(size: 15, weight: .bold, design: .rounded))
-                            Text("Share your code to earn +50 when a friend reaches 50 points. You can refer up to 10 people.")
+                            Text("Share your code to earn +50 when a friend reaches 50 points.")
                                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                                 .foregroundColor(.secondary)
                         }
@@ -351,7 +616,7 @@ struct ReferralView: View {
     @ViewBuilder
     private var codeSection: some View {
         referralCard {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
                 Text("Your referral code")
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundColor(.secondary)
@@ -374,12 +639,12 @@ struct ReferralView: View {
                 } else {
                     VStack(alignment: .center, spacing: 10) {
                         Text(myCode)
-                            .font(.system(size: 40, weight: .black, design: .rounded))
+                            .font(.system(size: 34, weight: .black, design: .rounded))
                             .monospaced()
                             .foregroundStyle(Theme.darkGoldGradient)
                             .lineLimit(1)
                             .minimumScaleFactor(0.5)
-                            .padding(.vertical, 16)
+                            .padding(.vertical, 12)
                             .padding(.horizontal, 20)
                             .frame(maxWidth: .infinity)
                             .background(
@@ -470,7 +735,7 @@ struct ReferralView: View {
         if showToast {
             ToastView(message: toastMessage)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
-                .padding(.bottom, 12)
+                .padding(.bottom, 100)
         }
     }
 
@@ -950,6 +1215,12 @@ struct ReferralView: View {
                     var displayMessage: String
                     if errorCode == "referral_cap_reached" {
                         displayMessage = "This user has reached their referral limit"
+                    } else if errorCode == "referral_already_used" {
+                        // Phone hash pair already exists - user previously used a referral with this referrer
+                        displayMessage = "You've already used a referral code previously"
+                    } else if errorCode == "already_used_referral" {
+                        // User already has a referrer on this account
+                        displayMessage = "You've already used a referral code"
                     } else if let msg = message {
                         displayMessage = msg
                     } else {

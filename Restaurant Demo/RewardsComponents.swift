@@ -1038,16 +1038,16 @@ struct RewardDetailView: View {
                     selectedItemName: displayName
                 )
 
-                // Store active redemption in shared rewards view-model for countdown card
-                // Use display name if available for the title
+                // Add to active redemptions for countdown card(s); Firestore listener will sync when it sees the new doc
                 let displayTitle = displayName != response.rewardTitle ? displayName : (response.selectedItemName ?? response.rewardTitle)
-                rewardsVM.activeRedemption = ActiveRedemption(
+                let newActive = ActiveRedemption(
                     rewardId: "", // Will be set by Firestore listener
                     rewardTitle: displayTitle,
                     redemptionCode: response.redemptionCode,
                     expiresAt: response.expiresAt
                 )
-                // Persist full success payload so we can reopen the reward card from the countdown later
+                rewardsVM.activeRedemptions.append(newActive)
+                rewardsVM.successDataByCode[response.redemptionCode] = redemptionSuccessData
                 rewardsVM.lastSuccessData = redemptionSuccessData
                 
                 // Present success sheet after a short delay

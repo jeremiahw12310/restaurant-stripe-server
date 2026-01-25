@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import UIKit
+import QuartzCore
 
 extension Notification.Name {
     static let interstitialEarlyCutRequested = Notification.Name("interstitialEarlyCutRequested")
@@ -17,16 +18,18 @@ struct VideoInterstitialView: View {
     let flashStyle: FlashStyle
     @Binding var earlyCutRequested: Bool
     let earlyCutLeadSeconds: Double
+    let earlyCutMinPlaySeconds: Double
     let onComplete: () -> Void
 
     @State private var flashOpacity: Double = 0.0
 
-    init(videoName: String, videoType: String = "mov", flashStyle: FlashStyle = .double, earlyCutRequested: Binding<Bool> = .constant(false), earlyCutLeadSeconds: Double = 1.0, onComplete: @escaping () -> Void) {
+    init(videoName: String, videoType: String = "mov", flashStyle: FlashStyle = .double, earlyCutRequested: Binding<Bool> = .constant(false), earlyCutLeadSeconds: Double = 1.0, earlyCutMinPlaySeconds: Double = 0, onComplete: @escaping () -> Void) {
         self.videoName = videoName
         self.videoType = videoType
         self.flashStyle = flashStyle
         self._earlyCutRequested = earlyCutRequested
         self.earlyCutLeadSeconds = earlyCutLeadSeconds
+        self.earlyCutMinPlaySeconds = earlyCutMinPlaySeconds
         self.onComplete = onComplete
     }
 
@@ -37,6 +40,7 @@ struct VideoInterstitialView: View {
                 videoName: videoName,
                 videoType: videoType,
                 earlyCutLeadSeconds: earlyCutLeadSeconds,
+                earlyCutMinPlaySeconds: earlyCutMinPlaySeconds,
                 earlyCutRequested: earlyCutRequested,
                 onComplete: onComplete
             )
@@ -85,12 +89,12 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
     let videoName: String
     let videoType: String
     let earlyCutLeadSeconds: Double
+    let earlyCutMinPlaySeconds: Double
     let earlyCutRequested: Bool
     let onComplete: () -> Void
     
-    // Store a reference to the current earlyCutRequested value in the coordinator
     func makeCoordinator() -> Coordinator {
-        let coordinator = Coordinator(earlyCutLeadSeconds: earlyCutLeadSeconds, onComplete: onComplete)
+        let coordinator = Coordinator(earlyCutLeadSeconds: earlyCutLeadSeconds, earlyCutMinPlaySeconds: earlyCutMinPlaySeconds, onComplete: onComplete)
         coordinator.currentEarlyCutRequested = earlyCutRequested
         return coordinator
     }
@@ -162,26 +166,19 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
 
     func updateUIView(_ uiView: UIView, context: Context) {
         context.coordinator.playerLayer?.frame = UIScreen.main.bounds
-        // Update the current value in coordinator so periodic observer can check it
         let wasRequested = context.coordinator.lastEarlyCutRequested
         context.coordinator.lastEarlyCutRequested = earlyCutRequested
         context.coordinator.currentEarlyCutRequested = earlyCutRequested
-        
-        // If early cut is requested (newly or already), finish immediately
-        if earlyCutRequested {
-            print("🎬 Early cut requested in updateUIView (wasRequested: \(wasRequested), hasCompleted: \(context.coordinator.hasCompleted))")
-            if !wasRequested {
-                // Newly requested - finish immediately
-                print("✅ Newly requested - calling finishEarly()")
-                context.coordinator.finishEarly()
-            } else if !context.coordinator.hasCompleted {
-                // Already requested but not finished yet - finish now
-                print("✅ Already requested but not completed - calling finishEarly()")
-                context.coordinator.finishEarly()
-            } else {
-                print("⚠️ Early cut requested but already completed")
-            }
+
+        guard earlyCutRequested, !context.coordinator.hasCompleted else { return }
+        let minPlay = context.coordinator.earlyCutMinPlaySeconds
+        if minPlay == 0 {
+            print("🎬 Early cut requested in updateUIView (wasRequested: \(wasRequested)) - finishing immediately")
+            if !wasRequested { print("✅ Newly requested - calling finishEarly()") }
+            else { print("✅ Already requested but not completed - calling finishEarly()") }
+            context.coordinator.finishEarly()
         }
+        // If minPlay > 0, only flags were updated; periodic observer will finish once min play elapsed
     }
 
     class Coordinator: NSObject {
@@ -201,10 +198,13 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
         // `.interstitialEarlyCutRequested` on any server response (success or error).
         private let maxPlays: Int = Int.max
         let earlyCutLeadSeconds: Double
+        let earlyCutMinPlaySeconds: Double
         let onComplete: () -> Void
+        var playbackStartWallTime: CFTimeInterval?
 
-        init(earlyCutLeadSeconds: Double, onComplete: @escaping () -> Void) {
+        init(earlyCutLeadSeconds: Double, earlyCutMinPlaySeconds: Double, onComplete: @escaping () -> Void) {
             self.earlyCutLeadSeconds = earlyCutLeadSeconds
+            self.earlyCutMinPlaySeconds = earlyCutMinPlaySeconds
             self.onComplete = onComplete
         }
 
@@ -213,19 +213,19 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
                 if let item = object as? AVPlayerItem {
                     switch item.status {
                     case .readyToPlay:
-                        // Don't play if we've already completed (early cut was requested)
                         guard !hasCompleted else { return }
-                        // Check if early cut was requested before starting playback
-                        if lastEarlyCutRequested || currentEarlyCutRequested {
+                        let earlyRequested = lastEarlyCutRequested || currentEarlyCutRequested
+                        if earlyRequested && earlyCutMinPlaySeconds == 0 {
                             print("🎬 Early cut already requested before playback - finishing immediately")
                             finishEarly()
                             return
                         }
-                        // Only play if not already at end
                         if item.currentTime().seconds < item.duration.seconds - 0.1 {
-                            // First play with audio, subsequent plays muted
                             player?.isMuted = playCount > 0
                             player?.play()
+                            if playbackStartWallTime == nil {
+                                playbackStartWallTime = CACurrentMediaTime()
+                            }
                         }
                         // Configure early-cut boundary observer when duration is known
                         let durationSec = item.duration.seconds
@@ -235,7 +235,12 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
                             if boundaryObserver == nil, let player = player {
                                 boundaryObserver = player.addBoundaryTimeObserver(forTimes: [NSValue(time: cutThresholdTime)], queue: .main) { [weak self] in
                                     guard let self = self, !self.hasCompleted else { return }
-                                    if self.lastEarlyCutRequested {
+                                    guard self.lastEarlyCutRequested else { return }
+                                    if self.earlyCutMinPlaySeconds == 0 {
+                                        self.finishEarly()
+                                        return
+                                    }
+                                    if let start = self.playbackStartWallTime, CACurrentMediaTime() - start >= self.earlyCutMinPlaySeconds {
                                         self.finishEarly()
                                     }
                                 }
@@ -243,12 +248,18 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
                         }
                         // Set up periodic observer to check for early cut requests during playback
                         if periodicObserver == nil, let player = player {
-                            let interval = CMTime(seconds: 0.05, preferredTimescale: 600) // Check every 50ms for faster response
+                            let interval = CMTime(seconds: 0.05, preferredTimescale: 600)
                             periodicObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] _ in
                                 guard let self = self, !self.hasCompleted else { return }
-                                // Check both lastEarlyCutRequested and currentEarlyCutRequested
-                                if self.lastEarlyCutRequested || self.currentEarlyCutRequested {
+                                guard self.lastEarlyCutRequested || self.currentEarlyCutRequested else { return }
+                                if self.earlyCutMinPlaySeconds == 0 {
                                     print("🎬 Early cut detected in periodic observer - finishing video")
+                                    self.finishEarly()
+                                    return
+                                }
+                                guard let start = self.playbackStartWallTime else { return }
+                                if CACurrentMediaTime() - start >= self.earlyCutMinPlaySeconds {
+                                    print("🎬 Early cut min play elapsed - finishing video")
                                     self.finishEarly()
                                 }
                             }
@@ -269,24 +280,20 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
         @objc func playerItemDidReachEnd() {
             guard let player = player, !hasCompleted else { return }
 
-            // Mark this play as completed
             playCount += 1
+            let earlyRequested = lastEarlyCutRequested || currentEarlyCutRequested
 
-            // If early cut was requested during first play, finish immediately instead of looping
-            // Check both lastEarlyCutRequested and currentEarlyCutRequested to catch binding updates
-            if playCount == 1 && (lastEarlyCutRequested || currentEarlyCutRequested) {
-                player.pause()
-                playerLayer?.isHidden = true
-                player.replaceCurrentItem(with: nil)
-                hasCompleted = true
-                DispatchQueue.main.async { self.onComplete() }
-                return
-            }
-
-            if playCount < maxPlays {
-                // Continue to second play only if early cut wasn't requested
-                // Double-check before looping in case the binding was updated
-                if lastEarlyCutRequested || currentEarlyCutRequested {
+            // If early cut requested: finish only when min-play allows (0 or elapsed >= minPlay)
+            if earlyRequested {
+                let mayFinish: Bool
+                if earlyCutMinPlaySeconds == 0 {
+                    mayFinish = true
+                } else if let start = playbackStartWallTime, CACurrentMediaTime() - start >= earlyCutMinPlaySeconds {
+                    mayFinish = true
+                } else {
+                    mayFinish = false  // keep looping until min play elapsed
+                }
+                if mayFinish {
                     player.pause()
                     playerLayer?.isHidden = true
                     player.replaceCurrentItem(with: nil)
@@ -294,17 +301,17 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
                     DispatchQueue.main.async { self.onComplete() }
                     return
                 }
+            }
+
+            if playCount < maxPlays {
                 player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
                 player.isMuted = true
                 player.play()
                 return
             }
 
-            // Final completion after last loop
             player.pause()
-            // Hide the layer to avoid flashing the first frame on teardown
             playerLayer?.isHidden = true
-            // Detach the item to prevent any residual frame rendering
             player.replaceCurrentItem(with: nil)
             hasCompleted = true
             DispatchQueue.main.async { self.onComplete() }

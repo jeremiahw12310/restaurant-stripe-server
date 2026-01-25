@@ -4,7 +4,8 @@ import Firebase
 
 // MARK: - Active Redemption Model
 struct ActiveRedemption: Identifiable, Equatable {
-    let id = UUID()
+    /// Stable id for ForEach; use redemptionCode since it's unique per reward.
+    var id: String { redemptionCode }
     let rewardId: String
     let rewardTitle: String
     let redemptionCode: String
@@ -23,8 +24,9 @@ class RewardsViewModel: ObservableObject {
             } else {
                 self.stopActiveRedemptionListener()
                 self.stopGiftedRewardsListener()
-                self.activeRedemption = nil
+                self.activeRedemptions = []
                 self.lastSuccessData = nil
+                self.successDataByCode = [:]
                 self.giftedRewards = []
             }
         }
@@ -40,17 +42,20 @@ class RewardsViewModel: ObservableObject {
     private var authHandle: AuthStateDidChangeListenerHandle?
     private var activeListener: ListenerRegistration?
     private let storageKey = "persistedActiveReward"
+    private let storageKeySuccessDataList = "persistedActiveRewardSuccessDataList"
     @Published var selectedCategory = "All"
     @Published var showConfetti = false
     @Published var userPoints: Int = 0
     @Published var isLoading = false
-    // Tracks current active redemption (nil if none)
-    @Published var activeRedemption: ActiveRedemption?
+    /// All active (unused, non-expired) redemptions; multiple countdowns shown when > 1.
+    @Published var activeRedemptions: [ActiveRedemption] = []
     @Published var lastSuccessData: RedemptionSuccessData? {
         didSet {
             persistActiveReward()
         }
     }
+    /// Success data keyed by redemptionCode for showing RewardCardScreen when user taps a countdown card.
+    @Published var successDataByCode: [String: RedemptionSuccessData] = [:]
     @Published var rewardJustUsed = false
     @Published var giftedRewards: [GiftedReward] = []
     @Published var showRefundNotification = false
@@ -148,34 +153,34 @@ class RewardsViewModel: ObservableObject {
             .whereField("isUsed", isEqualTo: false)
             .whereField("isExpired", isEqualTo: false)
             .order(by: "redeemedAt", descending: true)
-            .limit(to: 1)
             .addSnapshotListener { [weak self] snapshot, error in
                 guard let self = self else { return }
                 if let error = error {
                     print("❌ Active redemption listener error: \(error.localizedDescription)")
                     return
                 }
-                if let doc = snapshot?.documents.first, let reward = RedeemedReward(document: doc) {
-                    // Ignore rewards that are already expired locally
-                    if reward.expiresAt <= Date() {
-                        // Trigger refund before marking as expired
-                        Task { @MainActor in
+                let docs = snapshot?.documents ?? []
+                let hadActive = !self.activeRedemptions.isEmpty
+                var active: [ActiveRedemption] = []
+                var successByCode: [String: RedemptionSuccessData] = self.successDataByCode
+                let now = Date()
+                Task { @MainActor in
+                    for doc in docs {
+                        guard let reward = RedeemedReward(document: doc) else { continue }
+                        if reward.expiresAt <= now {
                             await self.refundExpiredReward(rewardId: doc.documentID)
+                            try? await doc.reference.updateData(["isExpired": true])
+                            successByCode.removeValue(forKey: reward.redemptionCode)
+                            continue
                         }
-                        // Mark as expired in Firestore so it won't appear in future queries
-                        doc.reference.updateData(["isExpired": true])
-                        self.activeRedemption = nil
-                        return
-                    }
-                    self.activeRedemption = ActiveRedemption(
-                        rewardId: reward.id,
-                        rewardTitle: reward.rewardTitle,
-                        redemptionCode: reward.redemptionCode,
-                        expiresAt: reward.expiresAt
-                    )
-                    // Populate success data so user can reopen full code screen after relaunch
-                    if self.lastSuccessData == nil || self.lastSuccessData?.redemptionCode != reward.redemptionCode {
-                        self.lastSuccessData = RedemptionSuccessData(
+                        let ar = ActiveRedemption(
+                            rewardId: reward.id,
+                            rewardTitle: reward.rewardTitle,
+                            redemptionCode: reward.redemptionCode,
+                            expiresAt: reward.expiresAt
+                        )
+                        active.append(ar)
+                        let sd = RedemptionSuccessData(
                             redemptionCode: reward.redemptionCode,
                             rewardTitle: reward.rewardTitle,
                             rewardDescription: reward.rewardDescription,
@@ -183,14 +188,22 @@ class RewardsViewModel: ObservableObject {
                             pointsDeducted: reward.pointsRequired,
                             expiresAt: reward.expiresAt,
                             rewardColorHex: nil,
-                            rewardIcon: nil
+                            rewardIcon: nil,
+                            selectedItemName: reward.selectedItemName
                         )
+                        successByCode[reward.redemptionCode] = sd
                     }
-                } else {
-                    if self.activeRedemption != nil {
+                    self.activeRedemptions = active
+                    self.successDataByCode = successByCode
+                    if active.isEmpty && hadActive {
                         self.rewardJustUsed = true
                     }
-                    self.activeRedemption = nil
+                    if let first = active.first {
+                        self.lastSuccessData = successByCode[first.redemptionCode]
+                    } else {
+                        self.lastSuccessData = nil
+                    }
+                    self.persistActiveReward()
                 }
             }
     }
@@ -211,32 +224,51 @@ class RewardsViewModel: ObservableObject {
     
     // MARK: - Persistence
     private func persistActiveReward() {
-        guard let data = lastSuccessData else {
+        guard !activeRedemptions.isEmpty else {
             UserDefaults.standard.removeObject(forKey: storageKey)
+            UserDefaults.standard.removeObject(forKey: storageKeySuccessDataList)
             return
         }
-        if let encoded = try? JSONEncoder().encode(data) {
-            UserDefaults.standard.set(encoded, forKey: storageKey)
+        if let first = activeRedemptions.first, let data = successDataByCode[first.redemptionCode] {
+            if let encoded = try? JSONEncoder().encode(data) {
+                UserDefaults.standard.set(encoded, forKey: storageKey)
+            }
+        }
+        let list = activeRedemptions.compactMap { successDataByCode[$0.redemptionCode] }
+        if !list.isEmpty, let encoded = try? JSONEncoder().encode(list) {
+            UserDefaults.standard.set(encoded, forKey: storageKeySuccessDataList)
         }
     }
     
     private func loadPersistedActiveReward() {
-        guard let saved = UserDefaults.standard.data(forKey: storageKey),
-              let decoded = try? JSONDecoder().decode(RedemptionSuccessData.self, from: saved) else { return }
-        if decoded.expiresAt > Date() {
-            lastSuccessData = decoded
-            // Note: We don't have rewardId in persisted data, so we'll use an empty string
-            // The refund will be triggered by the Firestore listener when it detects expiration
-            activeRedemption = ActiveRedemption(
-                rewardId: "", // Will be updated when listener fires
-                rewardTitle: decoded.rewardTitle,
-                redemptionCode: decoded.redemptionCode,
-                expiresAt: decoded.expiresAt)
+        guard let saved = UserDefaults.standard.data(forKey: storageKeySuccessDataList),
+              let list = try? JSONDecoder().decode([RedemptionSuccessData].self, from: saved) else {
+            if let saved = UserDefaults.standard.data(forKey: storageKey),
+               let decoded = try? JSONDecoder().decode(RedemptionSuccessData.self, from: saved),
+               decoded.expiresAt > Date() {
+                lastSuccessData = decoded
+                activeRedemptions = [
+                    ActiveRedemption(rewardId: "", rewardTitle: decoded.rewardTitle, redemptionCode: decoded.redemptionCode, expiresAt: decoded.expiresAt)
+                ]
+                successDataByCode = [decoded.redemptionCode: decoded]
+            }
+            return
+        }
+        let now = Date()
+        var active: [ActiveRedemption] = []
+        var byCode: [String: RedemptionSuccessData] = [:]
+        for data in list where data.expiresAt > now {
+            let ar = ActiveRedemption(rewardId: "", rewardTitle: data.rewardTitle, redemptionCode: data.redemptionCode, expiresAt: data.expiresAt)
+            active.append(ar)
+            byCode[data.redemptionCode] = data
+        }
+        if !active.isEmpty {
+            activeRedemptions = active
+            successDataByCode = byCode
+            lastSuccessData = active.first.flatMap { byCode[$0.redemptionCode] }
         } else {
-            // Reward expired - try to refund if we have the reward ID
-            // Note: We don't have the reward ID in persisted data, so refund will happen
-            // when the Firestore listener detects expiration
             UserDefaults.standard.removeObject(forKey: storageKey)
+            UserDefaults.standard.removeObject(forKey: storageKeySuccessDataList)
         }
     }
 
@@ -315,8 +347,27 @@ class RewardsViewModel: ObservableObject {
         }
     }
     
+    /// Call when a countdown card's timer hits zero: refund that reward and remove it from active list.
+    func handleActiveRedemptionExpired(_ active: ActiveRedemption) {
+        Task { @MainActor in
+            if !active.rewardId.isEmpty {
+                await refundExpiredReward(rewardId: active.rewardId)
+            } else {
+                await refundExpiredReward(redemptionCode: active.redemptionCode)
+            }
+            activeRedemptions.removeAll { $0.redemptionCode == active.redemptionCode }
+            successDataByCode.removeValue(forKey: active.redemptionCode)
+            if let first = activeRedemptions.first {
+                lastSuccessData = successDataByCode[first.redemptionCode]
+            } else {
+                lastSuccessData = nil
+            }
+            persistActiveReward()
+        }
+    }
+
     // MARK: - Refund Expired Reward
-    
+
     @MainActor
     func refundExpiredReward(rewardId: String? = nil, redemptionCode: String? = nil) async {
         guard let user = Auth.auth().currentUser else {

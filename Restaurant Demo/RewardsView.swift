@@ -1,13 +1,20 @@
 import SwiftUI
 import FirebaseAuth
 
+/// Wraps RedemptionSuccessData for sheet(item:) when showing reward detail from countdown tap.
+private struct RewardsViewIdentifiableSuccess: Identifiable {
+    let id: String
+    let data: RedemptionSuccessData
+    init(_ d: RedemptionSuccessData) { id = d.redemptionCode; data = d }
+}
+
 struct RewardsView: View {
     @EnvironmentObject var userVM: UserViewModel
     @EnvironmentObject var rewardsVM: RewardsViewModel
     @Environment(\.colorScheme) var colorScheme
 
     @State private var showExpiredScreen = false
-    @State private var showRedeemedCard = false
+    @State private var sheetSuccessData: RewardsViewIdentifiableSuccess?
     
     // Points history sheet
     @State private var showPointsHistory = false
@@ -102,26 +109,20 @@ struct RewardsView: View {
                         )
                         .padding(.horizontal)
 
-                    // Redeemed countdown card if active
-                    if let active = rewardsVM.activeRedemption {
+                    // Redeemed countdown card(s) if active
+                    ForEach(rewardsVM.activeRedemptions) { active in
                         RedeemedRewardsCountdownCard(activeRedemption: active) {
-                            // Trigger refund if we have the reward ID or code
-                            if !active.rewardId.isEmpty {
-                                Task { @MainActor in
-                                    await rewardsVM.refundExpiredReward(rewardId: active.rewardId)
-                                }
-                            } else {
-                                Task { @MainActor in
-                                    await rewardsVM.refundExpiredReward(redemptionCode: active.redemptionCode)
-                                }
-                            }
-                            rewardsVM.activeRedemption = nil
+                            rewardsVM.handleActiveRedemptionExpired(active)
                             showExpiredScreen = true
                         }
                         .padding(.horizontal)
                         .padding(.top, 12)
                         .contentShape(RoundedRectangle(cornerRadius: 22))
-                        .onTapGesture { showRedeemedCard = true }
+                        .onTapGesture {
+                            if let sd = rewardsVM.successDataByCode[active.redemptionCode] {
+                                sheetSuccessData = RewardsViewIdentifiableSuccess(sd)
+                            }
+                        }
                     }
                 }
                 .padding(.top)
@@ -207,23 +208,12 @@ struct RewardsView: View {
         .sheet(isPresented: $showPointsHistory) {
             PointsHistoryView()
         }
-        .sheet(isPresented: $showRedeemedCard) {
-            if let success = rewardsVM.lastSuccessData {
-                RewardCardScreen(
-                    userName: userVM.firstName.isEmpty ? "Your" : userVM.firstName,
-                    successData: success,
-                    onDismiss: { showRedeemedCard = false }
-                )
-            } else {
-                VStack(spacing: 12) {
-                    Text("Active Reward")
-                        .font(.headline)
-                    Text("No reward details available.")
-                        .foregroundColor(.secondary)
-                    Button("Close") { showRedeemedCard = false }
-                }
-                .padding()
-            }
+        .sheet(item: $sheetSuccessData) { wrapper in
+            RewardCardScreen(
+                userName: userVM.firstName.isEmpty ? "Your" : userVM.firstName,
+                successData: wrapper.data,
+                onDismiss: { sheetSuccessData = nil }
+            )
         }
     }
 } 

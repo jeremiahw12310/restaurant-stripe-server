@@ -330,6 +330,23 @@ app.post('/referrals/accept', async (req, res) => {
       return res.status(400).json({ error: 'cannot_refer_self' });
     }
 
+    // Check for duplicate referral using phone hashes (persists across account deletions)
+    const referrerPhoneHash = hashPhoneNumber(referrerData.phone);
+    const referredPhoneHash = hashPhoneNumber(userData.phone);
+    
+    if (referrerPhoneHash && referredPhoneHash) {
+      const pairId = `${referrerPhoneHash}_${referredPhoneHash}`;
+      const pairDoc = await db.collection('referralPairs').doc(pairId).get();
+      
+      if (pairDoc.exists) {
+        console.log(`🚫 Referral blocked - phone pair already exists: ${pairId.substring(0, 16)}...`);
+        return res.status(400).json({ 
+          error: 'referral_already_used',
+          message: 'This referral relationship has already been used previously'
+        });
+      }
+    }
+
     // Check referral cap (admins exempt)
     const referrerIsAdmin = referrerData.isAdmin === true;
     if (!referrerIsAdmin) {
@@ -367,6 +384,36 @@ app.post('/referrals/accept', async (req, res) => {
       referredBy: referrerId,
       referralId: referralRef.id
     });
+
+    // Record the referral pair for abuse prevention (persists across account deletions)
+    if (referrerPhoneHash && referredPhoneHash) {
+      const pairId = `${referrerPhoneHash}_${referredPhoneHash}`;
+      await db.collection('referralPairs').doc(pairId).set({
+        referrerPhoneHash,
+        referredPhoneHash,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        bonusAwarded: false
+      });
+      
+      // Update abuse prevention hashes to track referral relationships
+      const referrerHashRef = db.collection('abusePreventionHashes').doc(referrerPhoneHash);
+      const referredHashRef = db.collection('abusePreventionHashes').doc(referredPhoneHash);
+      
+      await Promise.all([
+        referrerHashRef.set({
+          phoneHash: referrerPhoneHash,
+          referredHashes: admin.firestore.FieldValue.arrayUnion(referredPhoneHash),
+          lastAccountCreatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true }),
+        referredHashRef.set({
+          phoneHash: referredPhoneHash,
+          referredByHashes: admin.firestore.FieldValue.arrayUnion(referrerPhoneHash),
+          lastAccountCreatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true })
+      ]);
+      
+      console.log(`✅ Referral pair recorded: ${pairId.substring(0, 16)}...`);
+    }
 
     // Check if user already has enough points for immediate award
     if (currentUserPoints >= 50) {
@@ -778,6 +825,22 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
       console.error('❌ Error in referral pattern detection (non-blocking):', detectionError);
     }
     
+    // Update referralPairs to mark bonus as awarded (async, don't block response)
+    try {
+      const referrerPhoneHash = hashPhoneNumber(referrerUserData?.phone);
+      const referredPhoneHash = hashPhoneNumber(referredUserData?.phone);
+      if (referrerPhoneHash && referredPhoneHash) {
+        const pairId = `${referrerPhoneHash}_${referredPhoneHash}`;
+        await db.collection('referralPairs').doc(pairId).update({
+          bonusAwarded: true,
+          bonusAwardedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        console.log(`✅ Referral pair ${pairId.substring(0, 16)}... marked as bonus awarded`);
+      }
+    } catch (pairUpdateError) {
+      console.warn('⚠️ Failed to update referral pair (non-blocking):', pairUpdateError);
+    }
+    
     return {
       success: true,
       referrerNewPoints,
@@ -946,6 +1009,16 @@ async function generateUniqueReferralCode(db, length = 6, maxAttempts = 50) {
     }
   }
   throw new Error('Unable to generate unique referral code');
+}
+
+// Helper function to hash phone numbers for abuse prevention
+// Uses SHA-256 to create a non-reversible hash that persists across account deletions
+function hashPhoneNumber(phone) {
+  const crypto = require('crypto');
+  // Normalize: remove all non-digit characters
+  const normalized = (phone || '').replace(/\D/g, '');
+  if (!normalized) return null;
+  return crypto.createHash('sha256').update(normalized).digest('hex');
 }
 
 // Enhanced combo variety system to encourage exploration
@@ -2486,7 +2559,7 @@ If a field is missing, use null.`;
         data.totalAmount === null || data.totalAmount === undefined
       ) {
         await logFailureAndCheckLockout(uid, "TOTAL_SECTION_NOT_VISIBLE", db, ipAddress);
-        return sendError(res, 400, "TOTAL_SECTION_NOT_VISIBLE", "Total section not visible — include Subtotal/Tax/Total.");
+        return sendError(res, 400, "TOTAL_SECTION_NOT_VISIBLE", "Make sure all receipt text is visible and try again.");
       }
 
       // Consistency check: subtotal + tax must equal total (within a small rounding tolerance),
@@ -2830,6 +2903,7 @@ If a field is missing, use null.`;
 
   // Welcome points claim (server-authoritative)
   // Prevents clients from directly incrementing their own points in Firestore.
+  // Also checks abusePreventionHashes to prevent users who deleted accounts from re-claiming.
   app.post('/welcome/claim', async (req, res) => {
     try {
       const authHeader = req.headers.authorization || '';
@@ -2849,25 +2923,55 @@ If a field is missing, use null.`;
       const txId = `welcome_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const welcomePoints = 5;
 
+      // First, get the user document to retrieve phone number for hash check
+      const userDoc = await userRef.get();
+      if (!userDoc.exists) {
+        return sendError(res, 404, "USER_NOT_FOUND", "User not found");
+      }
+      const userData = userDoc.data() || {};
+      
+      // Check if already claimed on this account
+      if (userData.hasReceivedWelcomePoints === true) {
+        return res.status(200).json({ success: true, alreadyClaimed: true });
+      }
+
+      // Check abuse prevention hash - this persists across account deletions
+      const phoneHash = hashPhoneNumber(userData.phone);
+      if (phoneHash) {
+        const hashRef = db.collection('abusePreventionHashes').doc(phoneHash);
+        const hashDoc = await hashRef.get();
+        
+        if (hashDoc.exists && hashDoc.data().hasReceivedWelcomePoints === true) {
+          console.log(`🚫 Welcome points blocked for ${uid} - phone hash previously claimed`);
+          // Update the user document to mark as claimed (for UI consistency)
+          await userRef.update({ hasReceivedWelcomePoints: true, isNewUser: false });
+          return res.status(200).json({ 
+            success: true, 
+            alreadyClaimed: true, 
+            reason: 'phone_previously_claimed' 
+          });
+        }
+      }
+
       let newPointsBalance = null;
       let newLifetimePoints = null;
-      let alreadyClaimed = false;
 
       await db.runTransaction(async (tx) => {
-        const userDoc = await tx.get(userRef);
-        if (!userDoc.exists) {
+        const freshUserDoc = await tx.get(userRef);
+        if (!freshUserDoc.exists) {
           const err = new Error("USER_NOT_FOUND");
           err.code = "USER_NOT_FOUND";
           throw err;
         }
-        const userData = userDoc.data() || {};
-        if (userData.hasReceivedWelcomePoints === true) {
-          alreadyClaimed = true;
-          return;
+        const freshUserData = freshUserDoc.data() || {};
+        
+        // Double-check in transaction
+        if (freshUserData.hasReceivedWelcomePoints === true) {
+          return; // Will be handled below
         }
 
-        const currentPoints = userData.points || 0;
-        const currentLifetime = (typeof userData.lifetimePoints === 'number') ? userData.lifetimePoints : currentPoints;
+        const currentPoints = freshUserData.points || 0;
+        const currentLifetime = (typeof freshUserData.lifetimePoints === 'number') ? freshUserData.lifetimePoints : currentPoints;
         newPointsBalance = currentPoints + welcomePoints;
         newLifetimePoints = currentLifetime + welcomePoints;
 
@@ -2887,8 +2991,22 @@ If a field is missing, use null.`;
         });
       });
 
-      if (alreadyClaimed) {
+      // If points weren't awarded (double-claim race condition), return early
+      if (newPointsBalance === null) {
         return res.status(200).json({ success: true, alreadyClaimed: true });
+      }
+
+      // Update abuse prevention hash record (outside transaction for simplicity)
+      if (phoneHash) {
+        const hashRef = db.collection('abusePreventionHashes').doc(phoneHash);
+        await hashRef.set({
+          phoneHash,
+          hasReceivedWelcomePoints: true,
+          welcomePointsClaimedAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastAccountCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          accountCreationCount: admin.firestore.FieldValue.increment(1)
+        }, { merge: true });
+        console.log(`✅ Welcome points granted and hash recorded for ${uid}`);
       }
 
       return res.json({
@@ -9452,16 +9570,38 @@ class SuspiciousBehaviorService {
           
           // Flag if multiple users on same device
           if (associatedUserIds.length >= 2) {
+            const severity = associatedUserIds.length >= 3 ? 'critical' : 'high';
+            const otherAccounts = associatedUserIds.filter(id => id !== userId);
+            
+            // Flag the NEW account (current user)
             await this.flagSuspiciousBehavior(userId, {
               flagType: 'device_reuse',
-              severity: associatedUserIds.length >= 3 ? 'critical' : 'high',
-              description: `Device fingerprint shared with ${associatedUserIds.length - 1} other account(s)`,
+              severity,
+              description: `Device fingerprint shared with ${otherAccounts.length} other account(s)`,
               evidence: {
                 fingerprintHash,
-                associatedUserIds: associatedUserIds.filter(id => id !== userId),
-                deviceInfo
+                associatedUserIds: otherAccounts,
+                deviceInfo,
+                totalAccountsOnDevice: associatedUserIds.length
               }
             });
+            
+            // Also flag ALL existing accounts on this device
+            // This ensures all accounts get flagged when device reuse is detected
+            for (const existingUserId of otherAccounts) {
+              await this.flagSuspiciousBehavior(existingUserId, {
+                flagType: 'device_reuse',
+                severity,
+                description: `Device fingerprint shared with ${associatedUserIds.length - 1} other account(s)`,
+                evidence: {
+                  fingerprintHash,
+                  associatedUserIds: associatedUserIds.filter(id => id !== existingUserId),
+                  deviceInfo,
+                  totalAccountsOnDevice: associatedUserIds.length,
+                  newAccountDetected: userId
+                }
+              });
+            }
           }
         } else {
           // Update last seen

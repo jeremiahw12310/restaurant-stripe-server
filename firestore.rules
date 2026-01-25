@@ -329,6 +329,16 @@ service cloud.firestore {
     match /deviceFingerprints/{hash} {
       allow read, write: if false; // Server-only
     }
+
+    // Abuse prevention hashes - phone hashes for welcome/referral abuse prevention (server-only)
+    match /abusePreventionHashes/{hash} {
+      allow read, write: if false; // Server-only
+    }
+
+    // Referral pairs - phone hash pairs to prevent duplicate referrals after account deletion (server-only)
+    match /referralPairs/{pairId} {
+      allow read, write: if false; // Server-only
+    }
     
     // Deny all other access
     match /{document=**} {

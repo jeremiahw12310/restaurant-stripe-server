@@ -805,13 +805,15 @@ struct GiftedRewardDetailView: View {
                     selectedItemName: displayName
                 )
                 
-                // Store active redemption
-                rewardsVM.activeRedemption = ActiveRedemption(
+                // Add to active redemptions; Firestore listener will sync when it sees the new doc
+                let newActive = ActiveRedemption(
                     rewardId: "", // Will be set by Firestore listener
                     rewardTitle: displayName,
                     redemptionCode: claimResponse.redemptionCode,
                     expiresAt: claimResponse.expiresAt
                 )
+                rewardsVM.activeRedemptions.append(newActive)
+                rewardsVM.successDataByCode[claimResponse.redemptionCode] = redemptionSuccessData
                 rewardsVM.lastSuccessData = redemptionSuccessData
                 
                 // Show success screen immediately (before refreshing list to prevent view dismissal)

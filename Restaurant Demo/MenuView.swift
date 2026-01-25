@@ -87,7 +87,8 @@ struct MenuView: View {
                         videoType: "mov",
                         flashStyle: .double,
                         earlyCutRequested: $viewModel.requestEarlyCut,
-                        earlyCutLeadSeconds: 2.5
+                        earlyCutLeadSeconds: 2.5,
+                        earlyCutMinPlaySeconds: 4.5
                     ) {
                         viewModel.interstitialDidFinish()
                     }

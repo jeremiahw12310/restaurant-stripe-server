@@ -1055,7 +1055,12 @@ class UserViewModel: ObservableObject {
                     if let newPoints = json["newPointsBalance"] as? Int { DispatchQueue.main.async { self.points = newPoints } }
                     if let newLifetime = json["newLifetimePoints"] as? Int { DispatchQueue.main.async { self.lifetimePoints = newLifetime } }
                     if let already = json["alreadyClaimed"] as? Bool, already == true {
-                        print("ℹ️ Welcome points already claimed")
+                        // Check for abuse prevention reason (phone hash previously claimed welcome points)
+                        if let reason = json["reason"] as? String, reason == "phone_previously_claimed" {
+                            print("ℹ️ Welcome points blocked - phone number previously claimed on another account")
+                        } else {
+                            print("ℹ️ Welcome points already claimed on this account")
+                        }
                     } else {
                         print("✅ Welcome points claimed server-side")
                     }

@@ -12,6 +12,8 @@ struct AdminOverviewView: View {
     @State private var showNotifications = false
     @State private var showRewardHistory = false
     @State private var showBannedNumbers = false
+    @State private var showSuspiciousFlags = false
+    @State private var showBannedHistory = false
     @State private var showSendRewards = false
     
     // Swipe to dismiss state
@@ -118,6 +120,12 @@ struct AdminOverviewView: View {
             }
             .sheet(isPresented: $showBannedNumbers) {
                 AdminBannedNumbersView()
+            }
+            .sheet(isPresented: $showSuspiciousFlags) {
+                AdminSuspiciousFlagsView()
+            }
+            .sheet(isPresented: $showBannedHistory) {
+                AdminBannedHistoryView()
             }
             .sheet(isPresented: $showSendRewards) {
                 AdminSendRewardsView()
@@ -398,6 +406,26 @@ struct AdminOverviewView: View {
                 gradient: [.red, .pink]
             ) {
                 showBannedNumbers = true
+            }
+            
+            // Suspicious Activity
+            ActionButton(
+                title: "Suspicious Activity",
+                subtitle: "Review flagged accounts",
+                icon: "exclamationmark.shield.fill",
+                gradient: [.orange, .red]
+            ) {
+                showSuspiciousFlags = true
+            }
+            
+            // Banned Account History
+            ActionButton(
+                title: "Banned Account History",
+                subtitle: "View banned account history",
+                icon: "clock.badge.xmark",
+                gradient: [Color(red: 0.8, green: 0.2, blue: 0.2), Color(red: 0.9, green: 0.3, blue: 0.3)]
+            ) {
+                showBannedHistory = true
             }
         }
     }

@@ -1,6 +1,13 @@
 import SwiftUI
 import FirebaseAuth
 
+/// Wraps RedemptionSuccessData for sheet(item:) when showing reward detail from countdown tap.
+private struct UnifiedRewardsIdentifiableSuccess: Identifiable {
+    let id: String
+    let data: RedemptionSuccessData
+    init(_ d: RedemptionSuccessData) { id = d.redemptionCode; data = d }
+}
+
 // MARK: - Unified Rewards Screen
 /// Premium Dutch Bros style rewards screen with energy and sophistication
 struct UnifiedRewardsScreen: View {
@@ -24,8 +31,8 @@ struct UnifiedRewardsScreen: View {
     @State private var showPointsHistory = false
     @State private var showReferral = false
     
-    // Reopen the active reward card
-    @State private var showRedeemedCard = false
+    /// Which reward detail sheet to show when user taps a countdown card; nil = closed.
+    @State private var sheetSuccessData: UnifiedRewardsIdentifiableSuccess?
     
     // Animation states
     @State private var pointsScale: CGFloat = 1.0
@@ -80,26 +87,20 @@ struct UnifiedRewardsScreen: View {
                         // Hero header section
                         premiumHeaderView
 
-                        // Active redeemed reward countdown card
-                        if let active = rewardsVM.activeRedemption {
+                        // Active redeemed reward countdown card(s)
+                        ForEach(rewardsVM.activeRedemptions) { active in
                             RedeemedRewardsCountdownCard(activeRedemption: active) {
-                                // Trigger refund if we have the reward ID or code
-                                if !active.rewardId.isEmpty {
-                                    Task { @MainActor in
-                                        await rewardsVM.refundExpiredReward(rewardId: active.rewardId)
-                                    }
-                                } else {
-                                    Task { @MainActor in
-                                        await rewardsVM.refundExpiredReward(redemptionCode: active.redemptionCode)
-                                    }
-                                }
-                                rewardsVM.activeRedemption = nil
+                                rewardsVM.handleActiveRedemptionExpired(active)
                                 showExpiredScreen = true
                             }
                             .padding(.horizontal, 20)
                             .padding(.bottom, 16)
                             .contentShape(RoundedRectangle(cornerRadius: 22))
-                            .onTapGesture { showRedeemedCard = true }
+                            .onTapGesture {
+                                if let sd = rewardsVM.successDataByCode[active.redemptionCode] {
+                                    sheetSuccessData = UnifiedRewardsIdentifiableSuccess(sd)
+                                }
+                            }
                         }
                         
                         // Gifted Rewards section (at top, before everything else)
@@ -168,24 +169,12 @@ struct UnifiedRewardsScreen: View {
             ReferralView(initialCode: nil)
                 .environmentObject(userVM)
         }
-        .sheet(isPresented: $showRedeemedCard) {
-            if let success = rewardsVM.lastSuccessData {
-                RewardCardScreen(
-                    userName: userVM.firstName.isEmpty ? "Your" : userVM.firstName,
-                    successData: success,
-                    onDismiss: { showRedeemedCard = false }
-                )
-            } else {
-                // Fallback: shouldn't normally happen, but avoid presenting a blank sheet
-                VStack(spacing: 12) {
-                    Text("Active Reward")
-                        .font(.headline)
-                    Text("No reward details available.")
-                        .foregroundColor(.secondary)
-                    Button("Close") { showRedeemedCard = false }
-                }
-                .padding()
-            }
+        .sheet(item: $sheetSuccessData) { wrapper in
+            RewardCardScreen(
+                userName: userVM.firstName.isEmpty ? "Your" : userVM.firstName,
+                successData: wrapper.data,
+                onDismiss: { sheetSuccessData = nil }
+            )
         }
     }
 
@@ -327,7 +316,7 @@ struct UnifiedRewardsScreen: View {
                 .padding(24)
             }
             .padding(.horizontal, 20)
-            .padding(.bottom, rewardsVM.activeRedemption != nil ? 16 : 0)
+            .padding(.bottom, rewardsVM.activeRedemptions.isEmpty ? 0 : 16)
         }
     }
     

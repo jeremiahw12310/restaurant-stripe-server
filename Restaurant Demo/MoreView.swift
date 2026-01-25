@@ -51,31 +51,6 @@ struct MoreView: View {
                         .contentShape(Rectangle())
                     }
                     
-                    if userVM.isAdmin {
-                        NavigationLink {
-                            AdminSuspiciousFlagsView()
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "exclamationmark.shield.fill")
-                                    .frame(width: 22)
-                                Text("Suspicious Activity")
-                                Spacer()
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        
-                        NavigationLink {
-                            AdminBannedHistoryView()
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "clock.badge.xmark")
-                                    .frame(width: 22)
-                                Text("Banned Account History")
-                                Spacer()
-                            }
-                            .contentShape(Rectangle())
-                        }
-                    }
 
                     Button {
                         showDietaryPreferences = true

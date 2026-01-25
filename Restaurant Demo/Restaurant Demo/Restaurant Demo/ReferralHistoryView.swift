@@ -9,6 +9,7 @@ struct ReferralHistoryView: View {
         let status: String // "Pending" | "Awarded"
         let isOutbound: Bool
         let pointsTowards50: Int
+        let createdAt: Date?
     }
     
     @State private var outbound: [HistoryItem] = []
@@ -64,15 +65,24 @@ struct ReferralHistoryView: View {
                     let data = d.data()
                     let statusRaw = (data["status"] as? String) ?? "pending"
                     let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
+                    let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
                     let rawName = (data["referredFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     let name = rawName.isEmpty ? "Friend" : rawName
                     // Read pointsTowards50 from referral doc (maintained by Cloud Function)
                     let ptsRaw = (data["pointsTowards50"] as? NSNumber)?.intValue ?? (data["pointsTowards50"] as? Int) ?? 0
                     let pointsTowards50 = min(max(ptsRaw, 0), 50) // Clamp to 0-50
-                    return HistoryItem(id: d.documentID, name: name, status: status, isOutbound: true, pointsTowards50: pointsTowards50)
+                    return HistoryItem(id: d.documentID, name: name, status: status, isOutbound: true, pointsTowards50: pointsTowards50, createdAt: createdAt)
                 }
                 DispatchQueue.main.async {
-                    self.outbound = items.sorted { $0.name < $1.name }
+                    self.outbound = items.sorted { item1, item2 in
+                        // Sort by date (most recent first), then by name if dates are equal
+                        let date1 = item1.createdAt ?? Date.distantPast
+                        let date2 = item2.createdAt ?? Date.distantPast
+                        if date1 != date2 {
+                            return date1 > date2
+                        }
+                        return item1.name < item2.name
+                    }
                 }
             }
         
@@ -91,15 +101,24 @@ struct ReferralHistoryView: View {
                     let data = doc.data()
                     let statusRaw = (data["status"] as? String) ?? "pending"
                     let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
+                    let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
                     let rawName = (data["referrerFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     let name = rawName.isEmpty ? "Friend" : rawName
                     // Read pointsTowards50 from referral doc (maintained by Cloud Function)
                     let ptsRaw = (data["pointsTowards50"] as? NSNumber)?.intValue ?? (data["pointsTowards50"] as? Int) ?? 0
                     let pointsTowards50 = min(max(ptsRaw, 0), 50) // Clamp to 0-50
-                    return HistoryItem(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: pointsTowards50)
+                    return HistoryItem(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: pointsTowards50, createdAt: createdAt)
                 }
                 DispatchQueue.main.async {
-                    self.inbound = items.sorted { $0.name < $1.name }
+                    self.inbound = items.sorted { item1, item2 in
+                        // Sort by date (most recent first), then by name if dates are equal
+                        let date1 = item1.createdAt ?? Date.distantPast
+                        let date2 = item2.createdAt ?? Date.distantPast
+                        if date1 != date2 {
+                            return date1 > date2
+                        }
+                        return item1.name < item2.name
+                    }
                 }
             }
     }
@@ -124,6 +143,11 @@ fileprivate struct HistoryRow: View {
                     (Text(item.isOutbound ? "You referred " : "Referred by ") + Text(item.name).fontWeight(.semibold))
                     Spacer()
                     statusBadge(item.status)
+                }
+                if let date = item.createdAt {
+                    Text(date, style: .date)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundColor(.secondary)
                 }
             }
         }
