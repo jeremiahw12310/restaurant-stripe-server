@@ -373,6 +373,32 @@ class NotificationService: NSObject, ObservableObject {
             print("📱 NotificationService: Updated app badge to \(self.unreadNotificationCount)")
         }
     }
+    
+    // MARK: - Promotional Notification Preference
+    
+    /// Update user's promotional notification preference
+    /// - Parameters:
+    ///   - enabled: Whether to enable promotional notifications
+    ///   - completion: Called with success status and optional error
+    func updatePromotionalPreference(enabled: Bool, completion: @escaping (Bool, Error?) -> Void) {
+        guard let uid = Auth.auth().currentUser?.uid else {
+            completion(false, NSError(domain: "NotificationService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No authenticated user"]))
+            return
+        }
+        
+        let userRef = db.collection("users").document(uid)
+        userRef.updateData([
+            "promotionalNotificationsEnabled": enabled
+        ]) { error in
+            if let error = error {
+                print("❌ NotificationService: Failed to update promotional preference: \(error.localizedDescription)")
+                completion(false, error)
+            } else {
+                print("✅ NotificationService: Promotional preference updated to \(enabled)")
+                completion(true, nil)
+            }
+        }
+    }
 }
 
 // MARK: - MessagingDelegate

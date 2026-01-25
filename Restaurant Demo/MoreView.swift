@@ -29,7 +29,7 @@ struct MoreView: View {
 
                 Section("Account") {
                     NavigationLink {
-                        NotificationsCenterView()
+                        NotificationSettingsView()
                     } label: {
                         HStack(spacing: 12) {
                             Image(systemName: "bell.fill")

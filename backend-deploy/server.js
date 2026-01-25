@@ -7696,7 +7696,7 @@ IMPORTANT:
       const adminContext = await requireAdmin(req, res);
       if (!adminContext) return;
 
-      const { title, body, targetType, userIds, includeAdmins } = req.body;
+      const { title, body, targetType, userIds, includeAdmins, isPromotional } = req.body;
 
       // Validate required fields
       if (!title || typeof title !== 'string' || title.trim().length === 0) {
@@ -7719,6 +7719,10 @@ IMPORTANT:
 
       // Parse includeAdmins (optional, defaults to false for backward compatibility)
       const shouldIncludeAdmins = includeAdmins === true;
+      
+      // Parse isPromotional (optional, defaults to true for backward compatibility - admin notifications are promotional by default)
+      // If not provided, assume promotional to maintain compliance (opt-in required)
+      const isPromotionalNotification = isPromotional !== false;
 
       const db = admin.firestore();
       const trimmedTitle = title.trim();
@@ -7727,7 +7731,8 @@ IMPORTANT:
       const recipientDescription = targetType === 'all' 
         ? (shouldIncludeAdmins ? 'all users (including admins)' : 'all users')
         : `${userIds.length} users`;
-      console.log(`📨 Admin ${adminContext.uid} sending notification: "${trimmedTitle}" to ${recipientDescription}`);
+      const notificationTypeDescription = isPromotionalNotification ? 'promotional' : 'transactional';
+      console.log(`📨 Admin ${adminContext.uid} sending ${notificationTypeDescription} notification: "${trimmedTitle}" to ${recipientDescription}`);
 
       // Fetch FCM tokens based on target type
       let usersSnapshot;
@@ -7780,10 +7785,12 @@ IMPORTANT:
       }
 
       // Filter to users with valid FCM tokens (conditionally exclude admins for broadcast)
+      // Also filter by promotional preference if this is a promotional notification
       const tokensToSend = [];
       const targetUserIdsForLog = [];
       let excludedAdminCount = 0;
       let missingFcmTokenCount = 0;
+      let excludedPromotionalOptOutCount = 0;
 
       for (const doc of usersSnapshot.docs) {
         const userData = doc.data() || {};
@@ -7792,6 +7799,16 @@ IMPORTANT:
         if (targetType === 'all' && userData.isAdmin === true && !shouldIncludeAdmins) {
           excludedAdminCount += 1;
           continue;
+        }
+
+        // For promotional notifications, only send to users who have opted in
+        // Default to false if field doesn't exist (opt-in by default for compliance)
+        if (isPromotionalNotification) {
+          const hasOptedIn = userData.promotionalNotificationsEnabled === true;
+          if (!hasOptedIn) {
+            excludedPromotionalOptOutCount += 1;
+            continue;
+          }
         }
 
         const fcmToken = userData.fcmToken;
@@ -7810,12 +7827,14 @@ IMPORTANT:
               targetType,
               matchedHasFcmTokenCount: usersSnapshot.docs.length,
               excludedAdminCount,
+              excludedPromotionalOptOutCount: isPromotionalNotification ? excludedPromotionalOptOutCount : undefined,
               missingFcmTokenCount
             }
           : {
               targetType,
               requestedCount: Array.isArray(userIds) ? userIds.length : 0,
               foundUserDocsCount: usersSnapshot.docs.length,
+              excludedPromotionalOptOutCount: isPromotionalNotification ? excludedPromotionalOptOutCount : undefined,
               missingFcmTokenCount
             };
 
@@ -7882,11 +7901,13 @@ IMPORTANT:
         targetType,
         targetUserIds: targetType === 'individual' ? userIds : null,
         includeAdmins: shouldIncludeAdmins,
+        isPromotional: isPromotionalNotification,
         sentBy: adminContext.uid,
         sentAt: admin.firestore.FieldValue.serverTimestamp(),
         successCount,
         failureCount,
-        totalTargeted: tokensToSend.length
+        totalTargeted: tokensToSend.length,
+        excludedPromotionalOptOutCount: isPromotionalNotification ? excludedPromotionalOptOutCount : undefined
       });
 
       // Create in-app notifications for each target user (batch in chunks)

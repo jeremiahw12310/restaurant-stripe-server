@@ -31,6 +31,9 @@ struct AdminNotificationsView: View {
                         // Target Selection
                         targetSelectionSection
                         
+                        // Promotional Toggle
+                        promotionalToggleSection
+                        
                         // User Selection (if individual)
                         if viewModel.targetType == .individual {
                             userSelectionSection
@@ -167,6 +170,54 @@ struct AdminNotificationsView: View {
         )
     }
     
+    // MARK: - Promotional Toggle Section
+    
+    private var promotionalToggleSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Image(systemName: "megaphone.fill")
+                    .foregroundColor(.orange)
+                    .font(.title3)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Notification Type")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(.black)
+                    
+                    Text(viewModel.isPromotional ? "Promotional - Only sent to opted-in users" : "Transactional - Sent to all users")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.gray)
+                }
+                
+                Spacer()
+                
+                Toggle("", isOn: $viewModel.isPromotional)
+                    .toggleStyle(SwitchToggleStyle(tint: .orange))
+            }
+            
+            if viewModel.isPromotional {
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle.fill")
+                        .foregroundColor(.blue)
+                    Text("Promotional notifications require user opt-in. Only users who have enabled promotional notifications in their settings will receive this.")
+                        .font(.system(size: 12))
+                        .foregroundColor(.gray)
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.blue.opacity(0.1))
+                )
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color.white)
+                .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 4)
+        )
+    }
+    
     // MARK: - Target Selection
     
     private var targetSelectionSection: some View {
@@ -225,9 +276,15 @@ struct AdminNotificationsView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "info.circle.fill")
                             .foregroundColor(.blue)
-                        Text("This will send to all customers with push notifications enabled")
-                            .font(.system(size: 13))
-                            .foregroundColor(.gray)
+                        if viewModel.isPromotional {
+                            Text("This will send to all customers with push notifications enabled who have opted in to promotional notifications")
+                                .font(.system(size: 13))
+                                .foregroundColor(.gray)
+                        } else {
+                            Text("This will send to all customers with push notifications enabled")
+                                .font(.system(size: 13))
+                                .foregroundColor(.gray)
+                        }
                     }
                     
                     // Include Admins Toggle
@@ -637,6 +694,7 @@ class AdminNotificationsViewModel: ObservableObject {
     @Published var body: String = ""
     @Published var targetType: TargetType = .all
     @Published var includeAdmins: Bool = false
+    @Published var isPromotional: Bool = true // Default to true (promotional) for compliance
     @Published var selectedUserIds: Set<String> = []
     @Published var searchQuery: String = ""
     
@@ -890,7 +948,8 @@ class AdminNotificationsViewModel: ObservableObject {
                 "body": self.body.trimmingCharacters(in: .whitespacesAndNewlines),
                 "targetType": self.targetType == .all ? "all" : "individual",
                 "userIds": self.targetType == .individual ? Array(self.selectedUserIds) : [],
-                "includeAdmins": self.includeAdmins
+                "includeAdmins": self.includeAdmins,
+                "isPromotional": self.isPromotional
             ]
             
             guard let url = URL(string: "\(Config.backendURL)/admin/notifications/send") else {
@@ -958,6 +1017,7 @@ class AdminNotificationsViewModel: ObservableObject {
         selectedUserIds.removeAll()
         targetType = .all
         includeAdmins = false
+        isPromotional = true // Reset to default (promotional)
     }
     
     // MARK: - Load Sent Notifications
