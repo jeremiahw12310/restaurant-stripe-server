@@ -215,7 +215,7 @@ struct ReferralView: View {
             Text("Give 50, Get 50")
                 .font(.system(size: 28, weight: .black, design: .rounded))
                 .foregroundStyle(Theme.darkGoldGradient)
-            Text("Refer a friend. When they earn 50 points you will both receive an additional 50 points.")
+            Text("Refer up to 10 friends. When they earn 50 points you will both receive an additional 50 points.")
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                 .foregroundColor(.secondary)
         }
@@ -248,6 +248,19 @@ struct ReferralView: View {
     private var outboundAwardedSignature: [String] {
         outboundConnections.map { "\($0.id)|\($0.status)" }
     }
+    
+    // Referral count and cap
+    private var referralCount: Int {
+        outboundConnections.count
+    }
+    
+    private var referralCountText: String {
+        "\(referralCount)/10"
+    }
+    
+    private var remainingReferrals: Int {
+        max(0, 10 - referralCount)
+    }
 
     // MARK: - Sections
 
@@ -271,7 +284,7 @@ struct ReferralView: View {
         referralCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("New connections")
+                    Text("New connections (\(referralCountText))")
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                         .foregroundColor(.secondary)
                     Spacer()
@@ -279,6 +292,21 @@ struct ReferralView: View {
                         showHistory = true
                     }
                     .font(.system(size: 13, weight: .bold, design: .rounded))
+                }
+                
+                // Explanation text about referral limit
+                if referralCount >= 8 {
+                    Text("You're close to the limit! \(remainingReferrals) referral\(remainingReferrals == 1 ? "" : "s") remaining.")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundColor(.orange)
+                } else if referralCount > 0 {
+                    Text("You can refer up to 10 people. \(remainingReferrals) referral\(remainingReferrals == 1 ? "" : "s") remaining.")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("You can refer up to 10 people.")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundColor(.secondary)
                 }
 
                 if previewConnections.isEmpty {
@@ -288,7 +316,7 @@ struct ReferralView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("No invites yet")
                                 .font(.system(size: 15, weight: .bold, design: .rounded))
-                            Text("Share your code to earn +50 when a friend reaches 50 points.")
+                            Text("Share your code to earn +50 when a friend reaches 50 points. You can refer up to 10 people.")
                                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                                 .foregroundColor(.secondary)
                         }
@@ -916,8 +944,22 @@ struct ReferralView: View {
                     }
                 } else if let data = data,
                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    let reason = (json["error"] as? String) ?? (json["message"] as? String) ?? "Failed"
-                    DispatchQueue.main.async { self.acceptStatus = reason.replacingOccurrences(of: "_", with: " ") }
+                    let errorCode = json["error"] as? String ?? ""
+                    let message = json["message"] as? String
+                    
+                    var displayMessage: String
+                    if errorCode == "referral_cap_reached" {
+                        displayMessage = "This user has reached their referral limit"
+                    } else if let msg = message {
+                        displayMessage = msg
+                    } else {
+                        displayMessage = errorCode.replacingOccurrences(of: "_", with: " ").capitalized
+                        if displayMessage.isEmpty {
+                            displayMessage = "Failed to accept referral"
+                        }
+                    }
+                    
+                    DispatchQueue.main.async { self.acceptStatus = displayMessage }
                 } else {
                     DispatchQueue.main.async { self.acceptStatus = "Failed to accept referral (\(http.statusCode))" }
                 }

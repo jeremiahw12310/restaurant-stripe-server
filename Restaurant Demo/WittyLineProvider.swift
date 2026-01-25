@@ -32,6 +32,12 @@ final class WittyLineProvider {
                 "Blurry vibes — try again.",
                 "Help us help you: brighter shot."
             ])
+        case .totalsNotVisible:
+            return pick([
+                "We need the totals section.",
+                "Show us subtotal, tax, and total.",
+                "Bottom of the receipt, please."
+            ])
         case .tooOld:
             return pick([
                 "A little too retro.",

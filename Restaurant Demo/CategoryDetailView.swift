@@ -161,8 +161,11 @@ struct CategoryDetailView: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarBackground(Color.black, for: .navigationBar)
-        .fullScreenCover(item: $selectedItem) { item in
+        .sheet(item: $selectedItem) { item in
             ItemDetailView(item: item, menuVM: menuVM)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(Color.black)
         }
         .sheet(isPresented: $showOrganizeItems) {
             OrganizeItemsSheet(menuVM: menuVM, category: category, isPresented: $showOrganizeItems)

@@ -54,6 +54,10 @@ struct ReceiptScanView: View {
     @State private var lastCapturedImage: UIImage? = nil
     // Admin debug: save preprocessed receipt images to Photos
     @State private var savePreprocessedReceiptToPhotosDebug = false
+    // Interstitial coordination: avoid infinite loops / stop on response
+    @State private var serverHasResponded = false
+    @State private var interstitialTimedOut = false
+    @State private var interstitialTimeoutWorkItem: DispatchWorkItem? = nil
     
     var body: some View {
         ZStack {
@@ -524,20 +528,60 @@ struct ReceiptScanView: View {
         // Reset validation state for new scan
         interstitialEarlyCutRequested = false
         receiptPassedValidation = false
+        serverHasResponded = false
+        interstitialTimedOut = false
         pendingPoints = 0
         pendingTotal = 0.0
         pendingErrorOutcome = nil
         lastOrderNumber = nil
         lastOrderDate = nil
+        interstitialTimeoutWorkItem?.cancel()
+        interstitialTimeoutWorkItem = nil
         // Store image for potential retry
         lastCapturedImage = image
         let currentPoints = userVM.points
 
+        // 45s failsafe: if the server never responds, stop looping and show an error.
+        // This prevents infinite interstitial loops on hung requests.
+        let timeoutItem = DispatchWorkItem {
+            guard !self.serverHasResponded else { return }
+            self.serverHasResponded = true
+            self.interstitialTimedOut = true
+            self.isProcessing = false
+            self.pendingErrorOutcome = .server
+            self.interstitialEarlyCutRequested = true
+            NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
+        }
+        interstitialTimeoutWorkItem = timeoutItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 45.0, execute: timeoutItem)
+
         // Preprocess (crop/perspective-correct) ONLY for receipt scanning to reduce distractions.
         preprocessReceiptImageForUpload(image, debugSaveToPhotos: userVM.isAdmin && savePreprocessedReceiptToPhotosDebug) { processedImage in
-            uploadReceiptImage(processedImage) { result in
-                DispatchQueue.main.async {
+            // Client-side gate: prevent hallucinated totals by requiring the Subtotal/Tax/Total section to be visible
+            receiptHasSubtotalTaxTotal(processedImage) { hasTotals in
+                guard hasTotals else {
+                    DispatchQueue.main.async {
+                        // Cancel server timeout and stop the interstitial immediately with a clear outcome
+                        self.serverHasResponded = true
+                        self.interstitialTimeoutWorkItem?.cancel()
+                        self.interstitialTimeoutWorkItem = nil
+                        self.isProcessing = false
+                        self.errorMessage = "Total section not visible — include Subtotal/Tax/Total."
+                        self.pendingErrorOutcome = .totalsNotVisible
+                        self.interstitialEarlyCutRequested = true
+                        NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
+                    }
+                    return
+                }
+
+                uploadReceiptImage(processedImage) { result in
+                    DispatchQueue.main.async {
                     self.isProcessing = false
+                    self.serverHasResponded = true
+                    self.interstitialTimeoutWorkItem?.cancel()
+                    self.interstitialTimeoutWorkItem = nil
+                    // If 45s timeout already fired, we presented .server; skip present/post to avoid flash.
+                    if self.interstitialTimedOut { return }
                     switch result {
                 case .success(let json):
                     // Check if the response contains an error
@@ -548,7 +592,9 @@ struct ReceiptScanView: View {
                         // If interstitial is still showing, store the error to show when it finishes
                         if self.showLoadingOverlay {
                             self.pendingErrorOutcome = errorOutcome
-                            // Don't hide overlay yet - let interstitial finish, then show error
+                            // Stop interstitial immediately and show error
+                            self.interstitialEarlyCutRequested = true
+                            NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
                         } else {
                             // Interstitial already finished, show error immediately
                             self.showLoadingOverlay = false
@@ -581,11 +627,8 @@ struct ReceiptScanView: View {
                         self.receiptPassedValidation = true
                         // Allow the interstitial to finish early now that the server work is done.
                         self.interstitialEarlyCutRequested = true
-                        // Post notification in next run loop cycle to ensure state is visible
-                        // This prevents race condition where interstitialDidFinish() checks state before it's set
-                        DispatchQueue.main.async {
-                            NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
-                        }
+                        // Stop interstitial immediately (bypasses SwiftUI binding delay)
+                        NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
 
                         print("✅ Server awarded receipt points: \(self.pointsEarned), Total: \(self.receiptTotal)")
                     } else {
@@ -594,6 +637,9 @@ struct ReceiptScanView: View {
                         // If interstitial is still showing, store the error to show when it finishes
                         if self.showLoadingOverlay {
                             self.pendingErrorOutcome = errorOutcome
+                            // Stop interstitial immediately and show error
+                            self.interstitialEarlyCutRequested = true
+                            NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
                         } else {
                             self.showLoadingOverlay = false
                             presentOutcome(errorOutcome)
@@ -615,6 +661,9 @@ struct ReceiptScanView: View {
                     // If interstitial is still showing, store the error to show when it finishes
                     if self.showLoadingOverlay {
                         self.pendingErrorOutcome = errorOutcome
+                        // Stop interstitial immediately and show error
+                        self.interstitialEarlyCutRequested = true
+                        NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
                     } else {
                         self.showLoadingOverlay = false
                         presentOutcome(errorOutcome)
@@ -743,6 +792,10 @@ struct ReceiptScanView: View {
                 return .server
             case "RATE_LIMITED":
                 return .rateLimited
+            case "TOTAL_SECTION_NOT_VISIBLE":
+                return .totalsNotVisible
+            case "TOTAL_INCONSISTENT":
+                return .mismatch
             case let c where c.hasPrefix("SERVER_"):
                 return .server
             // For these codes, the message contains more specific info (e.g., "not Dumpling House", "tampered")
@@ -764,6 +817,13 @@ struct ReceiptScanView: View {
     private func mapErrorMessageToOutcome(_ message: String) -> ReceiptScanOutcome {
         let msg = message.lowercased()
         
+        // 0) Totals section missing (fail closed to prevent guessed totals)
+        if msg.contains("total section not visible") ||
+           (msg.contains("include subtotal") && msg.contains("tax") && msg.contains("total")) ||
+           (msg.contains("subtotal") && msg.contains("tax") && msg.contains("total") && msg.contains("not visible")) {
+            return .totalsNotVisible
+        }
+
         // 1) Restaurant mismatch (not from Dumpling House)
         if msg.contains("not from dumpling") ||
            msg.contains("not a dumpling house") ||
@@ -858,6 +918,13 @@ struct ReceiptScanView: View {
             } else {
                 // No image stored, just dismiss
                 presentedOutcome = nil
+            }
+        case .totalsNotVisible:
+            // Rescan: dismiss and reopen camera
+            presentedOutcome = nil
+            lastCapturedImage = nil
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self.checkCameraPermission()
             }
         case .notFromRestaurant, .unreadable, .tooOld, .mismatch, .suspicious, .rateLimited:
             // Just dismiss (buttons now say "Got It")
@@ -2313,6 +2380,52 @@ func uploadReceiptImage(_ image: UIImage, completion: @escaping (Result<[String:
     }
 }
 
+// MARK: - Client-side OCR gate (prevent hallucinated totals)
+
+/// Fast on-device check to ensure the receipt image includes the Subtotal/Tax/Total section.
+/// If this fails, we reject locally to avoid the model guessing a total from incomplete evidence.
+private func receiptHasSubtotalTaxTotal(_ image: UIImage, completion: @escaping (Bool) -> Void) {
+    DispatchQueue.global(qos: .userInitiated).async {
+        let ok = receiptHasSubtotalTaxTotalSync(image)
+        DispatchQueue.main.async { completion(ok) }
+    }
+}
+
+private func receiptHasSubtotalTaxTotalSync(_ image: UIImage) -> Bool {
+    guard let cgImage = image.cgImage else { return false }
+
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .fast
+    request.usesLanguageCorrection = false
+    // Focus on the bottom portion where Subtotal/Tax/Total typically live (origin is bottom-left).
+    request.regionOfInterest = CGRect(x: 0.0, y: 0.0, width: 1.0, height: 0.65)
+
+    let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
+    do {
+        try handler.perform([request])
+    } catch {
+        return false
+    }
+
+    let strings = request.results?.compactMap { $0.topCandidates(1).first?.string } ?? []
+    let text = strings.joined(separator: "\n").lowercased()
+
+    let hasSubtotal = text.contains("subtotal") || text.contains("sub total")
+    let hasTax = text.contains("tax")
+    let hasTotal = text.contains("total")
+    let keywordCount = [hasSubtotal, hasTax, hasTotal].filter { $0 }.count
+    guard keywordCount >= 2 else { return false }
+
+    // Require at least one currency-like amount to reduce false positives.
+    let pattern = #"\b\d+\.\d{2}\b"#
+    let regex = try? NSRegularExpression(pattern: pattern, options: [])
+    if let regex = regex {
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.firstMatch(in: text, options: [], range: range) != nil
+    }
+    return false
+}
+
 // MARK: - Receipt image preprocessing (Option B: detect receipt rectangle + perspective correction)
 
 /// Runs Vision rectangle detection + CoreImage perspective correction to isolate the receipt area.
@@ -2464,14 +2577,16 @@ private func detectAndCorrectReceipt(in image: UIImage, debugLog: Bool) -> UIIma
     var bottomLeft = denorm(rect.bottomLeft)
     var bottomRight = denorm(rect.bottomRight)
 
-    // Inflate the quad slightly so we don't clip header/totals due to tight detection.
-    (topLeft, topRight, bottomLeft, bottomRight) = inflateQuadWithTopPadding(
+    // Inflate the quad so we don't clip header/totals due to tight detection.
+    // Add bottom padding as well to reduce the chance of cropping out Subtotal/Tax/Total.
+    (topLeft, topRight, bottomLeft, bottomRight) = inflateQuadWithVerticalPadding(
         topLeft: topLeft,
         topRight: topRight,
         bottomLeft: bottomLeft,
         bottomRight: bottomRight,
         scale: 1.08,
         extraTopPaddingFraction: 0.10,
+        extraBottomPaddingFraction: 0.14,
         bounds: extent
     )
 
@@ -2553,6 +2668,54 @@ private func inflateQuadWithTopPadding(
 
     tl = clamp(CGPoint(x: tl.x + dir.x * extra, y: tl.y + dir.y * extra))
     tr = clamp(CGPoint(x: tr.x + dir.x * extra, y: tr.y + dir.y * extra))
+    return (tl, tr, bl, br)
+}
+
+/// Inflates a quad uniformly, then adds extra padding on both the top and bottom edges.
+/// Useful to avoid clipping both the header and the Subtotal/Tax/Total section on long receipts.
+private func inflateQuadWithVerticalPadding(
+    topLeft: CGPoint,
+    topRight: CGPoint,
+    bottomLeft: CGPoint,
+    bottomRight: CGPoint,
+    scale: CGFloat,
+    extraTopPaddingFraction: CGFloat,
+    extraBottomPaddingFraction: CGFloat,
+    bounds: CGRect
+) -> (CGPoint, CGPoint, CGPoint, CGPoint) {
+    var (tl, tr, bl, br) = inflateQuad(
+        topLeft: topLeft,
+        topRight: topRight,
+        bottomLeft: bottomLeft,
+        bottomRight: bottomRight,
+        scale: scale,
+        bounds: bounds
+    )
+
+    let topMid = CGPoint(x: (tl.x + tr.x) / 2.0, y: (tl.y + tr.y) / 2.0)
+    let bottomMid = CGPoint(x: (bl.x + br.x) / 2.0, y: (bl.y + br.y) / 2.0)
+    let dx = topMid.x - bottomMid.x
+    let dy = topMid.y - bottomMid.y
+    let len = max(1.0, sqrt(dx * dx + dy * dy))
+    let dir = CGPoint(x: dx / len, y: dy / len)
+
+    func clamp(_ p: CGPoint) -> CGPoint {
+        CGPoint(
+            x: min(max(p.x, bounds.minX), bounds.maxX),
+            y: min(max(p.y, bounds.minY), bounds.maxY)
+        )
+    }
+
+    let extraTop = len * max(0.0, extraTopPaddingFraction)
+    let extraBottom = len * max(0.0, extraBottomPaddingFraction)
+
+    // Push top edge outward along dir
+    tl = clamp(CGPoint(x: tl.x + dir.x * extraTop, y: tl.y + dir.y * extraTop))
+    tr = clamp(CGPoint(x: tr.x + dir.x * extraTop, y: tr.y + dir.y * extraTop))
+    // Push bottom edge outward opposite dir
+    bl = clamp(CGPoint(x: bl.x - dir.x * extraBottom, y: bl.y - dir.y * extraBottom))
+    br = clamp(CGPoint(x: br.x - dir.x * extraBottom, y: br.y - dir.y * extraBottom))
+
     return (tl, tr, bl, br)
 }
 

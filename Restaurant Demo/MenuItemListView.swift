@@ -25,8 +25,11 @@ struct MenuItemListView: View {
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.large)
-        .fullScreenCover(item: $selectedItem) { item in
+        .sheet(item: $selectedItem) { item in
             ItemDetailView(item: item, menuVM: menuVM)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(Color.black)
         }
     }
 } 

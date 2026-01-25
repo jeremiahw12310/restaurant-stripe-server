@@ -160,6 +160,8 @@ struct ReceiptResultView: View {
             )
         case .unreadable:
             return AnyView(systemHero("camera.viewfinder"))
+        case .totalsNotVisible:
+            return AnyView(systemHero("doc.text.magnifyingglass"))
         case .tooOld:
             return AnyView(systemHero("calendar.badge.exclamationmark"))
         case .mismatch:
@@ -192,6 +194,7 @@ struct ReceiptResultView: View {
         case .duplicate: return "Hero Alert"
         case .notFromRestaurant: return "Restaurant Mismatch"
         case .unreadable: return "Scan Issue"
+        case .totalsNotVisible: return "Totals Missing"
         case .tooOld: return "Date Window"
         case .mismatch: return "Data Mismatch"
         case .network: return "Connection Issue"
@@ -210,6 +213,7 @@ struct ReceiptResultView: View {
             return detail
         case .notFromRestaurant: return "We can only accept receipts from Dumpling House."
         case .unreadable: return "Try brighter lighting and fill the frame."
+        case .totalsNotVisible: return "Make sure the bottom shows Subtotal, Tax, and Total."
         case .tooOld: return "Receipts must be scanned within 48 hours of purchase."
         case .mismatch: return "We couldn’t match totals. Check your photo and try again."
         case .network: return "You can retry in a moment."
@@ -226,6 +230,7 @@ struct ReceiptResultView: View {
         case .duplicate: return "View History"
         case .notFromRestaurant: return "Got It"
         case .unreadable: return "Got It"
+        case .totalsNotVisible: return "Rescan"
         case .tooOld: return "Got It"
         case .mismatch: return "Got It"
         case .network: return "Retry"
@@ -269,6 +274,7 @@ struct ReceiptResultView: View {
         case .success: return "+points added"
         case .notFromRestaurant: return "Receipt from different restaurant"
         case .unreadable: return "Receipt unreadable"
+        case .totalsNotVisible: return "Totals section not visible"
         case .tooOld: return "Receipt too old"
         case .mismatch: return "Totals mismatch"
         case .network: return "Network issue"

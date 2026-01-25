@@ -142,11 +142,17 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
         context.coordinator.notificationObserver = NotificationCenter.default.addObserver(
             forName: .interstitialEarlyCutRequested,
             object: nil,
-            queue: .main
+            queue: nil
         ) { [weak coordinator] _ in
             guard let coordinator = coordinator, !coordinator.hasCompleted else { return }
             print("🎬 Early cut notification received - finishing video immediately")
-            coordinator.finishEarly()
+            if Thread.isMainThread {
+                coordinator.finishEarly()
+            } else {
+                DispatchQueue.main.async {
+                    coordinator.finishEarly()
+                }
+            }
         }
 
         playerItem.addObserver(context.coordinator, forKeyPath: "status", options: [.new], context: nil)
@@ -191,7 +197,9 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
         var currentEarlyCutRequested: Bool = false  // Current value from binding
         // Track how many full plays have completed (first with audio, second muted)
         private var playCount: Int = 0
-        private let maxPlays: Int = 1  // Changed from 2 to 1 - remove double-play
+        // Loop effectively indefinitely; `ReceiptScanView` enforces a 45s timeout and posts
+        // `.interstitialEarlyCutRequested` on any server response (success or error).
+        private let maxPlays: Int = Int.max
         let earlyCutLeadSeconds: Double
         let onComplete: () -> Void
 

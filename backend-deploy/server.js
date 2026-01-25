@@ -192,6 +192,9 @@ function validateDietaryRestrictions(items, dietaryPreferences, allMenuItems) {
 // Referral System Endpoints
 // ---------------------------------------------------------------------------
 
+// Hard cap on referrals per user (admins exempt)
+const MAX_REFERRALS_PER_USER = 10;
+
 // Create or get referral code
 app.post('/referrals/create', async (req, res) => {
   try {
@@ -325,6 +328,22 @@ app.post('/referrals/accept', async (req, res) => {
     // Can't refer yourself
     if (referrerId === uid) {
       return res.status(400).json({ error: 'cannot_refer_self' });
+    }
+
+    // Check referral cap (admins exempt)
+    const referrerIsAdmin = referrerData.isAdmin === true;
+    if (!referrerIsAdmin) {
+      const referrerReferralsSnap = await db.collection('referrals')
+        .where('referrerUserId', '==', referrerId)
+        .get();
+      
+      if (referrerReferralsSnap.size >= MAX_REFERRALS_PER_USER) {
+        console.log(`⚠️ Referral cap reached for user ${referrerId}: ${referrerReferralsSnap.size} referrals`);
+        return res.status(400).json({ 
+          error: 'referral_cap_reached',
+          message: `Maximum referral limit reached (${MAX_REFERRALS_PER_USER} referrals)`
+        });
+      }
     }
 
     // Create referral document
@@ -2298,6 +2317,12 @@ EXTRACTION RULES:
 - orderTotal: The total amount paid (as a number, e.g. 23.45)
 - orderDate: The date in MM/DD format only (e.g. "12/25")
 - orderTime: The time in HH:MM format only (e.g. "14:30"). This is always located to the right of the date on the receipt.
+- subtotalAmount: The SUBTOTAL amount as a number (e.g. 15.95) or null if not visible.
+- taxAmount: The TAX amount as a number (e.g. 1.60) or null if not visible.
+- totalAmount: The TOTAL amount as a number (should match orderTotal) or null if not visible.
+- subtotalLineVisible: true only if the Subtotal line (label + digits) is clearly visible. Otherwise false.
+- taxLineVisible: true only if the Tax line (label + digits) is clearly visible. Otherwise false.
+- totalLineVisible: true only if the Total line (label + digits) is clearly visible. Otherwise false.
 
 VISIBILITY & TAMPERING FLAGS:
 - You MUST also return the following boolean flags describing the visibility and tampering status of each key field:
@@ -2324,7 +2349,7 @@ IMPORTANT:
 - SAFETY FIRST: It's better to reject a receipt and ask for a clearer photo than to guess and return incorrect information. If you are not highly confident about any of the key fields, treat the receipt as invalid and return an error message instead of guessing.
 
 Respond ONLY as a JSON object with this exact shape:
-{"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "...", "totalVisibleAndClear": true/false, "orderNumberVisibleAndClear": true/false, "dateVisibleAndClear": true/false, "timeVisibleAndClear": true/false, "keyFieldsTampered": true/false, "tamperingReason": "...", "orderNumberInBlackBox": true/false, "orderNumberDirectlyUnderNashville": true/false, "paidOnlineReceipt": true/false, "orderNumberFromPaidOnlineSection": true/false} 
+{"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "...", "subtotalAmount": ..., "taxAmount": ..., "totalAmount": ..., "subtotalLineVisible": true/false, "taxLineVisible": true/false, "totalLineVisible": true/false, "totalVisibleAndClear": true/false, "orderNumberVisibleAndClear": true/false, "dateVisibleAndClear": true/false, "timeVisibleAndClear": true/false, "keyFieldsTampered": true/false, "tamperingReason": "...", "orderNumberInBlackBox": true/false, "orderNumberDirectlyUnderNashville": true/false, "paidOnlineReceipt": true/false, "orderNumberFromPaidOnlineSection": true/false} 
 or {"error": "error message"}.
 If a field is missing, use null.`;
 
@@ -2401,7 +2426,7 @@ If a field is missing, use null.`;
         if (/^\d+$/.test(s)) return String(parseInt(s, 10));
         return s;
       };
-      const normalizeOrderTotal = (v) => {
+      const normalizeMoney = (v) => {
         if (v === null || v === undefined) return v;
         const n = typeof v === 'number' ? v : parseFloat(String(v).trim());
         if (Number.isNaN(n)) return v;
@@ -2410,9 +2435,12 @@ If a field is missing, use null.`;
       const normalizeParsedReceipt = (d) => ({
         ...d,
         orderNumber: normalizeOrderNumber(d.orderNumber),
-        orderTotal: normalizeOrderTotal(d.orderTotal),
+        orderTotal: normalizeMoney(d.orderTotal),
         orderDate: normalizeOrderDate(d.orderDate),
         orderTime: normalizeOrderTime(d.orderTime),
+        subtotalAmount: normalizeMoney(d.subtotalAmount),
+        taxAmount: normalizeMoney(d.taxAmount),
+        totalAmount: normalizeMoney(d.totalAmount),
       });
       const norm1 = normalizeParsedReceipt(data1);
       const norm2 = normalizeParsedReceipt(data2);
@@ -2421,7 +2449,13 @@ If a field is missing, use null.`;
         norm1.orderNumber === norm2.orderNumber &&
         norm1.orderTotal === norm2.orderTotal &&
         norm1.orderDate === norm2.orderDate &&
-        norm1.orderTime === norm2.orderTime;
+        norm1.orderTime === norm2.orderTime &&
+        norm1.subtotalAmount === norm2.subtotalAmount &&
+        norm1.taxAmount === norm2.taxAmount &&
+        norm1.totalAmount === norm2.totalAmount &&
+        norm1.subtotalLineVisible === norm2.subtotalLineVisible &&
+        norm1.taxLineVisible === norm2.taxLineVisible &&
+        norm1.totalLineVisible === norm2.totalLineVisible;
 
       if (!responsesMatch) {
         await logFailureAndCheckLockout(uid, "DOUBLE_PARSE_MISMATCH", db, ipAddress);
@@ -2439,6 +2473,35 @@ If a field is missing, use null.`;
       if (!data.orderNumber || !data.orderTotal || !data.orderDate || !data.orderTime) {
         await logFailureAndCheckLockout(uid, "MISSING_FIELDS", db, ipAddress);
         return sendError(res, 400, "MISSING_FIELDS", "Could not extract all required fields from receipt");
+      }
+
+      // Require Subtotal/Tax/Total section evidence to prevent hallucinated totals.
+      // If any of these are missing/unclear, fail closed and ask the user to rescan.
+      if (
+        data.subtotalLineVisible !== true ||
+        data.taxLineVisible !== true ||
+        data.totalLineVisible !== true ||
+        data.subtotalAmount === null || data.subtotalAmount === undefined ||
+        data.taxAmount === null || data.taxAmount === undefined ||
+        data.totalAmount === null || data.totalAmount === undefined
+      ) {
+        await logFailureAndCheckLockout(uid, "TOTAL_SECTION_NOT_VISIBLE", db, ipAddress);
+        return sendError(res, 400, "TOTAL_SECTION_NOT_VISIBLE", "Total section not visible — include Subtotal/Tax/Total.");
+      }
+
+      // Consistency check: subtotal + tax must equal total (within a small rounding tolerance),
+      // and totalAmount must match orderTotal.
+      const subtotal = parseFloat(data.subtotalAmount);
+      const tax = parseFloat(data.taxAmount);
+      const totalAmt = parseFloat(data.totalAmount);
+      const orderTotalAmt = parseFloat(data.orderTotal);
+      if ([subtotal, tax, totalAmt, orderTotalAmt].some(Number.isNaN)) {
+        await logFailureAndCheckLockout(uid, "TOTAL_INVALID", db, ipAddress);
+        return sendError(res, 400, "TOTAL_INVALID", "Could not validate totals — please rescan with Subtotal/Tax/Total visible.");
+      }
+      if (Math.abs((subtotal + tax) - totalAmt) > 0.02 || Math.abs(totalAmt - orderTotalAmt) > 0.01) {
+        await logFailureAndCheckLockout(uid, "TOTAL_INCONSISTENT", db, ipAddress);
+        return sendError(res, 400, "TOTAL_INCONSISTENT", "Totals don't reconcile — please rescan with Subtotal/Tax/Total clearly visible.");
       }
 
       // Normalize date formatting to MM/DD (accept MM-DD from model/receipt)

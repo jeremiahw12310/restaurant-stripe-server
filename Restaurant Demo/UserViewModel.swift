@@ -923,12 +923,16 @@ class UserViewModel: ObservableObject {
         }
     }
     
-    func signOut() {
+    /// - Parameter skipFCMRemoval: When true, skip removing FCM token from Firestore (e.g. after account deletion).
+    ///   The user document no longer exists, so FCM removal would fail with permission errors.
+    func signOut(skipFCMRemoval: Bool = false) {
         // FIXED: Clear all cached data when signing out to prevent storage bloat
         print("🧹 Clearing all cached data for account switch...")
         
-        // Remove FCM token from Firestore before signing out
-        NotificationService.shared.removeFCMToken()
+        // Remove FCM token from Firestore before signing out (skip if user/doc already deleted)
+        if !skipFCMRemoval {
+            NotificationService.shared.removeFCMToken()
+        }
         NotificationService.shared.stopNotificationsListener()
         NotificationService.shared.resetTokenRefreshFlag()
         
@@ -1218,8 +1222,8 @@ class UserViewModel: ObservableObject {
                         // Server successfully deleted everything including Auth user
                         print("✅ Backend deleted account successfully")
                         self?.isDeletingAccount = false
-                        // Sign out locally to clear any cached state
-                        self?.signOut()
+                        // Sign out locally; skip FCM removal (user doc no longer exists)
+                        self?.signOut(skipFCMRemoval: true)
                         completion(true)
                     } else {
                         // Parse error message from response
