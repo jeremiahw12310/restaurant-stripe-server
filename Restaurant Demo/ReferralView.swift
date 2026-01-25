@@ -558,7 +558,7 @@ struct ReferralView: View {
                     return
                 }
                 // IMPORTANT: Do not read users/{uid} for other users here (blocked by Firestore rules).
-                // Use denormalized names stored on the referral doc.
+                // Use denormalized names and progress stored on the referral doc.
                 let items: [ReferralDisplay] = docs.map { d in
                     let data = d.data()
                     let statusRaw = (data["status"] as? String) ?? "pending"
@@ -569,7 +569,10 @@ struct ReferralView: View {
                     // that may have come from the server fallback.
                     let existingName = self.outboundConnections.first(where: { $0.id == d.documentID })?.name
                     let name = rawName.isEmpty ? (existingName ?? "Friend") : rawName
-                    return ReferralDisplay(id: d.documentID, name: name, status: status, isOutbound: true, pointsTowards50: 0, createdAt: createdAt)
+                    // Read pointsTowards50 from referral doc (maintained by Cloud Function)
+                    let ptsRaw = (data["pointsTowards50"] as? NSNumber)?.intValue ?? (data["pointsTowards50"] as? Int) ?? 0
+                    let pointsTowards50 = min(max(ptsRaw, 0), 50) // Clamp to 0-50
+                    return ReferralDisplay(id: d.documentID, name: name, status: status, isOutbound: true, pointsTowards50: pointsTowards50, createdAt: createdAt)
                 }
                 DispatchQueue.main.async {
                     self.outboundConnections = items.sorted { $0.name < $1.name }
@@ -593,11 +596,14 @@ struct ReferralView: View {
                 let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
                 if !referrerId.isEmpty {
                     // IMPORTANT: Do not read users/{uid} for other users here (blocked by Firestore rules).
-                    // Use denormalized names stored on the referral doc.
+                    // Use denormalized names and progress stored on the referral doc.
                     let rawName = (data["referrerFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     let name = rawName.isEmpty ? (self.inboundConnection?.name ?? "Friend") : rawName
+                    // Read pointsTowards50 from referral doc (maintained by Cloud Function)
+                    let ptsRaw = (data["pointsTowards50"] as? NSNumber)?.intValue ?? (data["pointsTowards50"] as? Int) ?? 0
+                    let pointsTowards50 = min(max(ptsRaw, 0), 50) // Clamp to 0-50
                     DispatchQueue.main.async {
-                        self.inboundConnection = ReferralDisplay(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: 0, createdAt: createdAt)
+                        self.inboundConnection = ReferralDisplay(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: pointsTowards50, createdAt: createdAt)
                     }
                 } else {
                     self.inboundConnection = nil
@@ -634,9 +640,15 @@ struct ReferralView: View {
                     let createdAt = (refData["createdAt"] as? Timestamp)?.dateValue()
                     let rawName = (refData["referrerFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     let name = rawName.isEmpty ? (self.inboundConnection?.name ?? "Friend") : rawName
+                    // Read pointsTowards50 from referral doc (maintained by Cloud Function)
+                    let ptsRaw = (refData["pointsTowards50"] as? NSNumber)?.intValue ?? (refData["pointsTowards50"] as? Int) ?? 0
+                    let pointsTowards50 = min(max(ptsRaw, 0), 50) // Clamp to 0-50
+                    // For inbound, also check current user's own points as a fallback if referral doc doesn't have progress yet
+                    let currentUserPoints = (data["points"] as? Int) ?? 0
+                    let finalProgress = pointsTowards50 > 0 ? pointsTowards50 : min(max(currentUserPoints, 0), 50)
                     DispatchQueue.main.async {
                         let idToUse = (refDoc?.documentID ?? (referralId.isEmpty ? UUID().uuidString : referralId))
-                        self.inboundConnection = ReferralDisplay(id: idToUse, name: name, status: status, isOutbound: false, pointsTowards50: 0, createdAt: createdAt ?? self.inboundConnection?.createdAt)
+                        self.inboundConnection = ReferralDisplay(id: idToUse, name: name, status: status, isOutbound: false, pointsTowards50: finalProgress, createdAt: createdAt ?? self.inboundConnection?.createdAt)
                     }
                 }
 
@@ -661,9 +673,16 @@ struct ReferralView: View {
         if let rid = dict["referrerUserId"], !rid.isEmpty {
             // Can't read users/{rid} as a non-admin; show placeholder and let the
             // referrals listener / server fallback populate the real name.
+            // For inbound progress, we can use current user's own points as a fast-path
+            // (since we can read our own user doc), but prefer referral doc value when available
+            let currentUserPoints = (data["points"] as? Int) ?? 0
+            let fallbackProgress = min(max(currentUserPoints, 0), 50)
             DispatchQueue.main.async {
                 if self.inboundConnection == nil {
-                    self.inboundConnection = ReferralDisplay(id: UUID().uuidString, name: "Friend", status: "Pending", isOutbound: false, pointsTowards50: 0, createdAt: nil)
+                    self.inboundConnection = ReferralDisplay(id: UUID().uuidString, name: "Friend", status: "Pending", isOutbound: false, pointsTowards50: fallbackProgress, createdAt: nil)
+                } else if let existing = self.inboundConnection, existing.pointsTowards50 == 0 {
+                    // Update progress if referral doc hasn't been updated yet
+                    self.inboundConnection = ReferralDisplay(id: existing.id, name: existing.name, status: existing.status, isOutbound: existing.isOutbound, pointsTowards50: fallbackProgress, createdAt: existing.createdAt)
                 }
             }
         }

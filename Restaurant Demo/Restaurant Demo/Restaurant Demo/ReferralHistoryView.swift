@@ -59,14 +59,17 @@ struct ReferralHistoryView: View {
                     return
                 }
                 // IMPORTANT: Do not read users/{uid} for other users here (blocked by Firestore rules).
-                // Use denormalized names stored on the referral doc.
+                // Use denormalized names and progress stored on the referral doc.
                 let items: [HistoryItem] = docs.map { d in
                     let data = d.data()
                     let statusRaw = (data["status"] as? String) ?? "pending"
                     let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
                     let rawName = (data["referredFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     let name = rawName.isEmpty ? "Friend" : rawName
-                    return HistoryItem(id: d.documentID, name: name, status: status, isOutbound: true, pointsTowards50: 0)
+                    // Read pointsTowards50 from referral doc (maintained by Cloud Function)
+                    let ptsRaw = (data["pointsTowards50"] as? NSNumber)?.intValue ?? (data["pointsTowards50"] as? Int) ?? 0
+                    let pointsTowards50 = min(max(ptsRaw, 0), 50) // Clamp to 0-50
+                    return HistoryItem(id: d.documentID, name: name, status: status, isOutbound: true, pointsTowards50: pointsTowards50)
                 }
                 DispatchQueue.main.async {
                     self.outbound = items.sorted { $0.name < $1.name }
@@ -83,14 +86,17 @@ struct ReferralHistoryView: View {
                     return
                 }
                 // IMPORTANT: Do not read users/{uid} for other users here (blocked by Firestore rules).
-                // Use denormalized names stored on the referral doc.
+                // Use denormalized names and progress stored on the referral doc.
                 let items: [HistoryItem] = docs.map { doc in
                     let data = doc.data()
                     let statusRaw = (data["status"] as? String) ?? "pending"
                     let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
                     let rawName = (data["referrerFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     let name = rawName.isEmpty ? "Friend" : rawName
-                    return HistoryItem(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: 0)
+                    // Read pointsTowards50 from referral doc (maintained by Cloud Function)
+                    let ptsRaw = (data["pointsTowards50"] as? NSNumber)?.intValue ?? (data["pointsTowards50"] as? Int) ?? 0
+                    let pointsTowards50 = min(max(ptsRaw, 0), 50) // Clamp to 0-50
+                    return HistoryItem(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: pointsTowards50)
                 }
                 DispatchQueue.main.async {
                     self.inbound = items.sorted { $0.name < $1.name }

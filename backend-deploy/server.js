@@ -328,6 +328,10 @@ app.post('/referrals/accept', async (req, res) => {
     }
 
     // Create referral document
+    // Set initial pointsTowards50 based on current user points (clamped to 0-50)
+    const currentUserPoints = userData.points || 0;
+    const initialPointsTowards50 = Math.max(0, Math.min(50, currentUserPoints));
+    
     const referralRef = await db.collection('referrals').add({
       referrerUserId: referrerId,
       referredUserId: uid,
@@ -335,6 +339,7 @@ app.post('/referrals/accept', async (req, res) => {
       referrerFirstName,
       referredFirstName,
       status: 'pending',
+      pointsTowards50: initialPointsTowards50, // Set initial progress
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
@@ -345,9 +350,8 @@ app.post('/referrals/accept', async (req, res) => {
     });
 
     // Check if user already has enough points for immediate award
-    const userPoints = userData.points || 0;
-    if (userPoints >= 50) {
-      console.log(`✅ User ${uid} already has ${userPoints} points, awarding referral bonus immediately`);
+    if (currentUserPoints >= 50) {
+      console.log(`✅ User ${uid} already has ${currentUserPoints} points, awarding referral bonus immediately`);
       // Award points immediately using the shared helper function
       const awardResult = await awardReferralPoints(db, referralRef.id, referrerId, uid);
       if (awardResult.success) {
@@ -403,14 +407,18 @@ app.get('/referrals/mine', async (req, res) => {
     
     for (const doc of outboundSnap.docs) {
       const data = doc.data();
-      const referredUserDoc = await db.collection('users').doc(data.referredUserId).get();
-      const referredUserData = referredUserDoc.data() || {};
+      // Use denormalized name from referral doc (avoids cross-user reads)
+      const referredName = data.referredFirstName || 'Friend';
+      // Read pointsTowards50 from referral doc (maintained by Cloud Function)
+      const pointsTowards50 = typeof data.pointsTowards50 === 'number' 
+        ? Math.max(0, Math.min(50, data.pointsTowards50))
+        : 0;
       
       outbound.push({
         referralId: doc.id,
-        referredName: referredUserData.firstName || 'Friend',
+        referredName: referredName,
         status: data.status || 'pending',
-        pointsTowards50: referredUserData.totalPoints || 0
+        pointsTowards50: pointsTowards50
       });
     }
 
@@ -421,14 +429,19 @@ app.get('/referrals/mine', async (req, res) => {
     if (!inboundSnap.empty) {
       const doc = inboundSnap.docs[0];
       const data = doc.data();
-      const referrerDoc = await db.collection('users').doc(data.referrerUserId).get();
-      const referrerData = referrerDoc.data() || {};
+      // Use denormalized name from referral doc (avoids cross-user reads)
+      const referrerName = data.referrerFirstName || 'Friend';
+      // Read pointsTowards50 from referral doc (maintained by Cloud Function)
+      // For inbound, this represents the current user's own progress
+      const pointsTowards50 = typeof data.pointsTowards50 === 'number' 
+        ? Math.max(0, Math.min(50, data.pointsTowards50))
+        : 0;
       
       inbound = {
         referralId: doc.id,
-        referrerName: referrerData.firstName || 'Friend',
+        referrerName: referrerName,
         status: data.status || 'pending',
-        pointsTowards50: 0
+        pointsTowards50: pointsTowards50
       };
     }
 
@@ -624,10 +637,11 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
         });
       }
       
-      // Update referral status to 'awarded'
+      // Update referral status to 'awarded' and set progress to 50
       tx.update(db.collection('referrals').doc(referralId), {
         status: 'awarded',
-        awardedAt: admin.firestore.FieldValue.serverTimestamp()
+        awardedAt: admin.firestore.FieldValue.serverTimestamp(),
+        pointsTowards50: 50 // Set to 50 when awarded
       });
     });
     
