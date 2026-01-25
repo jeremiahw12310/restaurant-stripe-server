@@ -9134,32 +9134,8 @@ IMPORTANT:
       const severity = req.query.severity;
       const flagType = req.query.flagType;
 
-      let query = db.collection('suspiciousFlags').orderBy('createdAt', 'desc');
-
-      if (status) {
-        query = query.where('status', '==', status);
-      }
-      if (severity) {
-        query = query.where('severity', '==', severity);
-      }
-      if (flagType) {
-        query = query.where('flagType', '==', flagType);
-      }
-
-      // Pagination
-      if (req.query.startAfter) {
-        const cursorDoc = await db.collection('suspiciousFlags').doc(req.query.startAfter).get();
-        if (cursorDoc.exists) {
-          query = query.startAfter(cursorDoc);
-        }
-      }
-
-      const snapshot = await query.limit(limit + 1).get();
-      const hasMore = snapshot.size > limit;
-      const flagDocs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
-
-      // Get user details for each flag
-      const flags = await Promise.all(flagDocs.map(async (doc) => {
+      // Helper function to format flag data
+      const formatFlag = async (doc) => {
         const data = doc.data();
         const userId = data.userId;
         
@@ -9200,7 +9176,97 @@ IMPORTANT:
           actionTaken: data.actionTaken || null,
           userInfo
         };
-      }));
+      };
+
+      let snapshot;
+      let flagDocs = [];
+      let hasMore = false;
+
+      try {
+        // Try the indexed query first
+        let query = db.collection('suspiciousFlags').orderBy('createdAt', 'desc');
+
+        if (status) {
+          query = query.where('status', '==', status);
+        }
+        if (severity) {
+          query = query.where('severity', '==', severity);
+        }
+        if (flagType) {
+          query = query.where('flagType', '==', flagType);
+        }
+
+        // Pagination
+        if (req.query.startAfter) {
+          const cursorDoc = await db.collection('suspiciousFlags').doc(req.query.startAfter).get();
+          if (cursorDoc.exists) {
+            query = query.startAfter(cursorDoc);
+          }
+        }
+
+        snapshot = await query.limit(limit + 1).get();
+        hasMore = snapshot.size > limit;
+        flagDocs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
+        
+        console.log(`✅ Indexed query succeeded: ${flagDocs.length} flags`);
+      } catch (queryError) {
+        // Check if it's an index error
+        const isIndexError = queryError.message && (
+          queryError.message.includes('index') ||
+          queryError.message.includes('requires an index') ||
+          queryError.code === 9 || // FAILED_PRECONDITION
+          queryError.code === 'failed-precondition'
+        );
+
+        if (isIndexError) {
+          console.warn('⚠️ Index not ready, using fallback query:', queryError.message);
+          
+          // Fallback: Fetch all flags (with reasonable limit), filter and sort in memory
+          const maxFallbackLimit = 1000; // Reasonable limit for in-memory processing
+          const allFlagsSnapshot = await db.collection('suspiciousFlags')
+            .limit(maxFallbackLimit)
+            .get();
+
+          console.log(`📋 Fallback: Fetched ${allFlagsSnapshot.size} flags for client-side filtering`);
+
+          // Filter in memory
+          let filteredDocs = allFlagsSnapshot.docs.filter(doc => {
+            const data = doc.data();
+            if (status && data.status !== status) return false;
+            if (severity && data.severity !== severity) return false;
+            if (flagType && data.flagType !== flagType) return false;
+            return true;
+          });
+
+          // Sort by createdAt descending
+          filteredDocs.sort((a, b) => {
+            const aTime = a.data().createdAt?.toDate?.() || new Date(0);
+            const bTime = b.data().createdAt?.toDate?.() || new Date(0);
+            return bTime - aTime; // Descending
+          });
+
+          // Apply pagination
+          let startIndex = 0;
+          if (req.query.startAfter) {
+            const startAfterIndex = filteredDocs.findIndex(doc => doc.id === req.query.startAfter);
+            if (startAfterIndex >= 0) {
+              startIndex = startAfterIndex + 1;
+            }
+          }
+
+          const endIndex = startIndex + limit;
+          flagDocs = filteredDocs.slice(startIndex, endIndex);
+          hasMore = endIndex < filteredDocs.length;
+
+          console.log(`✅ Fallback query: ${flagDocs.length} flags after filtering (hasMore: ${hasMore})`);
+        } else {
+          // Re-throw non-index errors
+          throw queryError;
+        }
+      }
+
+      // Get user details for each flag
+      const flags = await Promise.all(flagDocs.map(formatFlag));
 
       const result = {
         flags,
@@ -9212,7 +9278,10 @@ IMPORTANT:
       res.json(result);
     } catch (error) {
       console.error('❌ Error fetching suspicious flags:', error);
-      res.status(500).json({ error: 'Failed to fetch suspicious flags' });
+      res.status(500).json({ 
+        error: 'Failed to fetch suspicious flags',
+        message: error.message || 'Unknown error'
+      });
     }
   });
 
