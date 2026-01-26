@@ -11,7 +11,7 @@ import FirebaseFirestore
 import UserNotifications
 
 struct NotificationSettingsView: View {
-    @StateObject private var notificationService = NotificationService.shared
+    @ObservedObject private var notificationService = NotificationService.shared
     @Environment(\.dismiss) private var dismiss
     @State private var promotionalNotificationsEnabled: Bool = false
     @State private var isLoading: Bool = true
@@ -60,13 +60,6 @@ struct NotificationSettingsView: View {
             }
             .navigationTitle("Notification Settings")
             .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
             .alert("Error", isPresented: $showError) {
                 Button("OK") {}
             } message: {
@@ -74,6 +67,9 @@ struct NotificationSettingsView: View {
             }
             .onAppear {
                 loadPreferences()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+                notificationService.checkNotificationPermission { _ in }
             }
         }
     }
@@ -134,22 +130,29 @@ struct NotificationSettingsView: View {
             }
             
             if !notificationService.hasNotificationPermission {
-                Button {
-                    openIOSSettings()
-                } label: {
-                    HStack {
-                        Text("Enable in Settings")
-                            .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        Image(systemName: "arrow.right.circle.fill")
-                            .font(.system(size: 14))
+                VStack(alignment: .leading, spacing: 8) {
+                    Button {
+                        openIOSSettings()
+                    } label: {
+                        HStack {
+                            Text("Enable in Settings")
+                                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            Image(systemName: "arrow.right.circle.fill")
+                                .font(.system(size: 14))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Theme.primaryGold)
+                        )
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Theme.primaryGold)
-                    )
+                    
+                    Text("Tap 'Notifications' in the app settings to enable")
+                        .font(.system(size: 12, weight: .regular, design: .rounded))
+                        .foregroundColor(Theme.modernSecondary)
+                        .padding(.top, 4)
                 }
             }
         }
@@ -404,22 +407,22 @@ struct NotificationSettingsView: View {
             return
         }
         
-        db.collection("users").document(uid).getDocument { [self] snapshot, error in
+        db.collection("users").document(uid).getDocument { snapshot, error in
             DispatchQueue.main.async {
-                isLoading = false
+                self.isLoading = false
                 
                 if let error = error {
                     print("❌ NotificationSettingsView: Error loading preferences: \(error.localizedDescription)")
-                    errorMessage = "Failed to load preferences"
-                    showError = true
+                    self.errorMessage = "Failed to load preferences"
+                    self.showError = true
                     return
                 }
                 
                 if let data = snapshot?.data() {
-                    promotionalNotificationsEnabled = data["promotionalNotificationsEnabled"] as? Bool ?? false
+                    self.promotionalNotificationsEnabled = data["promotionalNotificationsEnabled"] as? Bool ?? false
                 } else {
                     // Default to false if field doesn't exist
-                    promotionalNotificationsEnabled = false
+                    self.promotionalNotificationsEnabled = false
                 }
             }
         }
@@ -430,28 +433,35 @@ struct NotificationSettingsView: View {
         
         isSaving = true
         
-        notificationService.updatePromotionalPreference(enabled: enabled) { [weak self] success, error in
+        notificationService.updatePromotionalPreference(enabled: enabled) { success, error in
             DispatchQueue.main.async {
-                self?.isSaving = false
+                self.isSaving = false
                 
                 if let error = error {
                     print("❌ NotificationSettingsView: Error saving preference: \(error.localizedDescription)")
-                    self?.errorMessage = "Failed to save preference"
-                    self?.showError = true
+                    self.errorMessage = "Failed to save preference"
+                    self.showError = true
                     // Revert toggle on error
-                    self?.promotionalNotificationsEnabled = !enabled
+                    self.promotionalNotificationsEnabled = !enabled
                 } else if !success {
-                    self?.errorMessage = "Failed to save preference"
-                    self?.showError = true
-                    self?.promotionalNotificationsEnabled = !enabled
+                    self.errorMessage = "Failed to save preference"
+                    self.showError = true
+                    self.promotionalNotificationsEnabled = !enabled
                 }
             }
         }
     }
     
     private func openIOSSettings() {
-        if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
-            UIApplication.shared.open(settingsUrl)
+        guard let settingsUrl = URL(string: UIApplication.openSettingsURLString) else {
+            print("❌ NotificationSettingsView: Failed to create settings URL")
+            return
+        }
+        
+        UIApplication.shared.open(settingsUrl, options: [:]) { success in
+            if !success {
+                print("❌ NotificationSettingsView: Failed to open settings URL")
+            }
         }
     }
 }

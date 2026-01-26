@@ -102,8 +102,9 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let view = UIView(frame: .zero)
 
+        // Use .ambient to avoid AirPods auto-connect and video stutter
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default, options: [])
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             print("⚠️ Audio session configuration failed: \(error)")

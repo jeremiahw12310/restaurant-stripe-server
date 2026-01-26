@@ -837,6 +837,15 @@ struct ReferralView: View {
         }
     }
 
+    /// Maps raw Firestore status to display: "Awarded" | "Cancelled" | "Pending".
+    private static func displayStatus(from raw: String) -> String {
+        switch raw {
+        case "awarded": return "Awarded"
+        case "cancelled": return "Cancelled"
+        default: return "Pending"
+        }
+    }
+
     private func listenForConnections() {
         guard let uid = Auth.auth().currentUser?.uid else { return }
         let db = Firestore.firestore()
@@ -855,7 +864,7 @@ struct ReferralView: View {
                 let items: [ReferralDisplay] = docs.map { d in
                     let data = d.data()
                     let statusRaw = (data["status"] as? String) ?? "pending"
-                    let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
+                    let status = Self.displayStatus(from: statusRaw)
                     let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
                     let rawName = (data["referredFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     // If this referral doc predates denormalized names, don't overwrite a better name
@@ -883,23 +892,16 @@ struct ReferralView: View {
                     return
                 }
                 let data = doc.data()
-                let referrerId = (data["referrerUserId"] as? String) ?? ""
                 let statusRaw = (data["status"] as? String) ?? "pending"
-                let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
+                let status = Self.displayStatus(from: statusRaw)
                 let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
-                if !referrerId.isEmpty {
-                    // IMPORTANT: Do not read users/{uid} for other users here (blocked by Firestore rules).
-                    // Use denormalized names and progress stored on the referral doc.
-                    let rawName = (data["referrerFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    let name = rawName.isEmpty ? (self.inboundConnection?.name ?? "Friend") : rawName
-                    // Read pointsTowards50 from referral doc (maintained by Cloud Function)
-                    let ptsRaw = (data["pointsTowards50"] as? NSNumber)?.intValue ?? (data["pointsTowards50"] as? Int) ?? 0
-                    let pointsTowards50 = min(max(ptsRaw, 0), 50) // Clamp to 0-50
-                    DispatchQueue.main.async {
-                        self.inboundConnection = ReferralDisplay(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: pointsTowards50, createdAt: createdAt)
-                    }
-                } else {
-                    self.inboundConnection = nil
+                // Tombstoned docs may have referrerUserId removed; we still show "Deleted User" from referrerFirstName.
+                let rawName = (data["referrerFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let name = rawName.isEmpty ? (self.inboundConnection?.name ?? "Friend") : rawName
+                let ptsRaw = (data["pointsTowards50"] as? NSNumber)?.intValue ?? (data["pointsTowards50"] as? Int) ?? 0
+                let pointsTowards50 = min(max(ptsRaw, 0), 50) // Clamp to 0-50
+                DispatchQueue.main.async {
+                    self.inboundConnection = ReferralDisplay(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: pointsTowards50, createdAt: createdAt)
                 }
             }
     }
@@ -929,7 +931,7 @@ struct ReferralView: View {
                 let updateFromReferralDoc: (DocumentSnapshot?) -> Void = { refDoc in
                     let refData = refDoc?.data() ?? [:]
                     let statusRaw = (refData["status"] as? String) ?? "pending"
-                    let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
+                    let status = ReferralView.displayStatus(from: statusRaw)
                     let createdAt = (refData["createdAt"] as? Timestamp)?.dateValue()
                     let rawName = (refData["referrerFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     let name = rawName.isEmpty ? (self.inboundConnection?.name ?? "Friend") : rawName
@@ -991,7 +993,7 @@ struct ReferralView: View {
                     if let inbound = json["inbound"] as? [String: Any] {
                         let name = (inbound["referrerName"] as? String) ?? "Friend"
                         let statusRaw = (inbound["status"] as? String) ?? "pending"
-                        let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
+                        let status = ReferralView.displayStatus(from: statusRaw)
                         DispatchQueue.main.async {
                             let pts = (inbound["pointsTowards50"] as? NSNumber)?.intValue ?? (inbound["pointsTowards50"] as? Int) ?? 0
                             // Note: Server API doesn't return createdAt, so we'll use nil and let the listener update it
@@ -1004,7 +1006,7 @@ struct ReferralView: View {
                         let mapped: [ReferralDisplay] = outs.map { o in
                             let name = (o["referredName"] as? String) ?? "Friend"
                             let statusRaw = (o["status"] as? String) ?? "pending"
-                            let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
+                            let status = ReferralView.displayStatus(from: statusRaw)
                             let pts = (o["pointsTowards50"] as? NSNumber)?.intValue ?? (o["pointsTowards50"] as? Int) ?? 0
                             // Note: Server API doesn't return createdAt, so we'll use nil and let the listener update it
                             return ReferralDisplay(id: (o["referralId"] as? String) ?? UUID().uuidString, name: name, status: status, isOutbound: true, pointsTowards50: min(max(pts, 0), 50), createdAt: nil)
@@ -1017,14 +1019,19 @@ struct ReferralView: View {
     }
     @ViewBuilder
     private func statusBadge(_ status: String) -> some View {
+        let (bg, fg): (Color, Color) = {
+            switch status {
+            case "Awarded": return (Color.green.opacity(0.2), Color.green)
+            case "Cancelled": return (Color.gray.opacity(0.2), Color.gray)
+            default: return (Color.orange.opacity(0.2), Color.orange)
+            }
+        }()
         Text(status.uppercased())
             .font(.system(size: 10, weight: .black, design: .rounded))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(
-                Capsule().fill(status == "Awarded" ? Color.green.opacity(0.2) : Color.orange.opacity(0.2))
-            )
-            .foregroundColor(status == "Awarded" ? .green : .orange)
+            .background(Capsule().fill(bg))
+            .foregroundColor(fg)
     }
 
     @ViewBuilder
@@ -1292,7 +1299,9 @@ fileprivate struct ReferralConnectionRow: View {
                         .font(.system(size: 11, weight: .medium, design: .rounded))
                         .foregroundColor(.secondary)
                 }
-                if status == "Pending" {
+                if status == "Cancelled" {
+                    // No progress bar for tombstoned referrals
+                } else if status == "Pending" {
                     GoldProgressBar(value: pointsTowards50)
                 } else {
                     GoldProgressBar(value: 50)
@@ -1300,7 +1309,7 @@ fileprivate struct ReferralConnectionRow: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("\(relationText) \(name), status \(status), progress \(min(pointsTowards50, 50))/50"))
+        .accessibilityLabel(Text("\(relationText) \(name), status \(status)\(status == "Cancelled" ? "" : ", progress \(min(pointsTowards50, 50))/50")"))
     }
 
     @ViewBuilder
@@ -1318,14 +1327,19 @@ fileprivate struct ReferralConnectionRow: View {
 
     @ViewBuilder
     private func badge(_ status: String) -> some View {
+        let (bg, fg): (Color, Color) = {
+            switch status {
+            case "Awarded": return (Color.green.opacity(0.2), Color.green)
+            case "Cancelled": return (Color.gray.opacity(0.2), Color.gray)
+            default: return (Color.orange.opacity(0.2), Color.orange)
+            }
+        }()
         Text(status.uppercased())
             .font(.system(size: 10, weight: .black, design: .rounded))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(
-                Capsule().fill(status == "Awarded" ? Color.green.opacity(0.2) : Color.orange.opacity(0.2))
-            )
-            .foregroundColor(status == "Awarded" ? .green : .orange)
+            .background(Capsule().fill(bg))
+            .foregroundColor(fg)
     }
 }
 

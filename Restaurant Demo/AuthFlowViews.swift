@@ -163,7 +163,10 @@ struct AuthFlowView: View {
                             }
                     } else if !authVM.didAuthenticate && !authVM.shouldNavigateToUserDetails {
                         EnterCodeView()
-                            .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+                            // CRITICAL: No transition animation for OTP screen
+                            // Animations during view appearance can interfere with iOS autofill detection
+                            // and first-responder timing, causing OTP insertion to fail
+                            .transition(.identity)
                             .onAppear { 
                                 print("🔵 Navigation: EnterCodeView")
                                 authVM.printNavigationState()
@@ -512,8 +515,92 @@ struct EnterPhoneView: View {
 }
 
 // MARK: - Screen 2: Enter SMS Code
+// Wrapped in UIViewControllerRepresentable for precise focus control
 struct EnterCodeView: View {
     @EnvironmentObject var authVM: AuthenticationViewModel
+    
+    var body: some View {
+        EnterCodeViewController()
+            .environmentObject(authVM)
+    }
+}
+
+// MARK: - UIViewController Wrapper for OTP Focus Control
+struct EnterCodeViewController: UIViewControllerRepresentable {
+    @EnvironmentObject var authVM: AuthenticationViewModel
+    
+    func makeUIViewController(context: Context) -> EnterCodeHostingController {
+        let controller = EnterCodeHostingController(authVM: authVM)
+        return controller
+    }
+    
+    func updateUIViewController(_ uiViewController: EnterCodeHostingController, context: Context) {
+        uiViewController.updateAuthVM(authVM)
+    }
+}
+
+// MARK: - Hosting Controller with Focus Control
+class EnterCodeHostingController: UIHostingController<EnterCodeContentView> {
+    private var authVM: AuthenticationViewModel
+    private var hasFocusedOnce = false
+    
+    init(authVM: AuthenticationViewModel) {
+        self.authVM = authVM
+        super.init(rootView: EnterCodeContentView(authVM: authVM))
+    }
+    
+    @MainActor required dynamic init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    func updateAuthVM(_ newAuthVM: AuthenticationViewModel) {
+        self.authVM = newAuthVM
+        rootView = EnterCodeContentView(authVM: newAuthVM)
+    }
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+    }
+    
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        
+        // CRITICAL: Focus the OTP field in viewDidAppear after view is fully laid out
+        // This is the most reliable timing - view is stable, no animations running
+        // Only focus once per appearance to avoid interrupting autofill
+        guard !hasFocusedOnce else { return }
+        hasFocusedOnce = true
+        
+        // Small delay to ensure view hierarchy is completely settled
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.focusOTPField()
+        }
+    }
+    
+    private func focusOTPField() {
+        // Find the UITextField in the view hierarchy
+        func findTextField(in view: UIView) -> UITextField? {
+            if let textField = view as? UITextField {
+                return textField
+            }
+            for subview in view.subviews {
+                if let textField = findTextField(in: subview) {
+                    return textField
+                }
+            }
+            return nil
+        }
+        
+        if let textField = findTextField(in: view) {
+            textField.becomeFirstResponder()
+        }
+    }
+}
+
+// MARK: - Content View (the actual SwiftUI content)
+struct EnterCodeContentView: View {
+    @ObservedObject var authVM: AuthenticationViewModel
     @Environment(\.colorScheme) var colorScheme
     @State private var headerAnimated = false
     @State private var cardAnimated = false
@@ -522,7 +609,7 @@ struct EnterCodeView: View {
     @State private var canResend: Bool = false
     @State private var timer: Timer?
     @State private var localCode: String = ""
-    @FocusState private var codeFieldFocused: Bool
+    @State private var codeFieldFocused: Bool = false
     
     var body: some View {
         ScrollView {
@@ -570,45 +657,39 @@ struct EnterCodeView: View {
                                 .foregroundColor(Theme.modernPrimary)
                         }
                         
-                        // Simple OTP text field - plain SwiftUI for reliable autofill
-                        // Using local state that syncs to view model to avoid interfering with autofill
-                        TextField("000000", text: $localCode)
-                            .keyboardType(.numberPad)
-                            .textContentType(.oneTimeCode)
-                            .autocorrectionDisabled()
-                            .font(.system(size: 32, weight: .bold, design: .monospaced))
-                            .multilineTextAlignment(.center)
-                            .focused($codeFieldFocused)
-                            .onChange(of: localCode) { _, newValue in
-                                // Filter to only digits and limit to 6
-                                let filtered = String(newValue.filter(\.isNumber).prefix(6))
-                                if filtered != newValue {
-                                    localCode = filtered
-                                    return
-                                }
-
-                                // IMPORTANT: Don't write into authVM on every keystroke/autofill.
-                                // Updating the EnvironmentObject mid-autofill can cause SwiftUI to re-render and
-                                // iOS to abandon the OTP insertion. Only sync when we have a complete code.
-                                if filtered.count == 6, !authVM.isVerifying {
-                                    // Small delay to ensure autofill completes, then sync+submit
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                        guard !authVM.isVerifying else { return }
-                                        authVM.smsCode = filtered
-                                        authVM.verifyCodeAndSignIn()
-                                    }
-                                }
-                            }
-                            .padding(.vertical, 16)
-                            .padding(.horizontal, 20)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color.white)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(Theme.primaryGold, lineWidth: 2)
-                                    )
+                        // UIKit-based OTP text field for reliable iOS autofill
+                        // Uses target-action pattern which fires AFTER autofill completes,
+                        // unlike SwiftUI's onChange which can interrupt the autofill process
+                        // Focus is controlled by UIViewController.viewDidAppear for maximum reliability
+                        VStack(spacing: 8) {
+                            OTPTextField(
+                                text: $localCode,
+                                onComplete: { code in
+                                    guard !authVM.isVerifying else { return }
+                                    authVM.smsCode = code
+                                    authVM.verifyCodeAndSignIn()
+                                },
+                                shouldBecomeFirstResponder: codeFieldFocused
                             )
+                            .frame(height: 50)
+                            
+                            // Subtle hint that field is tappable (helps with autofill reliability)
+                            if localCode.isEmpty {
+                                Text("Tap to enter code or use autofill")
+                                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                                    .foregroundColor(Theme.modernSecondary.opacity(0.7))
+                            }
+                        }
+                        .padding(.vertical, 16)
+                        .padding(.horizontal, 20)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.white)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(Theme.primaryGold, lineWidth: 2)
+                                )
+                        )
                     }
                     
                     // Countdown timer and resend
@@ -665,12 +746,15 @@ struct EnterCodeView: View {
                 )
                 .contentShape(Rectangle())
                 .padding(.horizontal, 20)
-                .scaleEffect(cardAnimated ? 1.0 : 0.95)
-                // CRITICAL: Keep opacity at 1.0 so TextField is always visible for autofill detection
-                // iOS autofill requires the TextField to be visible and laid out when it tries to detect it
-                // Scale animation still provides visual feedback without hiding the TextField
+                // CRITICAL: No animations on the code input card
+                // Any animation (scale, opacity, etc.) during first-responder setup can interfere
+                // with iOS autofill detection and OTP insertion
+                // The field must be completely static when becoming first responder
                 .opacity(1.0)
-                .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.3), value: cardAnimated)
+                // Tap-to-focus: allows manual re-focus if needed
+                .onTapGesture {
+                    codeFieldFocused = true
+                }
                 
                 Spacer(minLength: 20)
                 
@@ -734,13 +818,6 @@ struct EnterCodeView: View {
         .onAppear {
             // Sync local code with view model
             localCode = authVM.smsCode
-            
-            // CRITICAL: Focus the TextField immediately so it's ready for autofill
-            // Since the TextField is now visible from the start, we can focus it right away
-            // This ensures iOS can detect it for autofill as soon as the view appears
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                codeFieldFocused = true
-            }
             
             // Trigger animations
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {

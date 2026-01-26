@@ -603,6 +603,10 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
     if (referralData.status === 'awarded') {
       return { success: false, error: 'ALREADY_AWARDED' };
     }
+    // Tombstoned (cancelled); do not award
+    if (referralData.status === 'cancelled') {
+      return { success: false, error: 'REFERRAL_CANCELLED' };
+    }
     
     // Get the referred user's current points
     const referredUserRef = db.collection('users').doc(referredUserId);
@@ -942,6 +946,12 @@ app.post('/referrals/award-check', async (req, res) => {
     if (referralData.status === 'awarded') {
       console.log(`ℹ️ Referral ${referralId} already awarded`);
       return res.json({ status: 'already_awarded', referralId });
+    }
+
+    // Tombstoned referral (referrer or referred deleted); do not award
+    if (referralData.status === 'cancelled' || !referrerId) {
+      console.log(`ℹ️ Referral ${referralId} cancelled or referrer deleted, skipping award`);
+      return res.json({ status: 'not_eligible', reason: 'referral_cancelled' });
     }
 
     // Get the referred user's current points
@@ -5885,22 +5895,62 @@ IMPORTANT:
         console.log(`✅ Deleted ${pointsSnap.size} pointsTransactions`);
       }
 
-      // Delete referrals (both as referrer and referred)
-      const allReferrals = [...referrerSnap.docs, ...referredSnap.docs];
-      if (allReferrals.length > 0) {
-        let refBatch = db.batch();
-        let refCount = 0;
-        for (const doc of allReferrals) {
-          if (refCount >= BATCH_LIMIT) {
-            await refBatch.commit();
-            refBatch = db.batch();
-            refCount = 0;
-          }
-          refBatch.delete(doc.ref);
-          refCount++;
+      // Tombstone referrals instead of deleting (keeps referrer/referred counts stable)
+      // 1) Deleting user was the referred: anonymize referred side, keep referrerUserId
+      let tombstoneCount = 0;
+      let refBatch = db.batch();
+      for (const doc of referredSnap.docs) {
+        if (tombstoneCount >= BATCH_LIMIT) {
+          await refBatch.commit();
+          refBatch = db.batch();
+          tombstoneCount = 0;
         }
-        if (refCount > 0) await refBatch.commit();
-        console.log(`✅ Deleted ${allReferrals.length} referrals`);
+        const data = doc.data();
+        const isAwarded = data.status === 'awarded';
+        const updates = {
+          referredFirstName: 'Deleted User',
+          referredDeleted: true,
+          referredDeletedAt: admin.firestore.FieldValue.serverTimestamp(),
+          referredUserId: admin.firestore.FieldValue.delete()
+        };
+        if (!isAwarded) {
+          updates.status = 'cancelled';
+          updates.pointsTowards50 = 0;
+        }
+        refBatch.update(doc.ref, updates);
+        tombstoneCount++;
+      }
+      if (tombstoneCount > 0) {
+        await refBatch.commit();
+        console.log(`✅ Tombstoned ${referredSnap.size} referrals (deleted user was referred)`);
+      }
+      // 2) Deleting user was the referrer: anonymize referrer side, keep referredUserId
+      refBatch = db.batch();
+      tombstoneCount = 0;
+      for (const doc of referrerSnap.docs) {
+        if (tombstoneCount >= BATCH_LIMIT) {
+          await refBatch.commit();
+          refBatch = db.batch();
+          tombstoneCount = 0;
+        }
+        const data = doc.data();
+        const isAwarded = data.status === 'awarded';
+        const updates = {
+          referrerFirstName: 'Deleted User',
+          referrerDeleted: true,
+          referrerDeletedAt: admin.firestore.FieldValue.serverTimestamp(),
+          referrerUserId: admin.firestore.FieldValue.delete()
+        };
+        if (!isAwarded) {
+          updates.status = 'cancelled';
+          updates.pointsTowards50 = 0;
+        }
+        refBatch.update(doc.ref, updates);
+        tombstoneCount++;
+      }
+      if (tombstoneCount > 0) {
+        await refBatch.commit();
+        console.log(`✅ Tombstoned ${referrerSnap.size} referrals (deleted user was referrer)`);
       }
 
       // Delete notifications

@@ -226,9 +226,13 @@ struct WelcomePopupView: View {
     
     private func dismissPopup() {
         // Add welcome points when popup is dismissed
-        userVM.addWelcomePoints { success in
+        userVM.addWelcomePoints { success, blockedReason in
             if success {
-                print("✅ Welcome points added successfully")
+                if blockedReason == "phone_previously_claimed" {
+                    print("ℹ️ Welcome points blocked - phone previously claimed")
+                } else {
+                    print("✅ Welcome points added successfully")
+                }
                 // Trigger points animation callback
                 DispatchQueue.main.async {
                     self.onPointsAdded?()

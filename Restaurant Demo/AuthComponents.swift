@@ -6,7 +6,129 @@
 //
 
 import SwiftUI
+import UIKit
 
+// MARK: - OTP TextField (UIKit-based for reliable iOS autofill)
+/// A UIKit-based text field specifically designed for OTP/SMS code entry.
+/// Uses UITextField instead of SwiftUI TextField to ensure iOS autofill works correctly.
+/// The key difference is using target-action (.editingChanged) instead of onChange,
+/// which fires AFTER autofill completes rather than interrupting the autofill process.
+struct OTPTextField: UIViewRepresentable {
+    @Binding var text: String
+    var onComplete: ((String) -> Void)?
+    var shouldBecomeFirstResponder: Bool = false
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    func makeUIView(context: Context) -> UITextField {
+        let textField = UITextField()
+        
+        // Critical: Set oneTimeCode content type for iOS autofill
+        textField.textContentType = .oneTimeCode
+        textField.keyboardType = .numberPad
+        
+        // Styling to match the app's design
+        textField.font = UIFont.monospacedDigitSystemFont(ofSize: 32, weight: .bold)
+        textField.textAlignment = .center
+        // Convert SwiftUI Color to UIColor using RGB values from Theme
+        // Theme.modernPrimary = Color(red: 0.15, green: 0.15, blue: 0.25)
+        textField.textColor = UIColor(red: 0.15, green: 0.15, blue: 0.25, alpha: 1.0)
+        // Theme.primaryGold = Color(red: 0.85, green: 0.65, blue: 0.25)
+        textField.tintColor = UIColor(red: 0.85, green: 0.65, blue: 0.25, alpha: 1.0)
+        
+        // No placeholder - empty field works better with autofill
+        textField.placeholder = ""
+        
+        // Set delegate for shouldChangeCharactersIn (must return true for autofill)
+        textField.delegate = context.coordinator
+        
+        // Use target-action pattern - this fires AFTER autofill completes
+        // Unlike SwiftUI's onChange which fires during autofill and can interrupt it
+        textField.addTarget(
+            context.coordinator,
+            action: #selector(Coordinator.textFieldDidChange(_:)),
+            for: .editingChanged
+        )
+        
+        // Set initial text if any
+        textField.text = text
+        
+        return textField
+    }
+    
+    func updateUIView(_ uiView: UITextField, context: Context) {
+        // Only update text if it differs (avoid cursor jump issues)
+        if uiView.text != text {
+            uiView.text = text
+        }
+        
+        // CRITICAL: Only become first responder once, and only when:
+        // 1. We're requested to focus
+        // 2. The view is attached to a window (fully laid out)
+        // 3. We haven't already focused once (prevents re-triggering during SwiftUI re-renders)
+        // This prevents interrupting iOS autofill insertion
+        if shouldBecomeFirstResponder 
+            && !uiView.isFirstResponder 
+            && uiView.window != nil 
+            && !context.coordinator.hasFocusedOnce {
+            context.coordinator.hasFocusedOnce = true
+            DispatchQueue.main.async {
+                uiView.becomeFirstResponder()
+            }
+        }
+    }
+    
+    class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: OTPTextField
+        var hasFocusedOnce: Bool = false
+        
+        init(_ parent: OTPTextField) {
+            self.parent = parent
+        }
+        
+        // CRITICAL: Always return true to allow autofill to work
+        // Returning false or modifying text here will break iOS autofill
+        func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
+            return true
+        }
+        
+        // This fires AFTER the text has been changed (including autofill)
+        // Safe to filter and validate here
+        @objc func textFieldDidChange(_ textField: UITextField) {
+            // Filter to only digits and limit to 6 characters
+            let currentText = textField.text ?? ""
+            let digits = currentText.filter { $0.isNumber }
+            let limited = String(digits.prefix(6))
+            
+            // Update the text field if filtering changed anything
+            if currentText != limited {
+                textField.text = limited
+            }
+            
+            // Sync back to SwiftUI binding
+            DispatchQueue.main.async {
+                self.parent.text = limited
+                
+                // Trigger completion callback when we have 6 digits
+                if limited.count == 6 {
+                    // Small delay to ensure UI is updated before verification starts
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        self.parent.onComplete?(limited)
+                    }
+                }
+            }
+        }
+        
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            textField.resignFirstResponder()
+            return true
+        }
+    }
+}
+
+// MARK: - Phone Number Input View
 // A beautiful reusable view for phone number input with gold focus state
 struct PhoneNumberInputView: View {
     let title: String

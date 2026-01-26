@@ -1011,21 +1011,23 @@ class UserViewModel: ObservableObject {
     
     // MARK: - Welcome Points
     
-    func addWelcomePoints(completion: @escaping (Bool) -> Void) {
+    /// Claims welcome points. Completion: (success, blockedReason).
+    /// blockedReason is non-nil when request succeeded but points were withheld (e.g. phone previously claimed).
+    func addWelcomePoints(completion: @escaping (Bool, String?) -> Void) {
         guard let user = Auth.auth().currentUser else {
             print("❌ No authenticated user found")
-            completion(false)
+            completion(false, nil)
             return
         }
         
         user.getIDToken { token, error in
             if let error = error {
                 print("❌ Failed to get ID token for welcome claim: \(error.localizedDescription)")
-                DispatchQueue.main.async { completion(false) }
+                DispatchQueue.main.async { completion(false, nil) }
                 return
             }
             guard let token = token, let url = URL(string: "\(Config.backendURL)/welcome/claim") else {
-                DispatchQueue.main.async { completion(false) }
+                DispatchQueue.main.async { completion(false, nil) }
                 return
             }
             
@@ -1038,26 +1040,26 @@ class UserViewModel: ObservableObject {
             URLSession.shared.dataTask(with: req) { data, resp, err in
                 if let err = err {
                     print("❌ Welcome claim network error: \(err.localizedDescription)")
-                    DispatchQueue.main.async { completion(false) }
+                    DispatchQueue.main.async { completion(false, nil) }
                     return
                 }
                 
                 if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                     let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
                     print("❌ Welcome claim failed (\(http.statusCode)): \(body)")
-                    DispatchQueue.main.async { completion(false) }
+                    DispatchQueue.main.async { completion(false, nil) }
                     return
                 }
                 
-                // Best-effort parse for immediate UI update; snapshot listener will also update.
+                var blockedReason: String? = nil
                 if let data = data,
                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     if let newPoints = json["newPointsBalance"] as? Int { DispatchQueue.main.async { self.points = newPoints } }
                     if let newLifetime = json["newLifetimePoints"] as? Int { DispatchQueue.main.async { self.lifetimePoints = newLifetime } }
                     if let already = json["alreadyClaimed"] as? Bool, already == true {
-                        // Check for abuse prevention reason (phone hash previously claimed welcome points)
                         if let reason = json["reason"] as? String, reason == "phone_previously_claimed" {
                             print("ℹ️ Welcome points blocked - phone number previously claimed on another account")
+                            blockedReason = "phone_previously_claimed"
                         } else {
                             print("ℹ️ Welcome points already claimed on this account")
                         }
@@ -1066,7 +1068,7 @@ class UserViewModel: ObservableObject {
                     }
                 }
                 
-                DispatchQueue.main.async { completion(true) }
+                DispatchQueue.main.async { completion(true, blockedReason) }
             }.resume()
         }
     }

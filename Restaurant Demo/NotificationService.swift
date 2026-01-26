@@ -23,6 +23,7 @@ class NotificationService: NSObject, ObservableObject {
     private let db = Firestore.firestore()
     private var notificationsListener: ListenerRegistration?
     private var hasRefreshedTokenThisSession = false // Prevent repeated token fetches
+    private var isMarkingAllAsRead: Bool = false
     
     private override init() {
         super.init()
@@ -274,8 +275,12 @@ class NotificationService: NSObject, ObservableObject {
                 
                 DispatchQueue.main.async {
                     self?.notifications = allNotifications
-                    self?.unreadNotificationCount = unreadCount
-                    self?.updateAppBadge()
+                    
+                    // Only update count if we're not in the middle of marking all as read
+                    if !(self?.isMarkingAllAsRead ?? false) {
+                        self?.unreadNotificationCount = unreadCount
+                        self?.updateAppBadge()
+                    }
                 }
             }
     }
@@ -287,6 +292,7 @@ class NotificationService: NSObject, ObservableObject {
         DispatchQueue.main.async {
             self.notifications = []
             self.unreadNotificationCount = 0
+            self.isMarkingAllAsRead = false // Clear flag in case operation was in progress
         }
     }
     
@@ -309,24 +315,69 @@ class NotificationService: NSObject, ObservableObject {
     func markAllNotificationsAsRead() {
         guard let uid = Auth.auth().currentUser?.uid else { return }
         
+        // Optimistically update local state immediately to prevent flicker
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            // Set flag to prevent listener from overriding (on main thread for thread safety)
+            self.isMarkingAllAsRead = true
+            
+            // Mark all notifications as read locally by creating new instances
+            self.notifications = self.notifications.map { notification in
+                AppNotification(
+                    id: notification.id,
+                    data: [
+                        "userId": notification.userId,
+                        "title": notification.title,
+                        "body": notification.body,
+                        "createdAt": notification.createdAt,
+                        "read": true,
+                        "type": notification.type.rawValue
+                    ]
+                )
+            }
+            // Set count to 0 immediately
+            self.unreadNotificationCount = 0
+            self.updateAppBadge()
+        }
+        
+        // Then update Firestore (listener will confirm the update)
         db.collection("notifications")
             .whereField("userId", isEqualTo: uid)
             .whereField("read", isEqualTo: false)
             .getDocuments { [weak self] snapshot, error in
-                guard let documents = snapshot?.documents else { return }
+                guard let self = self else { return }
                 
-                let batch = self?.db.batch()
-                for doc in documents {
-                    batch?.updateData(["read": true], forDocument: doc.reference)
+                // Handle errors explicitly
+                if let error = error {
+                    print("❌ NotificationService: Error fetching unread notifications: \(error.localizedDescription)")
+                    DispatchQueue.main.async {
+                        self.isMarkingAllAsRead = false
+                    }
+                    return
                 }
                 
-                batch?.commit { [weak self] error in
-                    if let error = error {
-                        print("❌ NotificationService: Failed to mark all as read: \(error.localizedDescription)")
-                    } else {
-                        print("✅ NotificationService: All notifications marked as read")
-                        DispatchQueue.main.async {
-                            self?.updateAppBadge()
+                guard let documents = snapshot?.documents else {
+                    DispatchQueue.main.async {
+                        self.isMarkingAllAsRead = false
+                    }
+                    return
+                }
+                
+                let batch = self.db.batch()
+                for doc in documents {
+                    batch.updateData(["read": true], forDocument: doc.reference)
+                }
+                
+                batch.commit { [weak self] error in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        self.isMarkingAllAsRead = false
+                        
+                        if let error = error {
+                            print("❌ NotificationService: Failed to mark all as read: \(error.localizedDescription)")
+                        } else {
+                            print("✅ NotificationService: All notifications marked as read")
+                            // Count will be updated by listener on next snapshot
                         }
                     }
                 }

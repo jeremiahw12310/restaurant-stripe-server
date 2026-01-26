@@ -45,6 +45,15 @@ struct ReferralHistoryView: View {
             inboundListener?.remove(); inboundListener = nil
         }
     }
+
+    /// Maps raw Firestore status to display: "Awarded" | "Cancelled" | "Pending".
+    private static func displayStatus(from raw: String) -> String {
+        switch raw {
+        case "awarded": return "Awarded"
+        case "cancelled": return "Cancelled"
+        default: return "Pending"
+        }
+    }
     
     private func startListeners() {
         guard let uid = Auth.auth().currentUser?.uid else { return }
@@ -64,7 +73,7 @@ struct ReferralHistoryView: View {
                 let items: [HistoryItem] = docs.map { d in
                     let data = d.data()
                     let statusRaw = (data["status"] as? String) ?? "pending"
-                    let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
+                    let status = Self.displayStatus(from: statusRaw)
                     let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
                     let rawName = (data["referredFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     let name = rawName.isEmpty ? "Friend" : rawName
@@ -100,7 +109,7 @@ struct ReferralHistoryView: View {
                 let items: [HistoryItem] = docs.map { doc in
                     let data = doc.data()
                     let statusRaw = (data["status"] as? String) ?? "pending"
-                    let status = (statusRaw == "awarded") ? "Awarded" : "Pending"
+                    let status = Self.displayStatus(from: statusRaw)
                     let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
                     let rawName = (data["referrerFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     let name = rawName.isEmpty ? "Friend" : rawName
@@ -157,14 +166,19 @@ fileprivate struct HistoryRow: View {
     
     @ViewBuilder
     private func statusBadge(_ status: String) -> some View {
+        let (bg, fg): (Color, Color) = {
+            switch status {
+            case "Awarded": return (Color.green.opacity(0.2), Color.green)
+            case "Cancelled": return (Color.gray.opacity(0.2), Color.gray)
+            default: return (Color.orange.opacity(0.2), Color.orange)
+            }
+        }()
         Text(status.uppercased())
             .font(.system(size: 10, weight: .black, design: .rounded))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(
-                Capsule().fill(status == "Awarded" ? Color.green.opacity(0.2) : Color.orange.opacity(0.2))
-            )
-            .foregroundColor(status == "Awarded" ? .green : .orange)
+            .background(Capsule().fill(bg))
+            .foregroundColor(fg)
     }
 }
 

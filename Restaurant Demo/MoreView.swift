@@ -5,7 +5,7 @@ struct MoreView: View {
     @EnvironmentObject var userVM: UserViewModel
     @EnvironmentObject var sharedRewardsVM: RewardsViewModel
     @Environment(\.openURL) private var openURL
-    @StateObject private var notificationService = NotificationService.shared
+    @ObservedObject private var notificationService = NotificationService.shared
 
     @State private var showDietaryPreferences: Bool = false
     @State private var showRewards: Bool = false
@@ -23,7 +23,13 @@ struct MoreView: View {
             List {
                 Section {
                     userSummaryCard
-                        .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        .listRowBackground(Color.clear)
+                }
+
+                Section {
+                    notificationsPreviewCard
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                         .listRowBackground(Color.clear)
                 }
 
@@ -31,24 +37,7 @@ struct MoreView: View {
                     NavigationLink {
                         NotificationSettingsView()
                     } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "bell.fill")
-                                .frame(width: 22)
-                            Text("Notifications")
-                            Spacer()
-                            if notificationService.unreadNotificationCount > 0 {
-                                Text("\(notificationService.unreadNotificationCount)")
-                                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(
-                                        Capsule()
-                                            .fill(Theme.primaryGold)
-                                    )
-                            }
-                        }
-                        .contentShape(Rectangle())
+                        settingsRowLabel(title: "Notification Settings", systemImage: "gearshape.fill")
                     }
                     
 
@@ -107,7 +96,14 @@ struct MoreView: View {
                     Text("Danger Zone")
                 }
             }
+            .listSectionSeparator(.hidden)
             .navigationTitle("More")
+            .onAppear {
+                // Clear notification badges when entering More tab
+                if Auth.auth().currentUser != nil {
+                    notificationService.markAllNotificationsAsRead()
+                }
+            }
             .sheet(isPresented: $showDietaryPreferences) {
                 UserPreferencesView(uid: uid)
                     .environmentObject(userVM)
@@ -183,7 +179,7 @@ struct MoreView: View {
                 }
             }
         }
-        .padding(20)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 24)
@@ -325,6 +321,192 @@ struct MoreView: View {
             missingLinkTitle = "Support Email"
             showMissingLinkAlert = true
         }
+    }
+    
+    // MARK: - Notifications Preview Card
+    
+    private var notificationsPreviewCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Header
+            HStack {
+                HStack(spacing: 8) {
+                    Image(systemName: "bell.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Theme.primaryGold)
+                    
+                    Text("Notifications")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(Theme.modernPrimary)
+                }
+                
+                Spacer()
+                
+                if notificationService.unreadNotificationCount > 0 {
+                    Text("\(notificationService.unreadNotificationCount)")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule()
+                                .fill(Theme.primaryGold)
+                        )
+                }
+            }
+            
+            // Notifications List (up to 3)
+            let previewNotifications = Array(notificationService.notifications.prefix(3))
+            
+            if previewNotifications.isEmpty {
+                // Empty State
+                VStack(spacing: 8) {
+                    Text("No notifications yet")
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                        .foregroundColor(Theme.modernSecondary)
+                    
+                    Text("You'll see updates here")
+                        .font(.system(size: 12, weight: .regular, design: .rounded))
+                        .foregroundColor(Theme.modernSecondary.opacity(0.7))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 8)
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(previewNotifications) { notification in
+                        compactNotificationRow(notification: notification)
+                    }
+                }
+            }
+            
+            // View All Button
+            NavigationLink {
+                NotificationsCenterView()
+            } label: {
+                HStack {
+                    Spacer()
+                    Text("View All Notifications")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundColor(Theme.primaryGold)
+                    Spacer()
+                }
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Theme.primaryGold.opacity(0.1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Theme.primaryGold.opacity(0.3), lineWidth: 1)
+                        )
+                )
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Theme.modernCardSecondary.opacity(0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(Theme.primaryGold.opacity(0.2), lineWidth: 1)
+                )
+        )
+        .onAppear {
+            // Ensure listener is active
+            if Auth.auth().currentUser != nil {
+                notificationService.startNotificationsListener()
+            }
+        }
+    }
+    
+    private func compactNotificationRow(notification: AppNotification) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            // Icon
+            ZStack {
+                Circle()
+                    .fill(notificationIconBackgroundColor(for: notification.type))
+                    .frame(width: 32, height: 32)
+                
+                Image(systemName: notificationIcon(for: notification.type))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(notificationIconColor(for: notification.type))
+            }
+            
+            // Content
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .top, spacing: 6) {
+                    Text(notification.title)
+                        .font(.system(size: 14, weight: notification.read ? .medium : .semibold, design: .rounded))
+                        .foregroundColor(Theme.modernPrimary)
+                        .lineLimit(1)
+                    
+                    Spacer()
+                    
+                    if !notification.read {
+                        Circle()
+                            .fill(Theme.primaryGold)
+                            .frame(width: 6, height: 6)
+                    }
+                }
+                
+                HStack {
+                    Text(notification.body)
+                        .font(.system(size: 12, weight: .regular, design: .rounded))
+                        .foregroundColor(Theme.modernSecondary)
+                        .lineLimit(1)
+                    
+                    Spacer()
+                    
+                    Text(relativeTimeString(from: notification.createdAt))
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundColor(Theme.modernSecondary.opacity(0.7))
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+    
+    private func notificationIcon(for type: AppNotification.NotificationType) -> String {
+        switch type {
+        case .referral:
+            return "person.badge.plus.fill"
+        case .adminBroadcast, .adminIndividual:
+            return "megaphone.fill"
+        case .system:
+            return "info.circle.fill"
+        case .rewardGift:
+            return "gift.fill"
+        }
+    }
+    
+    private func notificationIconColor(for type: AppNotification.NotificationType) -> Color {
+        switch type {
+        case .referral:
+            return Theme.primaryGold
+        case .adminBroadcast, .adminIndividual:
+            return Theme.energyBlue
+        case .system:
+            return Theme.modernSecondary
+        case .rewardGift:
+            return Theme.energyOrange
+        }
+    }
+    
+    private func notificationIconBackgroundColor(for type: AppNotification.NotificationType) -> Color {
+        switch type {
+        case .referral:
+            return Theme.primaryGold.opacity(0.15)
+        case .adminBroadcast, .adminIndividual:
+            return Theme.energyBlue.opacity(0.15)
+        case .system:
+            return Theme.modernSecondary.opacity(0.1)
+        case .rewardGift:
+            return Theme.energyOrange.opacity(0.15)
+        }
+    }
+    
+    private func relativeTimeString(from date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
 

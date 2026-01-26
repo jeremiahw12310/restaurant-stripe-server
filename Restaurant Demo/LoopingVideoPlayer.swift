@@ -16,9 +16,9 @@ struct LoopingVideoPlayer: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let view = UIView(frame: .zero)
         
-        // Configure audio session to allow background music and video audio
+        // Use .ambient so iOS doesn't trigger AirPods auto-connect (avoids video stutter on launch)
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default, options: [])
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             print("⚠️ Audio session configuration failed: \(error)")

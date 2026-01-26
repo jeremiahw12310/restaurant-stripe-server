@@ -98,6 +98,7 @@ struct HomeView: View {
     @State private var welcomeContentVisible = false
     @State private var welcomePointsVisible = false
     @State private var welcomeMessageVisible = false
+    @State private var showWelcomeBlockedAlert = false
     
     // Points earned animation states
     
@@ -493,6 +494,11 @@ struct HomeView: View {
                 Button("Nice!") { showReferralAwardAlert = false }
             } message: {
                 Text("You just received +50 referral bonus points.")
+            }
+            .alert("Welcome Points", isPresented: $showWelcomeBlockedAlert) {
+                Button("OK") { showWelcomeBlockedAlert = false }
+            } message: {
+                Text("Welcome points were already claimed for this phone number.")
             }
         
         let running = referralHandling
@@ -1317,9 +1323,13 @@ struct HomeView: View {
     /// Dismisses the welcome and starts the main HomeView animations
     private func dismissIntegratedWelcome() {
         // Add welcome points
-        userVM.addWelcomePoints { success in
+        userVM.addWelcomePoints { success, blockedReason in
             if success {
-                print("✅ Welcome points added successfully")
+                if blockedReason == "phone_previously_claimed" {
+                    showWelcomeBlockedAlert = true
+                } else {
+                    print("✅ Welcome points added successfully")
+                }
             } else {
                 print("❌ Failed to add welcome points")
             }

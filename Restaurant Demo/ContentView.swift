@@ -17,7 +17,7 @@ struct ContentView: View {
     @StateObject private var smartLayout = SmartLayoutManager()
     @StateObject private var userVM = UserViewModel()
     @StateObject private var sharedRewardsVM = RewardsViewModel()
-    @StateObject private var notificationService = NotificationService.shared
+    @ObservedObject private var notificationService = NotificationService.shared
     
     // Performance signposts (visible in Instruments → Points of Interest)
     private let perfLog = OSLog(subsystem: Bundle.main.bundleIdentifier ?? "RestaurantDemo", category: "Perf")
