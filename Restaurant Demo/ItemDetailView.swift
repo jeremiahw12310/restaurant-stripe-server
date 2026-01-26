@@ -169,6 +169,9 @@ struct ItemDetailView: View {
         }
         .transition(.opacity)
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: true)
+        .onAppear {
+            menuVM.ensureAllergyTagsLoaded()
+        }
         .sheet(isPresented: $showToppingsModal) {
             ToppingsSelectionModal(
                 availableToppings: availableToppings,

@@ -288,3 +288,7 @@ struct RedemptionSuccessData: Codable {
         selectedItemName ?? rewardTitle
     }
 } 
+
+extension RedemptionSuccessData: Identifiable {
+    var id: String { redemptionCode }
+}

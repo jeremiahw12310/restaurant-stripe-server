@@ -1219,11 +1219,6 @@ struct HomeView: View {
             userVM.loadUserData()
         }
         
-        // Start listener for active rewards
-        if let uid = Auth.auth().currentUser?.uid {
-            sharedRewardsVM.startActiveRedemptionListener(userId: uid)
-        }
-
         // Staff listener for any pending reward redemption (drives the priority scanner card)
         adminPendingRewardsVM.setListeningEnabled(userVM.isAdmin || userVM.isEmployee)
         

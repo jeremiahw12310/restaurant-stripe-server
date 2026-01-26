@@ -167,8 +167,7 @@ struct RewardDetailView: View {
     @State private var comboDumplingItem: RewardEligibleItem? // NEW: Dumpling item for Full Combo
     @State private var comboDrinkItem: RewardEligibleItem? // NEW: Drink item for Full Combo
     @State private var comboCookingMethod: String? // NEW: Cooking method for Full Combo
-    @State private var showSuccessScreen = false
-    @State private var redemptionSuccessData: RedemptionSuccessData?
+    @State private var isRedeeming = false
     @State private var appearAnimation = false
     @State private var pulseAnimation = false
     @State private var showFullDescription = false
@@ -900,18 +899,6 @@ struct RewardDetailView: View {
                 )
             }
         }
-        .sheet(isPresented: $showSuccessScreen) {
-            if let successData = redemptionSuccessData {
-                RewardCardScreen(
-                    userName: userVM.firstName.isEmpty ? "Your" : userVM.firstName,
-                    successData: successData,
-                    onDismiss: {
-                        showSuccessScreen = false
-                        dismiss()
-                    }
-                )
-            }
-        }
         .onChange(of: redemptionService.errorMessage) { _, errorMessage in
             if let error = errorMessage {
                 print("❌ Redemption error: \(error)")
@@ -931,6 +918,18 @@ struct RewardDetailView: View {
         guard let userId = Auth.auth().currentUser?.uid else {
             print("❌ No user ID available for redemption")
             return
+        }
+
+        let alreadyRedeeming = await MainActor.run { isRedeeming }
+        guard !alreadyRedeeming else {
+            print("⚠️ Redeem already in progress; ignoring duplicate request")
+            return
+        }
+        await MainActor.run { isRedeeming = true }
+        defer {
+            Task { @MainActor in
+                isRedeeming = false
+            }
         }
         
         let result = await redemptionService.redeemReward(
@@ -1026,7 +1025,7 @@ struct RewardDetailView: View {
                 }
                 
                 // Create success data with display name
-                redemptionSuccessData = RedemptionSuccessData(
+                let successData = RedemptionSuccessData(
                     redemptionCode: response.redemptionCode,
                     rewardTitle: response.rewardTitle,
                     rewardDescription: reward.description,
@@ -1038,21 +1037,15 @@ struct RewardDetailView: View {
                     selectedItemName: displayName
                 )
 
-                // Add to active redemptions for countdown card(s); Firestore listener will sync when it sees the new doc
+                // Upsert into active redemptions by redemptionCode; Firestore listener will reconcile when it sees the new doc
                 let displayTitle = displayName != response.rewardTitle ? displayName : (response.selectedItemName ?? response.rewardTitle)
-                let newActive = ActiveRedemption(
-                    rewardId: "", // Will be set by Firestore listener
-                    rewardTitle: displayTitle,
-                    redemptionCode: response.redemptionCode,
-                    expiresAt: response.expiresAt
-                )
-                rewardsVM.activeRedemptions.append(newActive)
-                rewardsVM.successDataByCode[response.redemptionCode] = redemptionSuccessData
-                rewardsVM.lastSuccessData = redemptionSuccessData
+                rewardsVM.recordRedemptionSuccess(successData, displayTitle: displayTitle, rewardId: nil)
                 
-                // Present success sheet after a short delay
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                    showSuccessScreen = true
+                // Dismiss the detail sheet and present the QR screen from the Rewards root.
+                // Presenting from the root avoids nested-sheet timing bugs.
+                dismiss()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    rewardsVM.pendingQRSuccess = successData
                 }
                 
                 print("✅ Reward redeemed successfully!")
@@ -1292,9 +1285,6 @@ struct DiagonalRewardCard: View {
                 ),
                 currentPoints: currentPoints
             )
-            .environmentObject(UserViewModel())
-            .environmentObject(RewardsViewModel())
-            .environmentObject(MenuViewModel())
         }
     }
 }

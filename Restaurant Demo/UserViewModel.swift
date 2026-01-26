@@ -201,13 +201,9 @@ class UserViewModel: ObservableObject {
                 NotificationService.shared.refreshAndStoreFCMToken()
                 NotificationService.shared.startNotificationsListener()
                 
-                // Request notification permission if not yet granted (will show prompt on first login)
-                NotificationService.shared.checkNotificationPermission { granted in
-                    if !granted {
-                        // Request permission on first login
-                        NotificationService.shared.requestNotificationPermission()
-                    }
-                }
+                // Do NOT automatically trigger the iOS notification permission prompt on login.
+                // We only refresh the current permission state here; the UI will decide when to request permission.
+                NotificationService.shared.checkNotificationPermission { _ in }
 
                 // Trigger award-check when crossing 50 (admin adjustments or any source)
                 self.maybeTriggerReferralAwardCheckOnPointsChange(oldPoints: oldPoints, newPoints: self.points)

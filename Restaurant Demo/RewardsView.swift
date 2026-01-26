@@ -193,9 +193,6 @@ struct RewardsView: View {
         .onAppear {
             // Ensure user points and active redemption listener are in sync when Rewards tab opens
             rewardsVM.loadUserPoints(from: userVM)
-            if let uid = Auth.auth().currentUser?.uid {
-                rewardsVM.startActiveRedemptionListener(userId: uid)
-            }
         }
         .onChange(of: userVM.points) { _, newPoints in
             rewardsVM.updatePoints(newPoints)

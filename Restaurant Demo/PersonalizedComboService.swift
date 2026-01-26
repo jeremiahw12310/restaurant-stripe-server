@@ -1,11 +1,44 @@
 import Foundation
 import Combine
+import FirebaseAuth
 
 class PersonalizedComboService: ObservableObject {
     @Published var isLoading = false
     @Published var error: String?
     
     private let backendURL = Config.backendURL
+
+    private enum ComboAuthError: LocalizedError {
+        case notSignedIn
+
+        var errorDescription: String? {
+            switch self {
+            case .notSignedIn:
+                return "Please sign in to generate a personalized combo."
+            }
+        }
+    }
+
+    private func idTokenPublisher() -> AnyPublisher<String, Error> {
+        Future<String, Error> { promise in
+            guard let user = Auth.auth().currentUser else {
+                promise(.failure(ComboAuthError.notSignedIn))
+                return
+            }
+            user.getIDToken { token, error in
+                if let error = error {
+                    promise(.failure(error))
+                    return
+                }
+                guard let token else {
+                    promise(.failure(ComboAuthError.notSignedIn))
+                    return
+                }
+                promise(.success(token))
+            }
+        }
+        .eraseToAnyPublisher()
+    }
     
     func generatePersonalizedCombo(
         userName: String,
@@ -41,8 +74,15 @@ class PersonalizedComboService: ObservableObject {
                 .eraseToAnyPublisher()
         }
         
-        return URLSession.shared.dataTaskPublisher(for: urlRequest)
-            .map(\.data)
+        return idTokenPublisher()
+            .flatMap { token -> AnyPublisher<Data, Error> in
+                var authed = urlRequest
+                authed.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                return URLSession.shared.dataTaskPublisher(for: authed)
+                    .map(\.data)
+                    .mapError { $0 as Error }
+                    .eraseToAnyPublisher()
+            }
             .handleEvents(receiveOutput: { data in
                 print("📥 Received response data: \(String(data: data, encoding: .utf8) ?? "Unable to decode")")
             })

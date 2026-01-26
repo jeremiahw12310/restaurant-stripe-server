@@ -1862,8 +1862,10 @@ struct ImageUploadSheet: View {
         let storageRef = storage.reference()
         let imageName = "\(item.id)_\(Date().timeIntervalSince1970).jpg"
         let imageRef = storageRef.child("menu_images/\(imageName)")
+        let metadata = StorageMetadata()
+        metadata.contentType = "image/jpeg"
         
-        imageRef.putData(imageData, metadata: nil) { metadata, error in
+        imageRef.putData(imageData, metadata: metadata) { metadata, error in
             if let error = error {
                 DispatchQueue.main.async {
                     alertMessage = "Upload failed: \(error.localizedDescription)"

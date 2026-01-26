@@ -3,49 +3,75 @@ rules_version = '2';
 // Craft rules based on data in your Firestore database
 service firebase.storage {
   match /b/{bucket}/o {
-    // Allow public read access to menu images (PNG, JPG, JPEG files) in any directory
-    match /{allPaths=**} {
-      allow read: if resource.name.matches('.*\\.png$') || 
-                     resource.name.matches('.*\\.jpg$') || 
-                     resource.name.matches('.*\\.jpeg$') ||
-                     resource.name.matches('.*\\.gif$') ||
-                     resource.name.matches('.*\\.webp$') ||
-                     resource.name.matches('.*\\.mp4$') ||
-                     resource.name.matches('.*\\.mov$') ||
-                     resource.name.matches('.*\\.avi$');
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+
+    function isImage() {
+      return request.resource.contentType.matches('image/.*');
+    }
+
+    function isVideo() {
+      return request.resource.contentType.matches('video/.*');
+    }
+
+    // Legacy root images that are hardcoded in the app.
+    // Keep these public to avoid breaking older clients/UI.
+    match /{fileName} {
+      allow read: if fileName.matches('^(Subject\\.png|wontonsoup-2\\.png|eda\\.png|coke\\.png|peanut\\.png)$');
     }
     
     // Allow authenticated users to upload community posts (images and videos)
     match /community_posts/{fileName} {
       allow read: if true; // Public read access to community posts
-      allow write: if request.auth != null; // Only authenticated users can upload
+      // Only allow uploads (create). Prevent edits/deletes since we don't have an owner-scoped path here.
+      allow create: if isSignedIn()
+        && request.resource.size < 25 * 1024 * 1024
+        && (isImage() || isVideo());
+      allow update, delete: if isAdmin();
     }
     
     // Allow only the owner to manage their own profile photo (must be named <UID>.jpg)
     match /profile_photos/{userIdFile} {
-      allow read, write, delete: if request.auth != null && userIdFile.matches('^' + request.auth.uid + '\\.jpg$');
+      allow read: if isSignedIn() && userIdFile.matches('^' + request.auth.uid + '\\.jpg$');
+      allow create, update: if isSignedIn()
+        && userIdFile.matches('^' + request.auth.uid + '\\.jpg$')
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType == 'image/jpeg';
+      allow delete: if isSignedIn()
+        && userIdFile.matches('^' + request.auth.uid + '\\.jpg$');
     }
     
     // Allow admin users to manage promo slides (images for the carousel)
     match /promo_slides/{fileName} {
       allow read: if true; // Public read access to promo slides
-      allow write, delete: if request.auth != null && 
-                              firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+      allow create, update: if isAdmin()
+        && request.resource.size < 10 * 1024 * 1024
+        && isImage();
+      allow delete: if isAdmin();
     }
     
     // Allow admin users to manage category icons (PNG files shown for categories)
     match /category_icons/{fileName} {
       allow read: if true; // Public read access to category icons
-      allow write, delete: if request.auth != null && 
-                              firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+      allow create, update: if isAdmin()
+        && request.resource.size < 5 * 1024 * 1024
+        && isImage();
+      allow delete: if isAdmin();
     }
     
     // Allow admin users to manage menu item images
     match /menu_images/{fileName} {
       allow read: if true; // Public read access to item images
-      allow write, delete: if request.auth != null && 
-                              firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin == true &&
-                              (fileName.matches('.*\\.png$') || fileName.matches('.*\\.jpg$') || fileName.matches('.*\\.jpeg$') || fileName.matches('.*\\.webp$'));
+      allow create, update: if isAdmin()
+        && request.resource.size < 10 * 1024 * 1024
+        && isImage();
+      allow delete: if isAdmin();
     }
     
     // Default rule - deny all other access

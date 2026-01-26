@@ -50,6 +50,30 @@ const upload = multer({ dest: 'uploads/' });
 app.use(cors());
 app.use(express.json());
 
+// =============================================================================
+// Auth helpers (cost protection / parity with deployed backend)
+// =============================================================================
+
+function getBearerToken(req) {
+  const authHeader = req.headers.authorization || '';
+  if (!authHeader.startsWith('Bearer ')) return null;
+  return authHeader.substring('Bearer '.length).trim() || null;
+}
+
+async function requireFirebaseAuth(req, res, next) {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ errorCode: 'UNAUTHENTICATED', error: 'Missing or invalid Authorization header' });
+    }
+    const decoded = await admin.auth().verifyIdToken(token);
+    req.auth = { uid: decoded.uid, decoded };
+    return next();
+  } catch (e) {
+    return res.status(401).json({ errorCode: 'UNAUTHENTICATED', error: 'Invalid auth token' });
+  }
+}
+
 // 🛡️ DIETARY RESTRICTION SAFETY VALIDATION SYSTEM
 // This function validates AI-generated combos against user dietary restrictions
 // and removes any items that violate those restrictions (Plan B safety net)
@@ -403,7 +427,7 @@ app.get('/', (req, res) => {
 });
 
 // Generate personalized combo endpoint
-app.post('/generate-combo', async (req, res) => {
+app.post('/generate-combo', requireFirebaseAuth, async (req, res) => {
   try {
     console.log('🤖 Received personalized combo request');
     console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
@@ -2042,7 +2066,7 @@ If a field is missing, use null.`;
   });
 
   // Chat endpoint for restaurant assistant
-  app.post('/chat', async (req, res) => {
+  app.post('/chat', requireFirebaseAuth, async (req, res) => {
     try {
       console.log('💬 Received chat request');
       
@@ -2651,7 +2675,7 @@ LOYALTY/REWARDS CONTEXT:
   });
 
   // Dumpling Hero Post Generation endpoint
-  app.post('/generate-dumpling-hero-post', async (req, res) => {
+  app.post('/generate-dumpling-hero-post', requireFirebaseAuth, async (req, res) => {
     try {
       console.log('🤖 Received Dumpling Hero post generation request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
@@ -2819,7 +2843,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
   });
 
   // Dumpling Hero Comment Generation endpoint
-  app.post('/generate-dumpling-hero-comment', async (req, res) => {
+  app.post('/generate-dumpling-hero-comment', requireFirebaseAuth, async (req, res) => {
     try {
       console.log('🤖 Received Dumpling Hero comment generation request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
@@ -3063,7 +3087,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
   });
 
   // Dumpling Hero Comment Preview endpoint (for preview before posting)
-  app.post('/preview-dumpling-hero-comment', async (req, res) => {
+  app.post('/preview-dumpling-hero-comment', requireFirebaseAuth, async (req, res) => {
     try {
       console.log('🤖 Received Dumpling Hero comment preview request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
@@ -3292,7 +3316,7 @@ IMPORTANT:
   });
 
   // Simple Dumpling Hero Comment Generation endpoint (for external use)
-  app.post('/generate-dumpling-hero-comment-simple', async (req, res) => {
+  app.post('/generate-dumpling-hero-comment-simple', requireFirebaseAuth, async (req, res) => {
     try {
       console.log('🤖 Received simple Dumpling Hero comment generation request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));

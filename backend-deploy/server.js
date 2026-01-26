@@ -59,6 +59,115 @@ app.use(express.json());
 // Serve static files from public folder (privacy policy, terms, etc.)
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
+// =============================================================================
+// Auth + rate limiting helpers (cost protection)
+// =============================================================================
+
+function getClientIp(req) {
+  const xf = req.headers['x-forwarded-for'];
+  if (typeof xf === 'string' && xf.trim()) return xf.split(',')[0].trim();
+  return req.ip || null;
+}
+
+function getBearerToken(req) {
+  const authHeader = req.headers.authorization || '';
+  if (!authHeader.startsWith('Bearer ')) return null;
+  return authHeader.substring('Bearer '.length).trim() || null;
+}
+
+async function requireFirebaseAuth(req, res, next) {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ errorCode: 'UNAUTHENTICATED', error: 'Missing or invalid Authorization header' });
+    }
+    const decoded = await admin.auth().verifyIdToken(token);
+    req.auth = { uid: decoded.uid, decoded };
+    return next();
+  } catch (e) {
+    console.warn('❌ Auth failed:', e?.message || e);
+    return res.status(401).json({ errorCode: 'UNAUTHENTICATED', error: 'Invalid auth token' });
+  }
+}
+
+async function requireAdminAuth(req, res, next) {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ errorCode: 'UNAUTHENTICATED', error: 'Missing or invalid Authorization header' });
+    }
+    const decoded = await admin.auth().verifyIdToken(token);
+    const uid = decoded.uid;
+    const db = admin.firestore();
+    const userDoc = await db.collection('users').doc(uid).get();
+    const isAdmin = userDoc.exists && userDoc.data()?.isAdmin === true;
+    if (!isAdmin) {
+      return res.status(403).json({ errorCode: 'FORBIDDEN', error: 'Admin privileges required' });
+    }
+    req.auth = { uid, decoded, isAdmin: true };
+    return next();
+  } catch (e) {
+    console.warn('❌ Admin auth failed:', e?.message || e);
+    return res.status(401).json({ errorCode: 'UNAUTHENTICATED', error: 'Invalid auth token' });
+  }
+}
+
+function createInMemoryRateLimiter({ keyFn, windowMs, max, errorCode }) {
+  const buckets = new Map(); // key -> { count, resetAt }
+  const m = typeof max === 'number' && max > 0 ? max : parseInt(String(max || ''), 10);
+  const w = typeof windowMs === 'number' && windowMs > 0 ? windowMs : 60_000;
+
+  return function rateLimitMiddleware(req, res, next) {
+    if (!m || m <= 0) return next();
+    const key = keyFn(req);
+    if (!key) return next();
+    const now = Date.now();
+
+    const existing = buckets.get(key);
+    if (!existing || existing.resetAt <= now) {
+      buckets.set(key, { count: 1, resetAt: now + w });
+      return next();
+    }
+
+    existing.count += 1;
+    if (existing.count > m) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((existing.resetAt - now) / 1000));
+      res.set('Retry-After', String(retryAfterSeconds));
+      return res.status(429).json({
+        errorCode: errorCode || 'RATE_LIMITED',
+        error: 'Too many requests. Please slow down.',
+        retryAfterSeconds
+      });
+    }
+
+    return next();
+  };
+}
+
+async function enforceDailyQuota({ db, uid, endpointKey, limit }) {
+  const lim = typeof limit === 'number' ? limit : parseInt(String(limit || ''), 10);
+  if (!lim || lim <= 0) return { allowed: true };
+
+  const dayKey = DateTime.utc().toFormat('yyyy-LL-dd');
+  const ref = db.collection('apiDailyCounters').doc(`${endpointKey}_${uid}_${dayKey}`);
+
+  let allowed = true;
+  let count = 0;
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    count = snap.exists ? (snap.data()?.count || 0) : 0;
+    if (count >= lim) {
+      allowed = false;
+      return;
+    }
+    tx.set(ref, { count: count + 1, endpoint: endpointKey, dayKey, uid }, { merge: true });
+    count = count + 1;
+  });
+
+  return { allowed, count, limit: lim, dayKey };
+}
+
 // 🛡️ DIETARY RESTRICTION SAFETY VALIDATION SYSTEM
 // This function validates AI-generated combos against user dietary restrictions
 // and removes any items that violate those restrictions (Plan B safety net)
@@ -1065,11 +1174,43 @@ app.get('/', (req, res) => {
 });
 
 // Generate personalized combo endpoint
-app.post('/generate-combo', async (req, res) => {
+const comboPerUserLimiter = createInMemoryRateLimiter({
+  keyFn: (req) => req.auth?.uid,
+  windowMs: 60_000,
+  max: parseInt(process.env.COMBO_UID_PER_MIN || '6', 10),
+  errorCode: 'COMBO_RATE_LIMITED'
+});
+const comboPerIpLimiter = createInMemoryRateLimiter({
+  keyFn: (req) => getClientIp(req),
+  windowMs: 60_000,
+  max: parseInt(process.env.COMBO_IP_PER_MIN || '20', 10),
+  errorCode: 'COMBO_RATE_LIMITED'
+});
+
+app.post('/generate-combo', requireFirebaseAuth, comboPerUserLimiter, comboPerIpLimiter, async (req, res) => {
   try {
     console.log('🤖 Received personalized combo request');
     console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
     
+    // Enforce a daily quota to prevent runaway OpenAI spend.
+    if (admin.apps.length) {
+      const db = admin.firestore();
+      const quota = await enforceDailyQuota({
+        db,
+        uid: req.auth.uid,
+        endpointKey: 'generate-combo',
+        limit: process.env.COMBO_DAILY_LIMIT || 20
+      });
+      if (!quota.allowed) {
+        return res.status(429).json({
+          errorCode: 'DAILY_LIMIT_REACHED',
+          error: 'Daily limit reached. Please try again tomorrow.',
+          dayKey: quota.dayKey,
+          limit: quota.limit
+        });
+      }
+    }
+
     const { userName, dietaryPreferences, menuItems, previousRecommendations } = req.body;
     
     // userName is required; dietaryPreferences are optional (we'll normalize below)
@@ -1863,7 +2004,7 @@ if (!process.env.OPENAI_API_KEY) {
     await applyReceiptScanLockout(userId, db);
   }
 
-  app.post('/analyze-receipt', upload.single('image'), async (req, res) => {
+  app.post('/analyze-receipt', requireFirebaseAuth, upload.single('image'), async (req, res) => {
     try {
       console.log('📥 Received receipt analysis request');
       
@@ -2336,7 +2477,7 @@ If a field is missing, use null.`;
         let duplicateFound = false;
         
         for (const query of duplicateQueries) {
-          const snapshot = await query.get();
+          const snapshot = await query.limit(1).get();
           if (!snapshot.empty) {
             console.log('❌ DUPLICATE RECEIPT DETECTED');
             console.log('   Matching criteria found in existing receipt');
@@ -2879,15 +3020,15 @@ If a field is missing, use null.`;
           if (!isNaN(orderNumberNumForDup)) orderNumberVariants.push(orderNumberNumForDup);
 
           const duplicateQueries = [
-            receiptsRef.where('orderDate', '==', data.orderDate).where('orderTime', '==', data.orderTime),
-            receiptsRef.where('orderDate', '==', data.orderDate).where('orderTime', '==', data.orderTime).where('orderTotal', '==', orderTotal)
+            receiptsRef.where('orderDate', '==', data.orderDate).where('orderTime', '==', data.orderTime).limit(1),
+            receiptsRef.where('orderDate', '==', data.orderDate).where('orderTime', '==', data.orderTime).where('orderTotal', '==', orderTotal).limit(1)
           ];
           for (const variant of orderNumberVariants) {
             duplicateQueries.push(
-              receiptsRef.where('orderNumber', '==', variant).where('orderDate', '==', data.orderDate)
+              receiptsRef.where('orderNumber', '==', variant).where('orderDate', '==', data.orderDate).limit(1)
             );
             duplicateQueries.push(
-              receiptsRef.where('orderNumber', '==', variant).where('orderTime', '==', data.orderTime)
+              receiptsRef.where('orderNumber', '==', variant).where('orderTime', '==', data.orderTime).limit(1)
             );
           }
           for (const q of duplicateQueries) {
@@ -3236,8 +3377,21 @@ If a field is missing, use null.`;
     }
   });
 
-  // Chat endpoint for restaurant assistant
-  app.post('/chat', async (req, res) => {
+  // Chat endpoint for restaurant assistant (AUTH REQUIRED + rate limits)
+  const chatPerUserLimiter = createInMemoryRateLimiter({
+    keyFn: (req) => req.auth?.uid,
+    windowMs: 60_000,
+    max: parseInt(process.env.CHAT_UID_PER_MIN || '12', 10),
+    errorCode: 'CHAT_RATE_LIMITED'
+  });
+  const chatPerIpLimiter = createInMemoryRateLimiter({
+    keyFn: (req) => getClientIp(req),
+    windowMs: 60_000,
+    max: parseInt(process.env.CHAT_IP_PER_MIN || '30', 10),
+    errorCode: 'CHAT_RATE_LIMITED'
+  });
+
+  app.post('/chat', requireFirebaseAuth, chatPerUserLimiter, chatPerIpLimiter, async (req, res) => {
     try {
       console.log('💬 Received chat request');
       
@@ -3246,14 +3400,29 @@ If a field is missing, use null.`;
       if (!message) {
         return res.status(400).json({ error: 'Message is required' });
       }
-      
-      console.log('📝 User message:', message);
+
+      // Daily quota (cross-restart protection against runaway spend)
+      const db = admin.firestore();
+      const chatQuota = await enforceDailyQuota({
+        db,
+        uid: req.auth.uid,
+        endpointKey: 'chat',
+        limit: process.env.CHAT_DAILY_LIMIT || 60
+      });
+      if (!chatQuota.allowed) {
+        return sendError(res, 429, 'DAILY_LIMIT_REACHED', 'Daily chat limit reached. Please try again tomorrow.', {
+          day: chatQuota.dayKey,
+          limit: chatQuota.limit
+        });
+      }
+
+      console.log('📝 User message (truncated):', String(message).substring(0, 200));
       console.log('👤 User first name:', userFirstName || 'Not provided');
       console.log('⚙️ User preferences:', userPreferences || 'Not provided');
       console.log('🏅 User points:', typeof userPoints === 'number' ? userPoints : 'Not provided');
       
       // Debug mode: Return full prompt information when user sends "9327"
-      if (message === "9327") {
+      if (process.env.ENABLE_CHAT_DEBUG === 'true' && message === "9327") {
         console.log('🔍 Debug mode activated - returning full prompt information');
         
         // Build user preferences context for the debug output
@@ -3755,7 +3924,7 @@ LOYALTY/REWARDS CONTEXT:
       
       // Add conversation history if provided
       if (conversation_history && Array.isArray(conversation_history)) {
-        messages.push(...conversation_history.slice(-10)); // Keep last 10 messages for context
+        messages.push(...conversation_history.slice(-6)); // Keep last N messages for context
       }
       
       // Add current user message
@@ -3767,7 +3936,7 @@ LOYALTY/REWARDS CONTEXT:
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: messages,
-        max_tokens: 1200,
+        max_tokens: parseInt(process.env.CHAT_MAX_TOKENS || '500', 10),
         temperature: 0.7
       });
 
@@ -3784,7 +3953,7 @@ LOYALTY/REWARDS CONTEXT:
   });
 
   // Fetch complete menu from Firestore endpoint
-  app.get('/firestore-menu', async (req, res) => {
+  app.get('/firestore-menu', requireAdminAuth, async (req, res) => {
     try {
       console.log('🔍 Fetching complete menu from Firestore...');
       
@@ -3847,13 +4016,43 @@ LOYALTY/REWARDS CONTEXT:
     }
   });
 
+  // Shared rate limits for Dumpling Hero OpenAI endpoints
+  const heroPerUserLimiter = createInMemoryRateLimiter({
+    keyFn: (req) => req.auth?.uid,
+    windowMs: 60_000,
+    max: parseInt(process.env.HERO_UID_PER_MIN || '8', 10),
+    errorCode: 'HERO_RATE_LIMITED'
+  });
+  const heroPerIpLimiter = createInMemoryRateLimiter({
+    keyFn: (req) => getClientIp(req),
+    windowMs: 60_000,
+    max: parseInt(process.env.HERO_IP_PER_MIN || '20', 10),
+    errorCode: 'HERO_RATE_LIMITED'
+  });
+
   // Dumpling Hero Post Generation endpoint
-  app.post('/generate-dumpling-hero-post', async (req, res) => {
+  app.post('/generate-dumpling-hero-post', requireFirebaseAuth, heroPerUserLimiter, heroPerIpLimiter, async (req, res) => {
     try {
       console.log('🤖 Received Dumpling Hero post generation request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
       
       const { prompt, menuItems } = req.body;
+
+      const db = admin.firestore();
+      const quota = await enforceDailyQuota({
+        db,
+        uid: req.auth.uid,
+        endpointKey: 'generate-dumpling-hero-post',
+        limit: process.env.HERO_DAILY_LIMIT || 30
+      });
+      if (!quota.allowed) {
+        return res.status(429).json({
+          errorCode: 'DAILY_LIMIT_REACHED',
+          error: 'Daily limit reached. Please try again tomorrow.',
+          dayKey: quota.dayKey,
+          limit: quota.limit
+        });
+      }
       
       if (!process.env.OPENAI_API_KEY) {
         return res.status(500).json({ 
@@ -4016,12 +4215,28 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
   });
 
   // Dumpling Hero Comment Generation endpoint
-  app.post('/generate-dumpling-hero-comment', async (req, res) => {
+  app.post('/generate-dumpling-hero-comment', requireFirebaseAuth, heroPerUserLimiter, heroPerIpLimiter, async (req, res) => {
     try {
       console.log('🤖 Received Dumpling Hero comment generation request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
       
       const { prompt, replyingTo, postContext } = req.body;
+
+      const db = admin.firestore();
+      const quota = await enforceDailyQuota({
+        db,
+        uid: req.auth.uid,
+        endpointKey: 'generate-dumpling-hero-comment',
+        limit: process.env.HERO_DAILY_LIMIT || 30
+      });
+      if (!quota.allowed) {
+        return res.status(429).json({
+          errorCode: 'DAILY_LIMIT_REACHED',
+          error: 'Daily limit reached. Please try again tomorrow.',
+          dayKey: quota.dayKey,
+          limit: quota.limit
+        });
+      }
       
       // Debug logging for post context
       console.log('🔍 Post Context Analysis:');
@@ -4260,12 +4475,42 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
   });
 
   // Dumpling Hero Comment Preview endpoint (for preview before posting)
-  app.post('/preview-dumpling-hero-comment', async (req, res) => {
+  const heroPreviewPerUserLimiter = createInMemoryRateLimiter({
+    keyFn: (req) => req.auth?.uid,
+    windowMs: 60_000,
+    max: parseInt(process.env.HERO_PREVIEW_UID_PER_MIN || '10', 10),
+    errorCode: 'HERO_RATE_LIMITED'
+  });
+  const heroPreviewPerIpLimiter = createInMemoryRateLimiter({
+    keyFn: (req) => getClientIp(req),
+    windowMs: 60_000,
+    max: parseInt(process.env.HERO_PREVIEW_IP_PER_MIN || '25', 10),
+    errorCode: 'HERO_RATE_LIMITED'
+  });
+
+  app.post('/preview-dumpling-hero-comment', requireFirebaseAuth, heroPreviewPerUserLimiter, heroPreviewPerIpLimiter, async (req, res) => {
     try {
       console.log('🤖 Received Dumpling Hero comment preview request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
       
       const { prompt, postContext } = req.body;
+
+      // Daily quota (cross-restart protection)
+      const db = admin.firestore();
+      const quota = await enforceDailyQuota({
+        db,
+        uid: req.auth.uid,
+        endpointKey: 'preview-dumpling-hero-comment',
+        limit: process.env.HERO_PREVIEW_DAILY_LIMIT || 40
+      });
+      if (!quota.allowed) {
+        return res.status(429).json({
+          errorCode: 'DAILY_LIMIT_REACHED',
+          error: 'Daily limit reached. Please try again tomorrow.',
+          dayKey: quota.dayKey,
+          limit: quota.limit
+        });
+      }
       
       if (!process.env.OPENAI_API_KEY) {
         return res.status(500).json({ 
@@ -4489,12 +4734,28 @@ IMPORTANT:
   });
 
   // Simple Dumpling Hero Comment Generation endpoint (for external use)
-  app.post('/generate-dumpling-hero-comment-simple', async (req, res) => {
+  app.post('/generate-dumpling-hero-comment-simple', requireFirebaseAuth, heroPerUserLimiter, heroPerIpLimiter, async (req, res) => {
     try {
       console.log('🤖 Received simple Dumpling Hero comment generation request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
       
       const { prompt, postContext } = req.body;
+
+      const db = admin.firestore();
+      const quota = await enforceDailyQuota({
+        db,
+        uid: req.auth.uid,
+        endpointKey: 'generate-dumpling-hero-comment-simple',
+        limit: process.env.HERO_DAILY_LIMIT || 30
+      });
+      if (!quota.allowed) {
+        return res.status(429).json({
+          errorCode: 'DAILY_LIMIT_REACHED',
+          error: 'Daily limit reached. Please try again tomorrow.',
+          dayKey: quota.dayKey,
+          limit: quota.limit
+        });
+      }
       
       if (!process.env.OPENAI_API_KEY) {
         return res.status(500).json({ 

@@ -56,6 +56,8 @@ class RewardsViewModel: ObservableObject {
     }
     /// Success data keyed by redemptionCode for showing RewardCardScreen when user taps a countdown card.
     @Published var successDataByCode: [String: RedemptionSuccessData] = [:]
+    /// When set, Rewards tab presents the QR screen immediately (root-level presentation).
+    @Published var pendingQRSuccess: RedemptionSuccessData?
     @Published var rewardJustUsed = false
     @Published var giftedRewards: [GiftedReward] = []
     @Published var showRefundNotification = false
@@ -63,6 +65,28 @@ class RewardsViewModel: ObservableObject {
     
     private var giftedRewardsListener: ListenerRegistration?
     private let categories = ["All", "Food", "Drinks", "Condiments", "Special"]
+
+    // MARK: - Centralized Active Redemption Updates
+    /// Record a successful redemption locally (upsert by redemptionCode) and persist it for continuity.
+    /// The Firestore listener will reconcile `rewardId` once it sees the new document.
+    @MainActor
+    func recordRedemptionSuccess(_ success: RedemptionSuccessData, displayTitle: String, rewardId: String? = nil) {
+        let code = success.redemptionCode
+
+        // Upsert by code to avoid temporary duplicates.
+        activeRedemptions.removeAll { $0.redemptionCode == code }
+        let ar = ActiveRedemption(
+            rewardId: rewardId ?? "",
+            rewardTitle: displayTitle,
+            redemptionCode: code,
+            expiresAt: success.expiresAt
+        )
+        activeRedemptions.insert(ar, at: 0)
+
+        successDataByCode[code] = success
+        lastSuccessData = success
+        persistActiveReward()
+    }
     
     // MARK: - Lunch Special Availability Check
     private func isLunchSpecialAvailable() -> Bool {
@@ -153,6 +177,7 @@ class RewardsViewModel: ObservableObject {
             .whereField("isUsed", isEqualTo: false)
             .whereField("isExpired", isEqualTo: false)
             .order(by: "redeemedAt", descending: true)
+            .limit(to: 10)
             .addSnapshotListener { [weak self] snapshot, error in
                 guard let self = self else { return }
                 if let error = error {
@@ -165,6 +190,7 @@ class RewardsViewModel: ObservableObject {
                 var successByCode: [String: RedemptionSuccessData] = self.successDataByCode
                 let now = Date()
                 Task { @MainActor in
+                    var seenCodes = Set<String>()
                     for doc in docs {
                         guard let reward = RedeemedReward(document: doc) else { continue }
                         if reward.expiresAt <= now {
@@ -173,6 +199,9 @@ class RewardsViewModel: ObservableObject {
                             successByCode.removeValue(forKey: reward.redemptionCode)
                             continue
                         }
+                        // Defensive: never surface duplicates for the same code.
+                        guard !seenCodes.contains(reward.redemptionCode) else { continue }
+                        seenCodes.insert(reward.redemptionCode)
                         let ar = ActiveRedemption(
                             rewardId: reward.id,
                             rewardTitle: reward.rewardTitle,

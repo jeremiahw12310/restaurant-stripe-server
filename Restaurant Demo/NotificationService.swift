@@ -69,6 +69,13 @@ class NotificationService: NSObject, ObservableObject {
             }
         }
     }
+
+    /// Get the full current notification authorization status (needed to detect `.notDetermined`)
+    func getAuthorizationStatus(completion: @escaping (UNAuthorizationStatus) -> Void) {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            completion(settings.authorizationStatus)
+        }
+    }
     
     // MARK: - FCM Token Management
     
@@ -280,6 +287,31 @@ class NotificationService: NSObject, ObservableObject {
                     if !(self?.isMarkingAllAsRead ?? false) {
                         self?.unreadNotificationCount = unreadCount
                         self?.updateAppBadge()
+                    } else {
+                        // During grace period: mark any unread notifications as read locally
+                        // This prevents new notifications (like referral bonuses) from causing badge to reappear
+                        let hasUnread = allNotifications.contains { !$0.read }
+                        if hasUnread {
+                            // Optimistically mark all as read locally
+                            self?.notifications = allNotifications.map { notification in
+                                AppNotification(
+                                    id: notification.id,
+                                    data: [
+                                        "userId": notification.userId,
+                                        "title": notification.title,
+                                        "body": notification.body,
+                                        "createdAt": notification.createdAt,
+                                        "read": true,
+                                        "type": notification.type.rawValue
+                                    ]
+                                )
+                            }
+                            // Also mark them as read in Firestore (fire-and-forget)
+                            guard let self = self else { return }
+                            for notification in allNotifications where !notification.read {
+                                self.db.collection("notifications").document(notification.id).updateData(["read": true]) { _ in }
+                            }
+                        }
                     }
                 }
             }
@@ -371,13 +403,18 @@ class NotificationService: NSObject, ObservableObject {
                 batch.commit { [weak self] error in
                     DispatchQueue.main.async {
                         guard let self = self else { return }
-                        self.isMarkingAllAsRead = false
                         
                         if let error = error {
                             print("❌ NotificationService: Failed to mark all as read: \(error.localizedDescription)")
+                            self.isMarkingAllAsRead = false
                         } else {
                             print("✅ NotificationService: All notifications marked as read")
-                            // Count will be updated by listener on next snapshot
+                            
+                            // Keep flag set for a grace period to catch notifications that arrive immediately after
+                            // This prevents referral notifications (created by triggers) from causing badge to reappear
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                self.isMarkingAllAsRead = false
+                            }
                         }
                     }
                 }

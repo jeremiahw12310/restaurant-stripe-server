@@ -17,6 +17,7 @@ struct ContentView: View {
     @StateObject private var smartLayout = SmartLayoutManager()
     @StateObject private var userVM = UserViewModel()
     @StateObject private var sharedRewardsVM = RewardsViewModel()
+    @StateObject private var sharedMenuVM = MenuViewModel()
     @ObservedObject private var notificationService = NotificationService.shared
     
     // Performance signposts (visible in Instruments → Points of Interest)
@@ -27,6 +28,10 @@ struct ContentView: View {
     // Deep link support: show ReferralView when an incoming code arrives while logged in
     @State private var showReferralSheet: Bool = false
     @State private var referralSheetCode: String = ""
+    
+    // Pre-permission prompt (shown only when iOS status is `.notDetermined`)
+    @State private var showNotificationPrePrompt: Bool = false
+    @State private var notificationPrePromptCheckedUid: String = ""
 
     var body: some View {
         ZStack {
@@ -74,6 +79,7 @@ struct ContentView: View {
             .accentColor(Color(red: 0.7, green: 0.5, blue: 0.1))
             .environmentObject(userVM)
             .environmentObject(sharedRewardsVM)
+            .environmentObject(sharedMenuVM)
             .onReceive(NotificationCenter.default.publisher(for: .switchToHomeTab)) { _ in
                 selectedTab = 0
             }
@@ -96,6 +102,10 @@ struct ContentView: View {
                 ReferralCache.clearLegacyCache()
                 preloadReferralCodeForAuthenticatedUser()
                 consumePendingReferralCodeIfPresent()
+                maybeShowNotificationPrePromptIfNeeded()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                maybeShowNotificationPrePromptIfNeeded()
             }
             .onReceive(NotificationCenter.default.publisher(for: .incomingReferralCode)) { notif in
                 let code = (notif.userInfo?["code"] as? String) ?? ""
@@ -112,6 +122,9 @@ struct ContentView: View {
                 trackUserInteraction(for: newTab)
                 os_signpost(.event, log: perfLog, name: "TabSwitch", "%{public}d", newTab)
             }
+        }
+        .sheet(isPresented: $showNotificationPrePrompt) {
+            NotificationPrePermissionView()
         }
         .sheet(isPresented: $showReferralSheet) {
             ReferralView(initialCode: referralSheetCode)
@@ -206,6 +219,32 @@ struct ContentView: View {
         guard !trimmed.isEmpty else { return }
         referralSheetCode = trimmed
         showReferralSheet = true
+    }
+    
+    // MARK: - Notification Pre-Permission Prompt
+    
+    private func notificationPrePromptShownKey(for uid: String) -> String {
+        "notification_preprompt_shown_v1_\(uid)"
+    }
+    
+    private func maybeShowNotificationPrePromptIfNeeded() {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        
+        // Avoid repeated checks for the same authenticated user within the session.
+        guard notificationPrePromptCheckedUid != uid else { return }
+        notificationPrePromptCheckedUid = uid
+        
+        let shownKey = notificationPrePromptShownKey(for: uid)
+        guard !UserDefaults.standard.bool(forKey: shownKey) else { return }
+        
+        notificationService.getAuthorizationStatus { status in
+            DispatchQueue.main.async {
+                guard status == .notDetermined else { return }
+                // Mark as shown to avoid looping if the user dismisses.
+                UserDefaults.standard.set(true, forKey: shownKey)
+                showNotificationPrePrompt = true
+            }
+        }
     }
 }
 

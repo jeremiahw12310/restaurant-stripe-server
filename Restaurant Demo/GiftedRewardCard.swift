@@ -175,7 +175,6 @@ struct GiftedRewardCard: View {
             GiftedRewardDetailView(gift: gift)
                 .environmentObject(userVM)
                 .environmentObject(rewardsVM)
-                .environmentObject(MenuViewModel())
         }
     }
 }
@@ -197,8 +196,7 @@ struct GiftedRewardDetailView: View {
     @State private var showDrinkTypeSelection = false
     @State private var showComboDrinkCategorySelection = false
     @State private var showComboDrinkItemSelection = false
-    @State private var showSuccessScreen = false
-    @State private var redemptionSuccessData: RedemptionSuccessData?
+    @State private var isClaiming = false
     
     @State private var selectedItem: RewardEligibleItem?
     @State private var selectedTopping: RewardEligibleItem?
@@ -425,22 +423,6 @@ struct GiftedRewardDetailView: View {
                     .padding(.horizontal, 24)
                     .padding(.bottom, 32)
                 }
-            }
-        }
-        .sheet(isPresented: $showSuccessScreen) {
-            if let successData = redemptionSuccessData {
-                RewardCardScreen(
-                    userName: userVM.firstName.isEmpty ? "Your" : userVM.firstName,
-                    successData: successData,
-                    onDismiss: {
-                        showSuccessScreen = false
-                        // Refresh gifted rewards list after QR screen is dismissed
-                        Task {
-                            await rewardsVM.loadGiftedRewards()
-                        }
-                        dismiss()
-                    }
-                )
             }
         }
         .sheet(isPresented: $showItemSelection) {
@@ -715,6 +697,18 @@ struct GiftedRewardDetailView: View {
             print("❌ No user ID available for claiming gift")
             return
         }
+
+        let alreadyClaiming = await MainActor.run { isClaiming }
+        guard !alreadyClaiming else {
+            print("⚠️ Claim already in progress; ignoring duplicate request")
+            return
+        }
+        await MainActor.run { isClaiming = true }
+        defer {
+            Task { @MainActor in
+                isClaiming = false
+            }
+        }
         
         // Determine which item to use based on selection flow
         let primaryItem: RewardEligibleItem?
@@ -793,7 +787,7 @@ struct GiftedRewardDetailView: View {
                 }
                 
                 // Create success data
-                redemptionSuccessData = RedemptionSuccessData(
+                let successData = RedemptionSuccessData(
                     redemptionCode: claimResponse.redemptionCode,
                     rewardTitle: claimResponse.rewardTitle,
                     rewardDescription: gift.rewardDescription,
@@ -805,19 +799,15 @@ struct GiftedRewardDetailView: View {
                     selectedItemName: displayName
                 )
                 
-                // Add to active redemptions; Firestore listener will sync when it sees the new doc
-                let newActive = ActiveRedemption(
-                    rewardId: "", // Will be set by Firestore listener
-                    rewardTitle: displayName,
-                    redemptionCode: claimResponse.redemptionCode,
-                    expiresAt: claimResponse.expiresAt
-                )
-                rewardsVM.activeRedemptions.append(newActive)
-                rewardsVM.successDataByCode[claimResponse.redemptionCode] = redemptionSuccessData
-                rewardsVM.lastSuccessData = redemptionSuccessData
+                // Upsert into active redemptions; Firestore listener will reconcile when it sees the new doc
+                rewardsVM.recordRedemptionSuccess(successData, displayTitle: displayName, rewardId: nil)
                 
-                // Show success screen immediately (before refreshing list to prevent view dismissal)
-                showSuccessScreen = true
+                // Refresh gifts list and present the QR screen from the Rewards root.
+                Task { await rewardsVM.loadGiftedRewards() }
+                await MainActor.run { dismiss() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    rewardsVM.pendingQRSuccess = successData
+                }
                 
                 print("✅ Gift claimed successfully!")
             } else {

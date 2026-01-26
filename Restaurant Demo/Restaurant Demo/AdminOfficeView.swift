@@ -15,6 +15,20 @@ struct AdminOfficeView: View {
 struct AdminUserRow: View {
     let user: UserAccount
     
+    // Computed property to determine what contact info to display
+    private var contactInfo: String {
+        // Priority 1: Show phone number if it exists and is not empty
+        if !user.phoneNumber.isEmpty {
+            return user.phoneNumber
+        }
+        // Priority 2: Show email if it exists and is not the default "No email"
+        if !user.email.isEmpty && user.email != "No email" {
+            return user.email
+        }
+        // Priority 3: Fallback message
+        return "No contact info"
+    }
+    
     var body: some View {
         HStack(spacing: 16) {
             Circle()
@@ -38,7 +52,7 @@ struct AdminUserRow: View {
                     Spacer()
                 }
                 
-                Text(user.email)
+                Text(contactInfo)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .lineLimit(1)

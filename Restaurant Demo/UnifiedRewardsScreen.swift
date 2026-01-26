@@ -176,6 +176,13 @@ struct UnifiedRewardsScreen: View {
                 onDismiss: { sheetSuccessData = nil }
             )
         }
+        .fullScreenCover(item: $rewardsVM.pendingQRSuccess) { successData in
+            RewardCardScreen(
+                userName: userVM.firstName.isEmpty ? "Your" : userVM.firstName,
+                successData: successData,
+                onDismiss: { rewardsVM.pendingQRSuccess = nil }
+            )
+        }
     }
 
     // MARK: - Premium Hero Header

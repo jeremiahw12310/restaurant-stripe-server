@@ -130,6 +130,25 @@ exports.syncMenuItemsArray = onDocumentWritten(
     const categoryRef = admin.firestore().collection('menu').doc(categoryId);
     const itemsCollection = categoryRef.collection('items');
     try {
+      // Skip no-op writes (reduces unnecessary collection scans)
+      const beforeData = event.data?.before?.data?.() || null;
+      const afterSnap = event.data?.after;
+      const afterData = afterSnap && afterSnap.exists ? (afterSnap.data?.() || null) : null;
+
+      const stableStringify = (obj) => {
+        if (obj === null || obj === undefined) return String(obj);
+        if (Array.isArray(obj)) return `[${obj.map(stableStringify).join(',')}]`;
+        if (typeof obj === 'object') {
+          const keys = Object.keys(obj).sort();
+          return `{${keys.map(k => `${k}:${stableStringify(obj[k])}`).join(',')}}`;
+        }
+        return JSON.stringify(obj);
+      };
+
+      if (beforeData && afterData && stableStringify(beforeData) === stableStringify(afterData)) {
+        return null;
+      }
+
       console.log(`[syncMenuItemsArray] Triggered for category: ${categoryId}`);
       const snapshot = await itemsCollection.get();
       const itemsArray = [];
@@ -166,7 +185,21 @@ exports.awardReferralOnPointsCross = onDocumentWritten(
 
       const afterData = afterSnap.data?.() || {};
 
-      const afterPoints = typeof afterData.points === 'number' ? afterData.points : (afterData.points || 0);
+      const beforePointsRaw = beforeData.points ?? 0;
+      const afterPointsRaw = afterData.points ?? 0;
+      const beforePoints = typeof beforePointsRaw === 'number' ? beforePointsRaw : (parseFloat(String(beforePointsRaw)) || 0);
+      const afterPoints = typeof afterPointsRaw === 'number' ? afterPointsRaw : (parseFloat(String(afterPointsRaw)) || 0);
+
+      // Cost guard: if points didn't change, do nothing.
+      // This prevents extra referral queries on unrelated writes (FCM token, profile updates, etc.).
+      if (beforePoints === afterPoints) return null;
+
+      // Only run the awarding logic when it can matter:
+      // - points cross the 50 threshold upward (award), OR
+      // - points are below 50 (progress tracking).
+      const crossedUpTo50 = beforePoints < 50 && afterPoints >= 50;
+      const progressRangeRelevant = afterPoints < 50 || beforePoints < 50;
+      if (!crossedUpTo50 && !progressRangeRelevant) return null;
 
       // Clamp points towards 50 (0-50 range)
       const pointsTowards50 = Math.max(0, Math.min(50, afterPoints));

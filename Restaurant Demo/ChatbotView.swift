@@ -11,6 +11,7 @@ import Speech
 import AVFoundation
 import MapKit
 import UIKit
+import FirebaseAuth
 
 struct ChatMessage: Identifiable {
     let id = UUID()
@@ -49,6 +50,38 @@ class ChatbotViewModel: ObservableObject {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var silenceTimer: Timer?
+
+    private enum ChatbotAuthError: LocalizedError {
+        case notSignedIn
+
+        var errorDescription: String? {
+            switch self {
+            case .notSignedIn:
+                return "Not signed in"
+            }
+        }
+    }
+
+    private func idTokenPublisher() -> AnyPublisher<String, Error> {
+        Future<String, Error> { promise in
+            guard let user = Auth.auth().currentUser else {
+                promise(.failure(ChatbotAuthError.notSignedIn))
+                return
+            }
+            user.getIDToken { token, error in
+                if let error = error {
+                    promise(.failure(error))
+                    return
+                }
+                guard let token else {
+                    promise(.failure(ChatbotAuthError.notSignedIn))
+                    return
+                }
+                promise(.success(token))
+            }
+        }
+        .eraseToAnyPublisher()
+    }
     
     var pinnedMessages: [ChatMessage] {
         messages.filter { $0.isPinned }
@@ -150,9 +183,16 @@ class ChatbotViewModel: ObservableObject {
             DebugLogger.debug("Error serializing request: \(error)", category: "Chatbot")
             return
         }
-        
-        URLSession.shared.dataTaskPublisher(for: request)
-            .map(\.data)
+
+        idTokenPublisher()
+            .flatMap { token -> AnyPublisher<Data, Error> in
+                var authed = request
+                authed.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                return URLSession.shared.dataTaskPublisher(for: authed)
+                    .map(\.data)
+                    .mapError { $0 as Error }
+                    .eraseToAnyPublisher()
+            }
             .decode(type: ChatResponse.self, decoder: JSONDecoder())
             .receive(on: DispatchQueue.main)
             .sink(
@@ -161,7 +201,9 @@ class ChatbotViewModel: ObservableObject {
                     if case .failure(let error) = completion {
                         DebugLogger.debug("Error: \(error)", category: "Chatbot")
                         self.messages.append(ChatMessage(
-                            content: "Sorry, I'm having trouble connecting right now. Please try again!",
+                            content: (error as? ChatbotAuthError) == .notSignedIn
+                                ? "Please sign in to chat with Dumpling Hero."
+                                : "Sorry, I'm having trouble connecting right now. Please try again!",
                             isUser: false,
                             timestamp: Date()
                         ))
@@ -288,15 +330,28 @@ class ChatbotViewModel: ObservableObject {
 
         do { request.httpBody = try JSONSerialization.data(withJSONObject: requestBody) } catch { return }
 
-        URLSession.shared.dataTaskPublisher(for: request)
-            .map(\.data)
+        idTokenPublisher()
+            .flatMap { token -> AnyPublisher<Data, Error> in
+                var authed = request
+                authed.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                return URLSession.shared.dataTaskPublisher(for: authed)
+                    .map(\.data)
+                    .mapError { $0 as Error }
+                    .eraseToAnyPublisher()
+            }
             .decode(type: ChatResponse.self, decoder: JSONDecoder())
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { completion in
                     self.isLoading = false
                     if case .failure(let error) = completion {
-                        self.messages.append(ChatMessage(content: "Sorry, I'm having trouble connecting right now. Please try again!", isUser: false, timestamp: Date()))
+                        self.messages.append(ChatMessage(
+                            content: (error as? ChatbotAuthError) == .notSignedIn
+                                ? "Please sign in to chat with Dumpling Hero."
+                                : "Sorry, I'm having trouble connecting right now. Please try again!",
+                            isUser: false,
+                            timestamp: Date()
+                        ))
                         DebugLogger.debug("Regenerate error: \(error)", category: "Chatbot")
                     }
                 },
@@ -342,9 +397,16 @@ class ChatbotViewModel: ObservableObject {
             isGeneratingMagic = false
             return
         }
-        
-        URLSession.shared.dataTaskPublisher(for: request)
-            .map(\.data)
+
+        idTokenPublisher()
+            .flatMap { token -> AnyPublisher<Data, Error> in
+                var authed = request
+                authed.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                return URLSession.shared.dataTaskPublisher(for: authed)
+                    .map(\.data)
+                    .mapError { $0 as Error }
+                    .eraseToAnyPublisher()
+            }
             .decode(type: MagicPreviewResponse.self, decoder: JSONDecoder())
             .receive(on: DispatchQueue.main)
             .sink(
@@ -352,6 +414,9 @@ class ChatbotViewModel: ObservableObject {
                     self.isGeneratingMagic = false
                     if case .failure(let error) = completion {
                         DebugLogger.debug("Magic preview error: \(error)", category: "Chatbot")
+                        if (error as? ChatbotAuthError) == .notSignedIn {
+                            self.messages.append(ChatMessage(content: "Please sign in to use Dumpling Hero magic.", isUser: false, timestamp: Date()))
+                        }
                     }
                 },
                 receiveValue: { response in

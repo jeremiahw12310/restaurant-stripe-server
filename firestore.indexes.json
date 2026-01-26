@@ -135,6 +135,49 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "receipts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "orderDate", "order": "ASCENDING" },
+        { "fieldPath": "orderTime", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "receipts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "orderDate", "order": "ASCENDING" },
+        { "fieldPath": "orderTime", "order": "ASCENDING" },
+        { "fieldPath": "orderTotal", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "receipts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "orderNumber", "order": "ASCENDING" },
+        { "fieldPath": "orderDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "receipts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "orderNumber", "order": "ASCENDING" },
+        { "fieldPath": "orderTime", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "redeemedRewards",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "isUsed", "order": "ASCENDING" },
+        { "fieldPath": "isExpired", "order": "ASCENDING" },
+        { "fieldPath": "redeemedAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

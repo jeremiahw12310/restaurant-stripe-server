@@ -217,6 +217,20 @@ struct TransactionCard: View {
     private func metadataChips(prefix: Int) -> [Chip]? {
         guard let metadata = transaction.metadata else { return nil }
         var result: [Chip] = []
+        
+        // Backend fields to exclude from user-facing display
+        let backendFields: Set<String> = [
+            "referralId",
+            "role",
+            "orderNumber",
+            "orderDate",
+            "orderTime",
+            "referredUserId",
+            "giftedRewardId",
+            "adminId",
+            "redemptionCode"
+        ]
+        
         // Admin adjustment: previousPoints → newPoints
         var previousPointsValue: Int?
         var newPointsValue: Int?
@@ -227,16 +241,16 @@ struct TransactionCard: View {
         if let prev = previousPointsValue, let new = newPointsValue {
             result.append(Chip(icon: "arrow.left.arrow.right", text: "\(prev) → \(new)"))
         }
-        // Known keys first
+        // Known user-facing keys first
         if let total = metadata["receiptTotal"] as? Double {
             result.append(Chip(icon: "dollarsign", text: String(format: "$%.2f", total)))
         }
         if let rewardTitle = metadata["rewardTitle"] as? String {
             result.append(Chip(icon: "gift.fill", text: rewardTitle))
         }
-        // Fallback to any other keys (stringifiable)
+        // Fallback to any other keys (stringifiable), excluding backend fields
         if result.count < prefix {
-            for key in metadata.keys.sorted() where key != "receiptTotal" && key != "rewardTitle" && key != "previousPoints" && key != "newPoints" && key != "adminId" {
+            for key in metadata.keys.sorted() where !backendFields.contains(key) && key != "receiptTotal" && key != "rewardTitle" && key != "previousPoints" && key != "newPoints" {
                 if let value = metadata[key] {
                     let text = "\(key): \(String(describing: value))"
                     result.append(Chip(icon: "info.circle", text: text))

@@ -120,7 +120,7 @@ struct ReferralView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ZStack {
                 LinearGradient(
                     gradient: Gradient(colors: [
@@ -607,10 +607,17 @@ struct ReferralView: View {
     private var previewConnections: [ReferralDisplay] {
         var result: [ReferralDisplay] = []
         if let inbound = inboundConnection { result.append(inbound) }
-        if !outboundConnections.isEmpty {
-            result.append(contentsOf: outboundConnections.prefix(max(0, 3 - result.count)))
+        result.append(contentsOf: outboundConnections)
+        // Sort by date (most recent first), then by name if dates are equal
+        let sorted = result.sorted { item1, item2 in
+            let date1 = item1.createdAt ?? Date.distantPast
+            let date2 = item2.createdAt ?? Date.distantPast
+            if date1 != date2 {
+                return date1 > date2
+            }
+            return item1.name < item2.name
         }
-        return Array(result.prefix(3))
+        return Array(sorted.prefix(3))
     }
 
     @ViewBuilder
@@ -877,7 +884,15 @@ struct ReferralView: View {
                     return ReferralDisplay(id: d.documentID, name: name, status: status, isOutbound: true, pointsTowards50: pointsTowards50, createdAt: createdAt)
                 }
                 DispatchQueue.main.async {
-                    self.outboundConnections = items.sorted { $0.name < $1.name }
+                    self.outboundConnections = items.sorted { item1, item2 in
+                        // Sort by date (most recent first), then by name if dates are equal
+                        let date1 = item1.createdAt ?? Date.distantPast
+                        let date2 = item2.createdAt ?? Date.distantPast
+                        if date1 != date2 {
+                            return date1 > date2
+                        }
+                        return item1.name < item2.name
+                    }
                 }
             }
 

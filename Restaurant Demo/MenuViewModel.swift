@@ -83,9 +83,13 @@ class MenuViewModel: ObservableObject {
     private var orderListener: ListenerRegistration?
     private var configListener: ListenerRegistration?
     private var isFetchingMenu = false // Prevent concurrent fetches
+    private var isFetchingAllergyTags = false // Prevent concurrent allergy tag fetches
+    private var didAttemptLoadAllergyTagsFromCache = false
+    private var isLoadingAllergyTagsFromCache = false
     private var drinkOptionsListener: ListenerRegistration?
     private var allergyTagsListener: ListenerRegistration?
     private var isAdminUser: Bool = false
+    private var isAdminEditingModeEnabled: Bool = false
 
     // MARK: - Firestore doc ID normalization
     /// Some legacy menu item documents may use non-canonical Firestore doc IDs.
@@ -141,14 +145,34 @@ class MenuViewModel: ObservableObject {
     }
 
     init() {
-        // Always fetch from Firebase to ensure menu loads reliably
+        // Cache-first (stale-while-revalidate): show cached menu instantly, then refresh if stale.
         isLoading = true
-        
+
         // Fetch config first (small, fast)
         fetchConfig()
-        
-        // Always fetch menu from Firebase - this is the reliable path
-        fetchMenu()
+
+        // Always load menu order (one-time) so ordering applies even when using cached categories.
+        fetchMenuOrder()
+
+        dataCacheManager.getCachedMenuCategoriesAsync { [weak self] cached in
+            guard let self = self else { return }
+
+            if let cached, !cached.isEmpty {
+                self.menuCategories = cached
+                self.lastMenuUpdate = self.dataCacheManager.getMenuCategoriesLastFetchDate()
+                self.isLoading = false
+                self.preloadCachedImages()
+            }
+
+            // Refresh from Firestore only when needed (stale or missing).
+            if cached == nil || cached?.isEmpty == true || self.dataCacheManager.isMenuCategoriesStale() {
+                self.fetchMenu()
+            }
+        }
+
+        // Load cached allergy tags immediately (stale-while-revalidate).
+        // This prevents the item detail sheet from rendering with empty tags on app launch.
+        preloadAllergyTagsFromCacheIfNeeded()
         
         // Defer static data loading
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
@@ -169,6 +193,47 @@ class MenuViewModel: ObservableObject {
         }
         if dataCacheManager.isDrinkToppingsStale() {
             fetchDrinkToppings()
+        }
+    }
+
+    // MARK: - Allergy Tags Loading (Cache + Refresh)
+
+    /// Load cached allergy tags once, without overwriting already-loaded tags.
+    private func preloadAllergyTagsFromCacheIfNeeded() {
+        guard !didAttemptLoadAllergyTagsFromCache else { return }
+        didAttemptLoadAllergyTagsFromCache = true
+        isLoadingAllergyTagsFromCache = true
+
+        dataCacheManager.getCachedAllergyTagsAsync { [weak self] cached in
+            guard let self = self else { return }
+            defer { self.isLoadingAllergyTagsFromCache = false }
+
+            guard let cached, !cached.isEmpty else { return }
+            // Only fill if we don't already have tags (avoid overwriting fresher network/admin results).
+            if self.allergyTags.isEmpty {
+                self.allergyTags = cached
+            }
+        }
+    }
+
+    /// Ensure `allergyTags` is populated for UI usage.
+    /// - Loads from disk cache immediately (once).
+    /// - If cache is stale, refreshes from Firestore.
+    /// - If cache is missing/corrupt and tags remain empty, fetches from Firestore.
+    func ensureAllergyTagsLoaded() {
+        preloadAllergyTagsFromCacheIfNeeded()
+
+        // Always refresh if stale; otherwise only fetch if we still have no data after cache load attempt.
+        if dataCacheManager.isAllergyTagsStale() {
+            fetchAllergyTags()
+            return
+        }
+
+        // If cache load is still running, don't trigger a redundant fetch yet.
+        guard !isLoadingAllergyTagsFromCache else { return }
+
+        if allergyTags.isEmpty {
+            fetchAllergyTags()
         }
     }
     
@@ -192,6 +257,7 @@ class MenuViewModel: ObservableObject {
     func enableAdminEditingMode() {
         print("🔐 Admin editing mode enabled - starting real-time listeners")
         isAdminUser = true
+        isAdminEditingModeEnabled = true
         
         // Start real-time listeners for admin editing
         startMenuListenerForAdmin()
@@ -207,6 +273,7 @@ class MenuViewModel: ObservableObject {
     /// Call this when admin leaves the menu editing screen
     func disableAdminEditingMode() {
         print("🔐 Admin editing mode disabled - stopping listeners and caching data")
+        isAdminEditingModeEnabled = false
         
         // Stop all real-time listeners
         listenerRegistration?.remove()
@@ -365,6 +432,10 @@ class MenuViewModel: ObservableObject {
     }
     
     func fetchMenu() {
+        // If admin editing mode is active, do not replace realtime listeners with one-time fetch.
+        // The admin editor uses explicit realtime listeners via enableAdminEditingMode().
+        guard !isAdminEditingModeEnabled else { return }
+
         // Prevent concurrent fetches
         guard !isFetchingMenu else {
             return
@@ -381,25 +452,33 @@ class MenuViewModel: ObservableObject {
         }
         itemListeners.removeAll()
 
-        // Use snapshot listener instead of getDocuments - more reliable
-        listenerRegistration = db.collection("menu").addSnapshotListener { [weak self] (snapshot, error) in
+        // Customer path: one-time fetch + caching (avoid realtime listener fan-out)
+        db.collection("menu").getDocuments { [weak self] snapshot, error in
             guard let self = self else { return }
-            
+
             if let error = error {
                 print("❌ Error fetching menu categories: \(error.localizedDescription)")
-                self.isLoading = false
-                self.isFetchingMenu = false
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    self.isFetchingMenu = false
+                    self.isRefreshing = false
+                }
                 return
             }
-            
-            guard let documents = snapshot?.documents else {
-                self.isLoading = false
-                self.isFetchingMenu = false
+
+            let documents = snapshot?.documents ?? []
+            if documents.isEmpty {
+                DispatchQueue.main.async {
+                    self.menuCategories = []
+                    self.isLoading = false
+                    self.isFetchingMenu = false
+                    self.isRefreshing = false
+                }
                 return
             }
 
             // Build categories with flags from Firestore
-            var newCategories: [MenuCategory] = documents.map { doc in
+            let newCategories: [MenuCategory] = documents.map { doc in
                 let data = doc.data()
                 return MenuCategory(
                     id: doc.documentID,
@@ -412,50 +491,59 @@ class MenuViewModel: ObservableObject {
                     hideIcon: data["hideIcon"] as? Bool ?? false
                 )
             }
-            
-            // Update categories immediately (items will load separately)
-            self.menuCategories = newCategories.sorted { $0.id < $1.id }
 
-            // Set up item listeners for each category
-            for document in documents {
-                let categoryId = document.documentID
-                
-                // Skip if we already have a listener for this category
-                if self.itemListeners[categoryId] != nil { continue }
-                
-                let itemListener = self.db.collection("menu").document(categoryId).collection("items").addSnapshotListener { [weak self] (itemsSnapshot, itemsError) in
-                    guard let self = self else { return }
-                    
-                    var items: [MenuItem] = []
-                    if let itemsSnapshot = itemsSnapshot {
-                        items = self.dedupeMenuItemsFromSnapshot(categoryId: categoryId, documents: itemsSnapshot.documents)
+            let categoryIds = documents.map { $0.documentID }
+            let group = DispatchGroup()
+
+            DispatchQueue.main.async {
+                self.menuCategories = newCategories.sorted { $0.id < $1.id }
+                self.loadingCategories = Set(categoryIds)
+            }
+
+            for categoryId in categoryIds {
+                group.enter()
+                self.db.collection("menu").document(categoryId).collection("items").getDocuments { [weak self] itemsSnapshot, itemsError in
+                    guard let self = self else {
+                        group.leave()
+                        return
                     }
-                    
+
+                    if let itemsError = itemsError {
+                        print("⚠️ Error fetching items for \(categoryId): \(itemsError.localizedDescription)")
+                        DispatchQueue.main.async { self.loadingCategories.remove(categoryId) }
+                        group.leave()
+                        return
+                    }
+
+                    let itemDocs = itemsSnapshot?.documents ?? []
+                    let items = self.dedupeMenuItemsFromSnapshot(categoryId: categoryId, documents: itemDocs).sorted { $0.id < $1.id }
+
                     DispatchQueue.main.async {
                         if let catIndex = self.menuCategories.firstIndex(where: { $0.id == categoryId }) {
-                            self.menuCategories[catIndex].items = items.sorted { $0.id < $1.id }
+                            self.menuCategories[catIndex].items = items
                         }
-                        
-                        // Mark loading complete after first category loads items
-                        if self.isLoading {
-                            self.isLoading = false
-                            self.isFetchingMenu = false
-                            self.isRefreshing = false
-                            self.lastMenuUpdate = Date()
-                            
-                            // Cache menu data after first load
-                            self.dataCacheManager.cacheMenuCategories(self.menuCategories)
-                            
-                            // Load cached images immediately and check for updates
-                            self.preloadCachedImages()
-                        }
+                        self.loadingCategories.remove(categoryId)
                     }
+
+                    group.leave()
                 }
-                self.itemListeners[categoryId] = itemListener
+            }
+
+            group.notify(queue: .main) {
+                self.isLoading = false
+                self.isFetchingMenu = false
+                self.isRefreshing = false
+                self.lastMenuUpdate = Date()
+
+                // Cache menu data after full load
+                self.dataCacheManager.cacheMenuCategories(self.menuCategories)
+
+                // Load cached images immediately and check for updates
+                self.preloadCachedImages()
             }
         }
-        
-        // Also fetch menu order
+
+        // Also fetch menu order (one-time for customers; realtime only in admin editing mode)
         fetchMenuOrder()
     }
     
@@ -2002,6 +2090,9 @@ class MenuViewModel: ObservableObject {
     // MARK: - Allergy Tags (Reusable)
     
     func fetchAllergyTags() {
+        guard !isFetchingAllergyTags else { return }
+        isFetchingAllergyTags = true
+
         // OPTIMIZED: Use one-time fetch with caching (7-day cache for static data)
         allergyTagsListener?.remove()
         allergyTagsListener = nil
@@ -2010,19 +2101,28 @@ class MenuViewModel: ObservableObject {
             guard let self = self else { return }
             if let error = error {
                 print("❌ Error fetching allergy tags: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self.isFetchingAllergyTags = false
+                }
                 return
             }
             guard let documents = snapshot?.documents else {
-                self.allergyTags = []
+                DispatchQueue.main.async {
+                    self.allergyTags = []
+                    self.isFetchingAllergyTags = false
+                }
                 return
             }
             let tags = documents.compactMap { doc in
                 try? doc.data(as: AllergyTag.self)
             }.sorted { $0.order < $1.order }
             
-            self.allergyTags = tags
-            self.dataCacheManager.cacheAllergyTags(tags)
-            print("✅ Fetched and cached \(tags.count) allergy tags")
+            DispatchQueue.main.async {
+                self.allergyTags = tags
+                self.isFetchingAllergyTags = false
+                self.dataCacheManager.cacheAllergyTags(tags)
+                print("✅ Fetched and cached \(tags.count) allergy tags")
+            }
         }
     }
     
@@ -2036,12 +2136,18 @@ class MenuViewModel: ObservableObject {
                 return
             }
             guard let documents = snapshot?.documents else {
-                self.allergyTags = []
+                DispatchQueue.main.async {
+                    self.allergyTags = []
+                }
                 return
             }
-            self.allergyTags = documents.compactMap { doc in
+            let tags = documents.compactMap { doc in
                 try? doc.data(as: AllergyTag.self)
             }.sorted { $0.order < $1.order }
+
+            DispatchQueue.main.async {
+                self.allergyTags = tags
+            }
         }
     }
     
