@@ -365,7 +365,12 @@ class AdminUserDetailViewModel: ObservableObject {
                     case 403:
                         statusMessage = "Permission denied - admin access required"
                     case 404:
-                        statusMessage = "User not found"
+                        // Check if it's endpoint not found vs user not found
+                        if bodyText.contains("Cannot") || bodyText.contains("route") || bodyText.isEmpty {
+                            statusMessage = "Backend endpoint not found - the server may need to be redeployed. Check that /admin/users/update exists on \(url.host ?? "server")"
+                        } else {
+                            statusMessage = "User not found: \(errorMessage)"
+                        }
                     case 400:
                         statusMessage = "Invalid request: \(errorMessage)"
                     case 500:
