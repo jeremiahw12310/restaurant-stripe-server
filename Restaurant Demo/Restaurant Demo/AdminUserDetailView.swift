@@ -81,6 +81,7 @@ struct AdminUserDetailView: View {
                         .tint(.white)
 
                         Button("Save") {
+                            print("🟡 AdminUserDetailView: Save tapped for userId=\(viewModel.userId)")
                             viewModel.saveAdminEdits { success, message in
                                 if success {
                                     isEditing = false
@@ -88,6 +89,7 @@ struct AdminUserDetailView: View {
                             }
                         }
                         .tint(.white)
+                        .disabled(viewModel.isLoading)
                     } else {
                         Button("Edit") {
                             viewModel.syncEditableFieldsFromSummary()

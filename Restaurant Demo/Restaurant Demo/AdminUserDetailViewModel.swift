@@ -271,6 +271,7 @@ class AdminUserDetailViewModel: ObservableObject {
     // MARK: - Admin Editing
 
     func saveAdminEdits(completion: @escaping (Bool, String?) -> Void) {
+        print("🟡 AdminUserDetailViewModel.saveAdminEdits called for userId=\(userId)")
         // Validate points input
         guard let pointsInt = Int(editablePoints), pointsInt >= 0 else {
             let message = "Points must be a valid non-negative number"
