@@ -1856,8 +1856,16 @@ if (!process.env.OPENAI_API_KEY) {
     
     const userData = userDoc.data() || {};
     
-    // Admin users bypass rate limiting
+    // Admin users bypass rate limiting AND clear any existing lockout
     if (userData.isAdmin === true) {
+      // Clear any existing lockout state for admins
+      if (userData.receiptScanLockoutUntil || userData.receiptScanLockoutCount) {
+        await userRef.update({
+          receiptScanLockoutUntil: admin.firestore.FieldValue.delete(),
+          receiptScanLockoutCount: admin.firestore.FieldValue.delete()
+        });
+        console.log(`✅ Cleared receipt scan lockout for admin user ${userId}`);
+      }
       return { allowed: true };
     }
     
@@ -1989,7 +1997,16 @@ if (!process.env.OPENAI_API_KEY) {
   async function applyReceiptScanLockout(userId, db) {
     if (!userId) return; // No user = no lockout
     
+    // Check if user is admin - admins are exempt from lockouts
     const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    if (!userDoc.exists) return; // User doesn't exist, skip lockout
+    
+    const userData = userDoc.data() || {};
+    if (userData.isAdmin === true) {
+      return; // Admins never get locked out
+    }
+    
     const attemptsRef = db.collection('receiptScanAttempts');
     
     // Count failed attempts in last 24 hours
@@ -2003,9 +2020,7 @@ if (!process.env.OPENAI_API_KEY) {
       .get();
     
     if (failedAttempts.size >= 8) {
-      // Get current lockout count
-      const userDoc = await userRef.get();
-      const userData = userDoc.data() || {};
+      // Get current lockout count (reuse userData from earlier fetch)
       const currentLockoutCount = userData.receiptScanLockoutCount || 0;
       
       // Calculate lockout duration
@@ -5862,6 +5877,69 @@ IMPORTANT:
         errorCode: 'INTERNAL_ERROR',
         error: `Failed to update user: ${error.message || 'Unknown error'}`,
         details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
+    }
+  });
+
+  /**
+   * POST /admin/users/:userId/clear-lockout
+   *
+   * Admin-only endpoint to clear receipt scan lockout for a user.
+   * Useful for testing/debugging when lockouts interfere with development.
+   *
+   * Body: none (userId from URL param)
+   *
+   * Returns:
+   * - success: boolean
+   * - message: string
+   */
+  app.post('/admin/users/:userId/clear-lockout', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) {
+        return; // requireAdmin already sent the response
+      }
+
+      const { userId } = req.params;
+      if (!userId || typeof userId !== 'string') {
+        return res.status(400).json({
+          errorCode: 'INVALID_REQUEST',
+          error: 'userId is required in URL path'
+        });
+      }
+
+      const db = admin.firestore();
+      const userRef = db.collection('users').doc(userId);
+      const userDoc = await userRef.get();
+
+      if (!userDoc.exists) {
+        return res.status(404).json({
+          errorCode: 'USER_NOT_FOUND',
+          error: `User with ID '${userId}' not found`
+        });
+      }
+
+      const userData = userDoc.data() || {};
+      const hadLockout = !!(userData.receiptScanLockoutUntil || userData.receiptScanLockoutCount);
+
+      await userRef.update({
+        receiptScanLockoutUntil: admin.firestore.FieldValue.delete(),
+        receiptScanLockoutCount: admin.firestore.FieldValue.delete()
+      });
+
+      console.log(`✅ Admin ${adminContext.uid} cleared lockout for user ${userId}`);
+
+      return res.json({
+        success: true,
+        message: hadLockout
+          ? `Lockout cleared for user ${userId}`
+          : `No lockout found for user ${userId} (already clear)`
+      });
+    } catch (error) {
+      console.error('❌ Error clearing lockout:', error);
+      return res.status(500).json({
+        errorCode: 'INTERNAL_ERROR',
+        error: `Failed to clear lockout: ${error.message || 'Unknown error'}`
       });
     }
   });
