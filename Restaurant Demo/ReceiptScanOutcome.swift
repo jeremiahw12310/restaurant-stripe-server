@@ -3,6 +3,8 @@ import Foundation
 enum ReceiptScanOutcome: Equatable {
     case success(points: Int, total: Double)
     case duplicate(orderNumber: String?, date: String?)
+    /// User hit the daily cap on point-earning receipt scans.
+    case dailyLimitReached
     case notFromRestaurant
     case unreadable
     /// The subtotal/tax/total section is missing or not clearly visible.

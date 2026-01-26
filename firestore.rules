@@ -230,6 +230,11 @@ service cloud.firestore {
     match /receiptScanAttempts/{attemptId} {
       allow read, write: if false;  // Server-only
     }
+
+    // Daily receipt counters collection - server-only for daily scan caps
+    match /receiptDailyCounters/{docId} {
+      allow read, write: if false; // Server-only
+    }
     
     // Receipts collection - server creates, users can read/anonymize their own for account deletion
     match /receipts/{receiptId} {

@@ -793,6 +793,8 @@ struct ReceiptScanView: View {
                 return .server
             case "RATE_LIMITED":
                 return .rateLimited
+            case "DAILY_RECEIPT_LIMIT_REACHED":
+                return .dailyLimitReached
             case "TOTAL_SECTION_NOT_VISIBLE":
                 return .totalsNotVisible
             case "TOTAL_INCONSISTENT":
@@ -928,7 +930,7 @@ struct ReceiptScanView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 self.checkCameraPermission()
             }
-        case .notFromRestaurant, .unreadable, .tooOld, .mismatch, .suspicious, .rateLimited:
+        case .dailyLimitReached, .notFromRestaurant, .unreadable, .tooOld, .mismatch, .suspicious, .rateLimited:
             // Just dismiss (buttons now say "Got It")
             presentedOutcome = nil
         }
@@ -2297,6 +2299,7 @@ func uploadReceiptImage(_ image: UIImage, completion: @escaping (Result<[String:
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         DeviceFingerprint.addToRequest(&request)
+        request.setValue(TimeZone.current.identifier, forHTTPHeaderField: "x-user-timezone")
         
         let boundary = UUID().uuidString
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")

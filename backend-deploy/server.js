@@ -348,8 +348,11 @@ app.post('/referrals/accept', async (req, res) => {
     }
 
     // Check referral cap (admins exempt)
+    // 1) Per-account cap: current user's referral count
+    // 2) Lifetime cap: phone hash has referred 10+ people across all accounts (survives account deletion)
     const referrerIsAdmin = referrerData.isAdmin === true;
     if (!referrerIsAdmin) {
+      // Per-account cap
       const referrerReferralsSnap = await db.collection('referrals')
         .where('referrerUserId', '==', referrerId)
         .get();
@@ -360,6 +363,19 @@ app.post('/referrals/accept', async (req, res) => {
           error: 'referral_cap_reached',
           message: `Maximum referral limit reached (${MAX_REFERRALS_PER_USER} referrals)`
         });
+      }
+
+      // Lifetime cap: this phone has referred 10+ people total (blocks delete-and-refer-again abuse)
+      if (referrerPhoneHash) {
+        const referrerHashDoc = await db.collection('abusePreventionHashes').doc(referrerPhoneHash).get();
+        const referredHashes = referrerHashDoc.exists ? (referrerHashDoc.data().referredHashes || []) : [];
+        if (referredHashes.length >= MAX_REFERRALS_PER_USER) {
+          console.log(`⚠️ Lifetime referral cap reached for referrer phone hash: ${referredHashes.length} referrals`);
+          return res.status(400).json({ 
+            error: 'referral_cap_reached',
+            message: `Maximum referral limit reached (${MAX_REFERRALS_PER_USER} referrals)`
+          });
+        }
       }
     }
 
@@ -1649,6 +1665,10 @@ if (!process.env.OPENAI_API_KEY) {
     return res.status(httpStatus).json({ errorCode, error: message, ...extra });
   }
 
+  // Receipt daily limit (successful point-awarding scans)
+  const RECEIPT_DAILY_SUCCESS_LIMIT = 2;
+  const RECEIPT_DAILY_COUNTERS_COLLECTION = 'receiptDailyCounters';
+
   // Receipt scan rate limiting helpers
   async function checkReceiptScanRateLimit(userId, db) {
     if (!userId) return { allowed: true }; // No user = no rate limit (analyze-receipt endpoint)
@@ -1680,6 +1700,72 @@ if (!process.env.OPENAI_API_KEY) {
     }
     
     return { allowed: true };
+  }
+
+  function normalizeUserTimeZone(tzRaw) {
+    const fallback = 'UTC';
+    if (!tzRaw || typeof tzRaw !== 'string') return fallback;
+    const trimmed = tzRaw.trim();
+    if (!trimmed) return fallback;
+
+    const dt = DateTime.now().setZone(trimmed);
+    if (!dt.isValid) return fallback;
+    return trimmed;
+  }
+
+  function getUserLocalDayKeys(timeZone) {
+    const now = DateTime.now().setZone(timeZone);
+    const dayKey = now.toFormat('yyyy-LL-dd');
+    const yesterdayKey = now.minus({ days: 1 }).toFormat('yyyy-LL-dd');
+    return { dayKey, yesterdayKey };
+  }
+
+  function calculateSuspiciousRiskScore(severity, evidence) {
+    let baseScore = 0;
+    switch (severity) {
+      case 'critical': baseScore = 90; break;
+      case 'high': baseScore = 70; break;
+      case 'medium': baseScore = 50; break;
+      case 'low': baseScore = 30; break;
+      default: baseScore = 40;
+    }
+
+    if (evidence) {
+      if (evidence.count && evidence.count > 5) baseScore += 10;
+      if (evidence.rejectionRate && evidence.rejectionRate > 0.5) baseScore += 15;
+      if (evidence.associatedUserIds && evidence.associatedUserIds.length > 2) baseScore += 10;
+    }
+
+    return Math.min(100, baseScore);
+  }
+
+  async function checkDailyReceiptSuccessLimit(userId, db, timeZone) {
+    if (!userId) return { allowed: true, timeZone, dayKey: null };
+
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    if (userDoc.exists) {
+      const userData = userDoc.data() || {};
+      if (userData.isAdmin === true) {
+        return { allowed: true, timeZone, dayKey: null };
+      }
+    }
+
+    const { dayKey } = getUserLocalDayKeys(timeZone);
+    const counterRef = db
+      .collection(RECEIPT_DAILY_COUNTERS_COLLECTION)
+      .doc(`${userId}_${dayKey}`);
+
+    const counterDoc = await counterRef.get();
+    const count = counterDoc.exists ? (counterDoc.data()?.count || 0) : 0;
+
+    return {
+      allowed: count < RECEIPT_DAILY_SUCCESS_LIMIT,
+      timeZone,
+      dayKey,
+      count,
+      limit: RECEIPT_DAILY_SUCCESS_LIMIT
+    };
   }
 
   async function logReceiptScanAttempt(userId, success, failureReason, db, ipAddress = null) {
@@ -2323,6 +2409,10 @@ If a field is missing, use null.`;
       const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
       const db = admin.firestore();
       const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
+
+      // User-local timezone (for daily scan caps). If missing/invalid, fall back to UTC.
+      const userTimeZone = normalizeUserTimeZone(req.headers['x-user-timezone']);
+      const { dayKey: userLocalDayKey, yesterdayKey: userLocalYesterdayKey } = getUserLocalDayKeys(userTimeZone);
       
       // Extract device fingerprint if provided
       let deviceInfo = null;
@@ -2348,6 +2438,21 @@ If a field is missing, use null.`;
       if (!rateLimitCheck.allowed) {
         console.log(`🚫 Rate limit triggered for user ${uid}`);
         return sendError(res, 429, "RATE_LIMITED", "Too many failed scan attempts. Please wait a while and try again.");
+      }
+
+      // Enforce daily successful receipt scan cap BEFORE OpenAI calls (cost savings)
+      const dailyLimitCheck = await checkDailyReceiptSuccessLimit(uid, db, userTimeZone);
+      if (!dailyLimitCheck.allowed) {
+        console.log(`🚫 Daily receipt scan cap reached for user ${uid} (${dailyLimitCheck.count}/${dailyLimitCheck.limit}) day=${dailyLimitCheck.dayKey} tz=${dailyLimitCheck.timeZone}`);
+        // Log this as a non-lockout failure for observability (do NOT apply progressive lockout)
+        logReceiptScanAttempt(uid, false, "DAILY_LIMIT_REACHED", db, ipAddress).catch(() => {});
+        return sendError(
+          res,
+          429,
+          "DAILY_RECEIPT_LIMIT_REACHED",
+          "You've hit your points limit for today. Come back tomorrow.",
+          { day: dailyLimitCheck.dayKey, timeZone: dailyLimitCheck.timeZone, limit: dailyLimitCheck.limit }
+        );
       }
 
       // Reuse the same strict prompt as /analyze-receipt (kept in sync).
@@ -2724,14 +2829,38 @@ If a field is missing, use null.`;
       const userRef = db.collection('users').doc(uid);
       const receiptsRef = db.collection('receipts');
       const pointsTxId = `receipt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const dailyCounterRef = db
+        .collection(RECEIPT_DAILY_COUNTERS_COLLECTION)
+        .doc(`${uid}_${userLocalDayKey}`);
 
       let newPointsBalance = null;
       let newLifetimePoints = null;
       let savedReceiptId = null;
       let currentPoints = 0; // Capture current points for referral check
+      let shouldUpdateRiskScore = false;
 
       try {
         await db.runTransaction(async (tx) => {
+          // Load user (needed for admin bypass + streak tracking)
+          const userDoc = await tx.get(userRef);
+          if (!userDoc.exists) {
+            const err = new Error("USER_NOT_FOUND");
+            err.code = "USER_NOT_FOUND";
+            throw err;
+          }
+          const userData = userDoc.data() || {};
+          const isAdminUser = userData.isAdmin === true;
+
+          // Enforce daily successful scan cap atomically (prevents races between devices)
+          // Admins bypass the daily cap (keeps behavior consistent with the pre-check).
+          const dailyCounterDoc = await tx.get(dailyCounterRef);
+          const currentDailyCount = dailyCounterDoc.exists ? (dailyCounterDoc.data()?.count || 0) : 0;
+          if (!isAdminUser && currentDailyCount >= RECEIPT_DAILY_SUCCESS_LIMIT) {
+            const err = new Error("DAILY_RECEIPT_LIMIT_REACHED");
+            err.code = "DAILY_RECEIPT_LIMIT_REACHED";
+            throw err;
+          }
+
           // Duplicate detection (same logic as analyze endpoint)
           // Support legacy orderNumber type (string vs number) for duplicate detection
           const orderNumberStrForDup = String(data.orderNumber);
@@ -2759,26 +2888,12 @@ If a field is missing, use null.`;
               throw err;
             }
           }
-
-          const userDoc = await tx.get(userRef);
-          if (!userDoc.exists) {
-            const err = new Error("USER_NOT_FOUND");
-            err.code = "USER_NOT_FOUND";
-            throw err;
-          }
-          const userData = userDoc.data() || {};
           currentPoints = userData.points || 0; // Update outer variable
           const currentLifetime = (typeof userData.lifetimePoints === 'number')
             ? userData.lifetimePoints
             : currentPoints;
           newPointsBalance = currentPoints + pointsAwarded;
           newLifetimePoints = currentLifetime + pointsAwarded;
-
-          // Update user points
-          tx.update(userRef, {
-            points: newPointsBalance,
-            lifetimePoints: newLifetimePoints
-          });
 
           // Save receipt record (for future duplicate checks + auditing)
           const receiptDocRef = receiptsRef.doc();
@@ -2807,6 +2922,80 @@ If a field is missing, use null.`;
               orderTotal: orderTotal
             }
           });
+
+          // Increment daily counter inside the same transaction (skip for admins)
+          const newDailyCount = isAdminUser ? currentDailyCount : (currentDailyCount + 1);
+          if (!isAdminUser) {
+            tx.set(
+              dailyCounterRef,
+              {
+                userId: uid,
+                day: userLocalDayKey,
+                timeZone: userTimeZone,
+                count: newDailyCount,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+              },
+              { merge: true }
+            );
+          }
+
+          // Update user points (and, if applicable, daily-limit streak fields)
+          const userUpdate = {
+            points: newPointsBalance,
+            lifetimePoints: newLifetimePoints
+          };
+
+          // If the user just hit the daily cap today, update streak metadata.
+          if (!isAdminUser && newDailyCount === RECEIPT_DAILY_SUCCESS_LIMIT) {
+            const prevLastHitDay = (typeof userData.receiptLimitLastHitDay === 'string')
+              ? userData.receiptLimitLastHitDay
+              : null;
+            const prevStreak = (typeof userData.receiptLimitHitStreak === 'number')
+              ? userData.receiptLimitHitStreak
+              : 0;
+
+            const isConsecutive = (prevLastHitDay === userLocalYesterdayKey);
+            const newStreak = isConsecutive ? (prevStreak > 0 ? prevStreak + 1 : 2) : 1;
+
+            userUpdate.receiptLimitLastHitDay = userLocalDayKey;
+            userUpdate.receiptLimitLastTimeZone = userTimeZone;
+            userUpdate.receiptLimitHitStreak = newStreak;
+
+            // Flag only when they hit the limit 2 days in a row (first time).
+            if (newStreak === 2) {
+              const flagType = 'receipt_daily_limit_2days';
+              const severity = 'medium';
+              const evidence = {
+                day: userLocalDayKey,
+                timeZone: userTimeZone,
+                limit: RECEIPT_DAILY_SUCCESS_LIMIT,
+                streak: newStreak
+              };
+              const riskScore = calculateSuspiciousRiskScore(severity, evidence);
+
+              const flagId = `${flagType}_${uid}_${userLocalDayKey}`;
+              const flagRef = db.collection('suspiciousFlags').doc(flagId);
+
+              tx.set(flagRef, {
+                userId: uid,
+                flagType,
+                severity,
+                riskScore,
+                description: 'Hit daily receipt scan limit on 2 consecutive days',
+                evidence,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                status: 'pending',
+                reviewedBy: null,
+                reviewedAt: null,
+                reviewNotes: null,
+                actionTaken: null
+              }, { merge: true });
+
+              shouldUpdateRiskScore = true;
+            }
+          }
+
+          tx.update(userRef, userUpdate);
         });
       } catch (e) {
         if (e && e.code === "DUPLICATE_RECEIPT") {
@@ -2817,6 +3006,17 @@ If a field is missing, use null.`;
             "DUPLICATE_RECEIPT",
             "Receipt already submitted - this receipt has already been processed and points will not be awarded",
             { duplicate: true }
+          );
+        }
+        if (e && e.code === "DAILY_RECEIPT_LIMIT_REACHED") {
+          console.log(`🚫 Daily receipt scan cap reached in transaction for user ${uid} day=${userLocalDayKey} tz=${userTimeZone}`);
+          logReceiptScanAttempt(uid, false, "DAILY_LIMIT_REACHED", db, ipAddress).catch(() => {});
+          return sendError(
+            res,
+            429,
+            "DAILY_RECEIPT_LIMIT_REACHED",
+            "You've hit your points limit for today. Come back tomorrow.",
+            { day: userLocalDayKey, timeZone: userTimeZone, limit: RECEIPT_DAILY_SUCCESS_LIMIT }
           );
         }
         if (e && e.code === "USER_NOT_FOUND") {
@@ -2863,6 +3063,9 @@ If a field is missing, use null.`;
       // Check for suspicious receipt patterns (async, don't block response)
       try {
         const service = new SuspiciousBehaviorService(db);
+        if (shouldUpdateRiskScore) {
+          service.updateUserRiskScore(uid).catch(() => {});
+        }
         await service.checkReceiptPatterns(uid, {
           orderNumber: String(data.orderNumber),
           orderTotal: orderTotal,

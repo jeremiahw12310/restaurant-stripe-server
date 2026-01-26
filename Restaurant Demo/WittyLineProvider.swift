@@ -20,6 +20,13 @@ final class WittyLineProvider {
                 "Already cashed this receipt.",
                 "Deja scan."
             ])
+        case .dailyLimitReached:
+            return pick([
+                "You’re capped for today.",
+                "Points limit reached.",
+                "That’s today’s max — nice.",
+                "Come back tomorrow for more."
+            ])
         case .notFromRestaurant:
             return pick([
                 "Wrong house, friend.",

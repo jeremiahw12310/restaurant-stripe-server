@@ -136,7 +136,7 @@ struct ReceiptResultView: View {
 
     private var hero: some View {
         switch outcome {
-        case .duplicate:
+        case .duplicate, .dailyLimitReached:
             return AnyView(
                 Image("herostop")
                     .resizable()
@@ -192,6 +192,7 @@ struct ReceiptResultView: View {
     private var labelText: String? {
         switch outcome {
         case .duplicate: return "Hero Alert"
+        case .dailyLimitReached: return "Hero Alert"
         case .notFromRestaurant: return "Restaurant Mismatch"
         case .unreadable: return "Scan Issue"
         case .totalsNotVisible: return "Totals Missing"
@@ -211,6 +212,8 @@ struct ReceiptResultView: View {
             var detail = "This receipt was already used."
             if let order = order, let date = date { detail = "This receipt was already used on \(date). Order #\(order)." }
             return detail
+        case .dailyLimitReached:
+            return "You’ve hit your points limit for today. Come back tomorrow to earn more points."
         case .notFromRestaurant: return "We can only accept receipts from Dumpling House."
         case .unreadable: return "Try brighter lighting and fill the frame."
         case .totalsNotVisible: return "Make sure all receipt text is visible and try again."
@@ -228,6 +231,7 @@ struct ReceiptResultView: View {
         switch outcome {
         case .success: return "View Rewards"
         case .duplicate: return "View History"
+        case .dailyLimitReached: return "Got It"
         case .notFromRestaurant: return "Got It"
         case .unreadable: return "Got It"
         case .totalsNotVisible: return "Rescan"
@@ -243,6 +247,7 @@ struct ReceiptResultView: View {
     private var secondaryButtonTitle: String? {
         switch outcome {
         case .success: return "Order Now"
+        case .dailyLimitReached: return nil
         default: return "Scan Another"
         }
     }
@@ -271,6 +276,7 @@ struct ReceiptResultView: View {
     private var heroAccessibilityLabel: String {
         switch outcome {
         case .duplicate: return "Receipt already used"
+        case .dailyLimitReached: return "Daily receipt points limit reached"
         case .success: return "+points added"
         case .notFromRestaurant: return "Receipt from different restaurant"
         case .unreadable: return "Receipt unreadable"
