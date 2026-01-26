@@ -320,6 +320,12 @@ class MenuImageCacheManager {
         }
     }
     
+    /// Clear memory cache only (for memory warnings)
+    func clearMemoryCache() {
+        memoryCache.removeAll()
+        print("🧹 Cleared menu image memory cache")
+    }
+    
     /// Clear all cached images
     func clearCache() {
         // Cancel downloads

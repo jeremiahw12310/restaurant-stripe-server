@@ -38,7 +38,7 @@ struct MenuItem: Codable, Identifiable, Hashable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         description = try container.decode(String.self, forKey: .description)
-        price = try container.decode(Double.self, forKey: .price)
+        price = MenuItem.decodeDoubleOrIntOrString(container: container, key: .price, defaultValue: 0)
         imageURL = try container.decode(String.self, forKey: .imageURL)
         isAvailable = MenuItem.decodeBoolOrInt(container: container, key: .isAvailable, defaultValue: true)
         paymentLinkID = try container.decodeIfPresent(String.self, forKey: .paymentLinkID) ?? ""
@@ -57,6 +57,27 @@ struct MenuItem: Codable, Identifiable, Hashable {
         }
         if let intValue = try? container.decodeIfPresent(Int.self, forKey: key) {
             return (intValue ?? 0) != 0
+        }
+        return defaultValue
+    }
+
+    private static func decodeDoubleOrIntOrString(container: KeyedDecodingContainer<CodingKeys>, key: CodingKeys, defaultValue: Double) -> Double {
+        if let doubleValue = try? container.decodeIfPresent(Double.self, forKey: key) {
+            return doubleValue ?? defaultValue
+        }
+        if let intValue = try? container.decodeIfPresent(Int.self, forKey: key) {
+            return Double(intValue ?? 0)
+        }
+        do {
+            if let raw = try container.decodeIfPresent(String.self, forKey: key) {
+                let trimmed = raw
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .replacingOccurrences(of: "$", with: "")
+                    .replacingOccurrences(of: ",", with: "")
+                return Double(trimmed) ?? defaultValue
+            }
+        } catch {
+            // ignore
         }
         return defaultValue
     }

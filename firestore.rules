@@ -341,10 +341,12 @@ service cloud.firestore {
       allow write: if isAdmin(); // Only admins can manage promo slides
     }
     
-    // Banned numbers collection - public read for ban check (pre-auth), admin write
-    match /bannedNumbers/{phone} {
-      allow read: if true; // Public read for ban check before sign-in
-      allow write: if isAdmin(); // Only admins can ban/unban
+    // Banned numbers collection - allow get for pre-auth ban checks, but disallow listing
+    // (Prevents easy enumeration of all banned numbers.)
+    match /bannedNumbers/{docId} {
+      allow get: if true; // Needed for launch/sign-in ban gating
+      allow list: if isAdmin(); // Prevent public enumeration
+      allow write: if isAdmin(); // Only admins can ban/unban (Admin SDK bypasses anyway)
     }
     
     // Suspicious flags collection - admin only

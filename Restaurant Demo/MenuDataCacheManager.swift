@@ -20,7 +20,7 @@ class MenuDataCacheManager {
     var staticDataStalenessThreshold: TimeInterval = 7 * 24 * 60 * 60 // 7 days
     
     /// Cache version - increment to invalidate all caches when format changes
-    private let cacheVersion = "2.0"
+    private let cacheVersion = "2.1"
     private let cacheVersionKey = "menuDataCacheVersion"
     
     // MARK: - Cache Keys

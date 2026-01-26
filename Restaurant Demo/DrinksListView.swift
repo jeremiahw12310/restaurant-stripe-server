@@ -21,7 +21,7 @@ struct DrinksListView: View {
     var body: some View {
         let _ = print("🍹 DrinksListView - category: \(category.id), disableItemSelection: \(disableItemSelection)")
         ScrollView {
-            VStack(spacing: 0) {
+            LazyVStack(spacing: 0) {
                 // Admin tools if needed
                 if showAdminTools {
                     VStack(spacing: 10) {
@@ -34,7 +34,7 @@ struct DrinksListView: View {
                     .padding(.vertical, 16)
                 }
                 
-                // List of drinks
+                // List of drinks - Performance: Use LazyVStack and stable IDs
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                     if disableItemSelection {
                         // View-only mode: render row without button interaction

@@ -24,6 +24,7 @@ struct HomeView: View {
     @EnvironmentObject var authVM: AuthenticationViewModel
     @EnvironmentObject var userVM: UserViewModel
     @EnvironmentObject var sharedRewardsVM: RewardsViewModel
+    @EnvironmentObject var sharedMenuVM: MenuViewModel
     @AppStorage("isLoggedIn") private var isLoggedIn = true
     
     // MARK: - Colors (using enhanced Theme)
@@ -81,6 +82,7 @@ struct HomeView: View {
     @State private var showLifetimePointsSheet = false
     @State private var showReceiptScanner = false
     @State private var showPointsHistorySheet = false
+    @State private var selectedGift: GiftedReward? = nil
     // Glimmer timer (separate from points animation timer)
     @State private var glimmerTimer: Timer? = nil
     
@@ -261,6 +263,19 @@ struct HomeView: View {
                         .padding(.horizontal, 20)
                         .padding(.top, 6)
                         .padding(.bottom, 4)
+                        
+                        // MARK: - Gifted Reward Banner (if user has active gifts)
+                        if let firstGift = activeGifts.first {
+                            HomeGiftedRewardBannerCard(
+                                gift: firstGift,
+                                additionalCount: max(0, activeGifts.count - 1),
+                                onTap: {
+                                    selectedGift = firstGift
+                                }
+                            )
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 8)
+                        }
                         
                         // MARK: - Promo Carousel (Admin-editable)
                         PromoCarouselCard(
@@ -564,6 +579,12 @@ struct HomeView: View {
         .sheet(isPresented: $showLifetimePointsSheet) {
             LifetimePointsView()
                 .environmentObject(userVM)
+        }
+        .sheet(item: $selectedGift) { gift in
+            GiftedRewardDetailView(gift: gift)
+                .environmentObject(userVM)
+                .environmentObject(sharedRewardsVM)
+                .environmentObject(sharedMenuVM)
         }
 
         .alert("Choose Navigation App", isPresented: $showMapsAlert) {
@@ -993,6 +1014,13 @@ struct HomeView: View {
             return Color(red: 0.9, green: 0.9, blue: 1.0)
         default:
             return .gray
+        }
+    }
+    
+    // Active gifted rewards (filtered for isActive and not expired)
+    private var activeGifts: [GiftedReward] {
+        sharedRewardsVM.giftedRewards.filter { gift in
+            gift.isActive && !gift.isExpired
         }
     }
     
@@ -1488,8 +1516,13 @@ struct HomeView: View {
             return 1 - pow(1 - t, 4)
         }
 
-        // Use efficient timer with 60fps (every 0.016s) for smooth animation
-        timer = Timer.publish(every: 0.016, on: .main, in: .common).autoconnect().sink { _ in
+        // Performance: Adjust timer frequency based on low power mode and reduce motion
+        let isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+        let reduceMotion = UIAccessibility.isReduceMotionEnabled
+        let timerInterval: TimeInterval = (isLowPowerMode || reduceMotion) ? 0.033 : 0.016 // 30fps vs 60fps
+        
+        // Use efficient timer for smooth animation
+        timer = Timer.publish(every: timerInterval, on: .main, in: .common).autoconnect().sink { _ in
             let elapsedTime = Date().timeIntervalSince(startTime)
             
             if elapsedTime >= calculatedDuration {
@@ -1500,7 +1533,8 @@ struct HomeView: View {
             } else {
                 // Calculate animated value using easing
                 let progress = min(elapsedTime / calculatedDuration, 1.0)
-                let easedProgress = easeOutQuart(progress)
+                // Performance: Skip easing in reduce motion mode for instant updates
+                let easedProgress = reduceMotion ? progress : easeOutQuart(progress)
                 animatedPoints = startValue + (endValue - startValue) * easedProgress
             }
         }

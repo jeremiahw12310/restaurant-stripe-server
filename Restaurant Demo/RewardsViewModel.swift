@@ -33,6 +33,8 @@ class RewardsViewModel: ObservableObject {
     }
 
     deinit {
+        // Performance: Log deinit for memory leak tracking
+        print("🧹 RewardsViewModel deinit - cleaning up listeners")
         if let handle = authHandle {
             Auth.auth().removeStateDidChangeListener(handle)
         }

@@ -328,6 +328,10 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         ImageCache.default.clearMemoryCache()
         ImageCache.default.clearDiskCache()
         
+        // Performance: Clear menu and promo image memory caches on memory warning
+        MenuImageCacheManager.shared.clearMemoryCache()
+        PromoImageCacheManager.shared.clearMemoryCache()
+        
         // Clear UserDefaults video data (if any exists from before the fix)
         let userDefaults = UserDefaults.standard
         let keys = userDefaults.dictionaryRepresentation().keys

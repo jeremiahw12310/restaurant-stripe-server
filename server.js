@@ -117,6 +117,36 @@ const submitReceiptLimiter = createInMemoryRateLimiter({
   errorCode: 'RECEIPT_RATE_LIMITED'
 });
 
+// Referral endpoints (moderate brute-force protection)
+const referralPerUserLimiter = createInMemoryRateLimiter({
+  keyFn: (req) => req.auth?.uid,
+  windowMs: 60 * 1000,
+  max: 5,
+  errorCode: 'REFERRAL_RATE_LIMITED'
+});
+
+const referralPerIpLimiter = createInMemoryRateLimiter({
+  keyFn: (req) => getClientIp(req),
+  windowMs: 60 * 1000,
+  max: 10,
+  errorCode: 'REFERRAL_RATE_LIMITED'
+});
+
+// Banned number helpers (hash doc IDs to reduce enumeration)
+function normalizePhoneForBannedNumbers(phone) {
+  const digits = (phone || '').toString().replace(/\D/g, '');
+  if (!digits || digits.length < 10) return null;
+  const last10 = digits.slice(-10);
+  return `+1${last10}`;
+}
+
+function hashBannedNumbersDocId(normalizedPhone) {
+  const crypto = require('crypto');
+  const value = (normalizedPhone || '').toString();
+  if (!value) return null;
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
 // =============================================================================
 // Auth helpers (cost protection / parity with deployed backend)
 // =============================================================================
@@ -275,15 +305,9 @@ function validateDietaryRestrictions(items, dietaryPreferences, allMenuItems) {
 // ---------------------------------------------------------------------------
 
 // Create or get referral code
-app.post('/referrals/create', async (req, res) => {
+app.post('/referrals/create', requireFirebaseAuth, referralPerUserLimiter, referralPerIpLimiter, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    const idToken = authHeader.split('Bearer ')[1];
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
-    const uid = decodedToken.uid;
+    const uid = req.auth.uid;
 
     const db = admin.firestore();
     const userRef = db.collection('users').doc(uid);
@@ -323,15 +347,9 @@ app.post('/referrals/create', async (req, res) => {
 });
 
 // Accept referral code
-app.post('/referrals/accept', async (req, res) => {
+app.post('/referrals/accept', requireFirebaseAuth, referralPerUserLimiter, referralPerIpLimiter, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    const idToken = authHeader.split('Bearer ')[1];
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
-    const uid = decodedToken.uid;
+    const uid = req.auth.uid;
 
     const { code } = req.body;
     if (!code) {
@@ -394,15 +412,9 @@ app.post('/referrals/accept', async (req, res) => {
 });
 
 // Get user's referral connections
-app.get('/referrals/mine', async (req, res) => {
+app.get('/referrals/mine', requireFirebaseAuth, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    const idToken = authHeader.split('Bearer ')[1];
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
-    const uid = decodedToken.uid;
+    const uid = req.auth.uid;
 
     const db = admin.firestore();
     
@@ -1621,24 +1633,11 @@ If a field is missing, use null.`;
   // Receipt submit endpoint (server-authoritative points awarding)
   // This endpoint validates the receipt and awards points atomically on the server.
   // It does NOT rely on the client to update points, improving integrity.
-  app.post('/submit-receipt', submitReceiptLimiter, upload.single('image'), async (req, res) => {
+  app.post('/submit-receipt', requireFirebaseAuth, submitReceiptLimiter, upload.single('image'), async (req, res) => {
     try {
       console.log('📥 Received receipt SUBMISSION request');
 
-      // Require authenticated user
-      const authHeader = req.headers.authorization || '';
-      const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
-      if (!token) {
-        return sendError(res, 401, "UNAUTHENTICATED", "Missing or invalid Authorization header");
-      }
-      let uid;
-      try {
-        const decoded = await admin.auth().verifyIdToken(token);
-        uid = decoded.uid;
-      } catch (e) {
-        console.warn('❌ Invalid auth token for submit-receipt:', e.message || e);
-        return sendError(res, 401, "UNAUTHENTICATED", "Invalid auth token");
-      }
+      const uid = req.auth.uid;
 
       if (!req.file) {
         console.log('❌ No image file received');
@@ -2057,19 +2056,9 @@ If a field is missing, use null.`;
 
   // Welcome points claim (server-authoritative)
   // Prevents clients from directly incrementing their own points in Firestore.
-  app.post('/welcome/claim', async (req, res) => {
+  app.post('/welcome/claim', requireFirebaseAuth, async (req, res) => {
     try {
-      const authHeader = req.headers.authorization || '';
-      const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
-      if (!token) return sendError(res, 401, "UNAUTHENTICATED", "Missing or invalid Authorization header");
-
-      let uid;
-      try {
-        const decoded = await admin.auth().verifyIdToken(token);
-        uid = decoded.uid;
-      } catch (e) {
-        return sendError(res, 401, "UNAUTHENTICATED", "Invalid auth token");
-      }
+      const uid = req.auth.uid;
 
       const db = admin.firestore();
       const userRef = db.collection('users').doc(uid);
@@ -3702,7 +3691,7 @@ IMPORTANT:
   });
 
   // Redeem reward endpoint
-  app.post('/redeem-reward', async (req, res) => {
+  app.post('/redeem-reward', requireFirebaseAuth, async (req, res) => {
     let pointsRequiredNumber = null;
     try {
       console.log('🎁 Received reward redemption request');
@@ -3727,12 +3716,7 @@ IMPORTANT:
         selectedDrinkItemName // NEW: Optional drink item name (for Full Combo)
       } = req.body;
       
-      const auth = await requireUser(req, res);
-      if (!auth) {
-        return;
-      }
-      
-      const userId = auth.uid;
+      const userId = req.auth.uid;
       if (requestedUserId && requestedUserId !== userId) {
         return res.status(403).json({ error: 'User mismatch for reward redemption' });
       }
@@ -4046,14 +4030,13 @@ IMPORTANT:
    * - { fcmToken: string } to set token
    * - { fcmToken: null } to clear token
    */
-  app.post('/me/fcmToken', async (req, res) => {
+  app.post('/me/fcmToken', requireFirebaseAuth, async (req, res) => {
     try {
-      const userContext = await requireUser(req, res);
-      if (!userContext) return;
+      const uid = req.auth.uid;
 
       const { fcmToken } = req.body || {};
       const db = admin.firestore();
-      const userRef = db.collection('users').doc(userContext.uid);
+      const userRef = db.collection('users').doc(uid);
 
       const userDoc = await userRef.get();
       if (!userDoc.exists) {
@@ -5736,14 +5719,18 @@ IMPORTANT:
 
       const db = admin.firestore();
       
-      // Check bannedNumbers collection
-      const bannedDoc = await db.collection('bannedNumbers').doc(normalizedPhone).get();
-      
-      // Also check alternative formats (in case phone was stored differently)
-      let isBanned = bannedDoc.exists;
-      
+      // Check bannedNumbers collection (prefer hashed doc IDs; fall back to legacy)
+      let isBanned = false;
+      const hashedId = hashBannedNumbersDocId(normalizedPhone);
+      if (hashedId) {
+        const hashedDoc = await db.collection('bannedNumbers').doc(hashedId).get();
+        isBanned = hashedDoc.exists;
+      }
       if (!isBanned) {
-        // Try checking with just digits (no +)
+        const bannedDoc = await db.collection('bannedNumbers').doc(normalizedPhone).get();
+        isBanned = bannedDoc.exists;
+      }
+      if (!isBanned) {
         const digitsOnly = normalizedPhone.replace('+', '');
         const altBannedDoc = await db.collection('bannedNumbers').doc(digitsOnly).get();
         isBanned = altBannedDoc.exists;
@@ -5799,42 +5786,17 @@ IMPORTANT:
         return res.status(400).json({ error: 'User does not have a phone number' });
       }
 
-      // Normalize phone number to match iOS format: +1XXXXXXXXXX (12 characters)
-      let normalizedPhone = phone.trim();
-      const digits = normalizedPhone.replace(/[^\d]/g, '');
-      
-      // If it starts with +1, keep it; if it starts with 1, add +; if 10 digits, add +1
-      if (normalizedPhone.startsWith('+1') && digits.length === 11) {
-        // Already has +1 prefix with 11 digits (1 + 10)
-        normalizedPhone = normalizedPhone.substring(0, 12); // Ensure exactly 12 chars
-      } else if (normalizedPhone.startsWith('+') && digits.length === 11) {
-        // Has + but missing 1, add it
-        normalizedPhone = '+1' + digits.substring(1);
-      } else if (digits.length === 11 && digits.startsWith('1')) {
-        // 11 digits starting with 1, add +
-        normalizedPhone = '+' + digits;
-      } else if (digits.length === 10) {
-        // 10 digits, add +1
-        normalizedPhone = '+1' + digits;
-      } else {
-        // Try to fix: if it has + but wrong format, try to normalize
-        if (normalizedPhone.startsWith('+')) {
-          normalizedPhone = '+' + digits;
-        } else {
-          normalizedPhone = '+1' + digits;
-        }
+      const normalizedPhone = normalizePhoneForBannedNumbers(phone);
+      if (!normalizedPhone) {
+        return res.status(400).json({ error: 'Invalid phone number format' });
       }
-      
-      // Ensure exactly 12 characters
-      if (normalizedPhone.length !== 12 || !normalizedPhone.startsWith('+1')) {
-        if (digits.length >= 10) {
-          const last10 = digits.slice(-10);
-          normalizedPhone = '+1' + last10;
-        }
+      const bannedDocId = hashBannedNumbersDocId(normalizedPhone);
+      if (!bannedDocId) {
+        return res.status(500).json({ error: 'Failed to compute ban hash' });
       }
 
       // Check if already banned
-      const bannedDoc = await db.collection('bannedNumbers').doc(normalizedPhone).get();
+      const bannedDoc = await db.collection('bannedNumbers').doc(bannedDocId).get();
       if (bannedDoc.exists) {
         return res.status(400).json({ error: 'This phone number is already banned' });
       }
@@ -5850,7 +5812,14 @@ IMPORTANT:
         reason: reason || null
       };
 
-      await db.collection('bannedNumbers').doc(normalizedPhone).set(bannedData);
+      await db.collection('bannedNumbers').doc(bannedDocId).set(bannedData);
+
+      // Best-effort cleanup of legacy doc IDs (migration)
+      const digitsOnlyLegacy = normalizedPhone.replace('+', '');
+      await Promise.all([
+        db.collection('bannedNumbers').doc(normalizedPhone).delete().catch(() => {}),
+        db.collection('bannedNumbers').doc(digitsOnlyLegacy).delete().catch(() => {})
+      ]);
 
       // Mark user as banned
       await db.collection('users').doc(userId).update({
@@ -5891,22 +5860,37 @@ IMPORTANT:
         return res.status(400).json({ error: 'Phone number is required' });
       }
 
-      // Normalize phone number
-      const normalizedPhone = phone.startsWith('+') ? phone : `+${phone}`;
+      const normalizedPhone = normalizePhoneForBannedNumbers(phone) || (phone.startsWith('+') ? phone : `+${phone}`);
+      const digitsOnlyLegacy = normalizedPhone.replace('+', '');
+      const bannedDocId = hashBannedNumbersDocId(normalizedPhone);
 
       const db = admin.firestore();
       
-      // Get banned number document
-      const bannedDoc = await db.collection('bannedNumbers').doc(normalizedPhone).get();
-      if (!bannedDoc.exists) {
-        return res.status(404).json({ error: 'Phone number is not banned' });
+      // Get banned number document (hashed first, then legacy)
+      let bannedDoc = null;
+      if (bannedDocId) {
+        const snap = await db.collection('bannedNumbers').doc(bannedDocId).get();
+        if (snap.exists) bannedDoc = snap;
       }
+      if (!bannedDoc) {
+        const snap = await db.collection('bannedNumbers').doc(normalizedPhone).get();
+        if (snap.exists) bannedDoc = snap;
+      }
+      if (!bannedDoc) {
+        const snap = await db.collection('bannedNumbers').doc(digitsOnlyLegacy).get();
+        if (snap.exists) bannedDoc = snap;
+      }
+      if (!bannedDoc) return res.status(404).json({ error: 'Phone number is not banned' });
 
       const bannedData = bannedDoc.data();
       const originalUserId = bannedData?.originalUserId;
 
-      // Remove from bannedNumbers
-      await db.collection('bannedNumbers').doc(normalizedPhone).delete();
+      // Remove from bannedNumbers (hashed + legacy best-effort)
+      await Promise.all([
+        bannedDocId ? db.collection('bannedNumbers').doc(bannedDocId).delete().catch(() => {}) : Promise.resolve(),
+        db.collection('bannedNumbers').doc(normalizedPhone).delete().catch(() => {}),
+        db.collection('bannedNumbers').doc(digitsOnlyLegacy).delete().catch(() => {})
+      ]);
 
       // If there's an original user ID, unban their account
       if (originalUserId) {

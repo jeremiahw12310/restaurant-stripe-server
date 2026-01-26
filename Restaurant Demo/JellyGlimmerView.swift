@@ -5,17 +5,35 @@ struct JellyGlimmerView: View {
     var time: Double
     var colorScheme: ColorScheme
     var pop: Bool
+    
+    // Performance: Check for reduce motion and low power mode
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
+    private var isLowPowerMode: Bool {
+        ProcessInfo.processInfo.isLowPowerModeEnabled
+    }
 
     var body: some View {
-        ZStack {
-            // OPTIMIZED: Reduced from 5 blobs to 3 blobs for better performance
-            JellyBlob(color: .purple, baseX: 0.2, baseY: 0.3, scrollOffset: scrollOffset, time: time, size: 280, speed: 0.4, colorScheme: colorScheme, pop: pop)
-            JellyBlob(color: .blue, baseX: 0.7, baseY: 0.2, scrollOffset: scrollOffset, time: time, size: 220, speed: 0.5, colorScheme: colorScheme, pop: pop)
-            JellyBlob(color: .pink, baseX: 0.5, baseY: 0.7, scrollOffset: scrollOffset, time: time, size: 260, speed: 0.45, colorScheme: colorScheme, pop: pop)
-            // Removed 2 blobs to reduce CPU usage
+        // Performance: Hide animation entirely if reduce motion is enabled
+        if reduceMotion {
+            EmptyView()
+        } else {
+            ZStack {
+                // Performance: Reduce blob count in low power mode
+                let blobCount = isLowPowerMode ? 2 : 3
+                
+                if blobCount >= 1 {
+                    JellyBlob(color: .purple, baseX: 0.2, baseY: 0.3, scrollOffset: scrollOffset, time: time, size: 280, speed: 0.4, colorScheme: colorScheme, pop: pop)
+                }
+                if blobCount >= 2 {
+                    JellyBlob(color: .blue, baseX: 0.7, baseY: 0.2, scrollOffset: scrollOffset, time: time, size: 220, speed: 0.5, colorScheme: colorScheme, pop: pop)
+                }
+                if blobCount >= 3 {
+                    JellyBlob(color: .pink, baseX: 0.5, baseY: 0.7, scrollOffset: scrollOffset, time: time, size: 260, speed: 0.45, colorScheme: colorScheme, pop: pop)
+                }
+            }
+            .blendMode(.screen)
+            .ignoresSafeArea()
         }
-        .blendMode(.screen)
-        .ignoresSafeArea()
     }
 }
 

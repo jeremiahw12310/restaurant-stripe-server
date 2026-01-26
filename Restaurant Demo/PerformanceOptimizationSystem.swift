@@ -107,6 +107,9 @@ class PerformanceManager: ObservableObject {
     private func handleMemoryWarning() {
         logger.warning("Memory warning received - cleaning up caches")
         ImageCacheManager.shared.clearCache()
+        // Performance: Also clear menu and promo image memory caches
+        MenuImageCacheManager.shared.clearMemoryCache()
+        PromoImageCacheManager.shared.clearMemoryCache()
         LazyLoadingManager.shared.purgeInactiveContent()
         memoryWarningSubject.send()
     }

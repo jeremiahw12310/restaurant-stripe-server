@@ -36,7 +36,16 @@ class MenuViewModel: ObservableObject {
     // Computed property to get all menu items across all categories
     var allMenuItems: [MenuItem] {
         return menuCategories.flatMap { category in
-            category.items ?? []
+            var items: [MenuItem] = []
+            if let categoryItems = category.items {
+                items.append(contentsOf: categoryItems)
+            }
+            if let subCategories = category.subCategories {
+                for subCategory in subCategories {
+                    items.append(contentsOf: subCategory.items)
+                }
+            }
+            return items
         }
     }
     
@@ -142,6 +151,111 @@ class MenuViewModel: ObservableObject {
         // Duplicates are handled by keeping the canonical document
 
         return chosen.values.map { $0.item }
+    }
+
+    private func decodeEmbeddedMenuItems(_ raw: Any?, categoryId: String) -> [MenuItem] {
+        guard let rawArray = raw as? [Any], !rawArray.isEmpty else { return [] }
+
+        func boolFromAny(_ v: Any?, defaultValue: Bool) -> Bool {
+            switch v {
+            case let b as Bool:
+                return b
+            case let n as Int:
+                return n != 0
+            case let n as Double:
+                return n != 0
+            case let s as String:
+                let t = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if ["true", "1", "yes", "y"].contains(t) { return true }
+                if ["false", "0", "no", "n"].contains(t) { return false }
+                return defaultValue
+            default:
+                return defaultValue
+            }
+        }
+
+        func doubleFromAny(_ v: Any?, defaultValue: Double) -> Double {
+            switch v {
+            case let d as Double:
+                return d
+            case let i as Int:
+                return Double(i)
+            case let s as String:
+                let trimmed = s
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .replacingOccurrences(of: "$", with: "")
+                    .replacingOccurrences(of: ",", with: "")
+                return Double(trimmed) ?? defaultValue
+            default:
+                return defaultValue
+            }
+        }
+
+        func stringArrayFromAny(_ v: Any?) -> [String] {
+            if let arr = v as? [String] { return arr }
+            if let arr = v as? [Any] { return arr.compactMap { $0 as? String } }
+            return []
+        }
+
+        var items: [MenuItem] = []
+        items.reserveCapacity(rawArray.count)
+
+        for el in rawArray {
+            guard let dict = el as? [String: Any] else { continue }
+
+            let id = (dict["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if id.isEmpty { continue }
+
+            let description = (dict["description"] as? String) ?? ""
+            let imageURL = (dict["imageURL"] as? String) ?? ""
+            let price = doubleFromAny(dict["price"], defaultValue: 0)
+            let isAvailable = boolFromAny(dict["isAvailable"], defaultValue: true)
+            let paymentLinkID = (dict["paymentLinkID"] as? String) ?? ""
+            let isDumpling = boolFromAny(dict["isDumpling"], defaultValue: false)
+            let toppingModifiersEnabled = boolFromAny(dict["toppingModifiersEnabled"], defaultValue: false)
+            let milkSubModifiersEnabled = boolFromAny(dict["milkSubModifiersEnabled"], defaultValue: false)
+            let availableToppingIDs = stringArrayFromAny(dict["availableToppingIDs"])
+            let availableMilkSubIDs = stringArrayFromAny(dict["availableMilkSubIDs"])
+            let allergyTagIDs = stringArrayFromAny(dict["allergyTagIDs"])
+            let categoryRaw = (dict["category"] as? String) ?? ""
+            let category = categoryRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? categoryId : categoryRaw
+
+            items.append(
+                MenuItem(
+                    id: id,
+                    description: description,
+                    price: price,
+                    imageURL: imageURL,
+                    isAvailable: isAvailable,
+                    paymentLinkID: paymentLinkID,
+                    isDumpling: isDumpling,
+                    toppingModifiersEnabled: toppingModifiersEnabled,
+                    milkSubModifiersEnabled: milkSubModifiersEnabled,
+                    availableToppingIDs: availableToppingIDs,
+                    availableMilkSubIDs: availableMilkSubIDs,
+                    allergyTagIDs: allergyTagIDs,
+                    category: category
+                )
+            )
+        }
+
+        return items
+    }
+
+    private func decodeEmbeddedSubCategories(_ raw: Any?, categoryId: String) -> [MenuSubCategory]? {
+        guard let rawArray = raw as? [Any], !rawArray.isEmpty else { return nil }
+
+        var result: [MenuSubCategory] = []
+        result.reserveCapacity(rawArray.count)
+
+        for el in rawArray {
+            guard let dict = el as? [String: Any] else { continue }
+            guard let id = dict["id"] as? String, !id.isEmpty else { continue }
+            let items = decodeEmbeddedMenuItems(dict["items"], categoryId: categoryId)
+            result.append(MenuSubCategory(id: id, items: items))
+        }
+
+        return result.isEmpty ? nil : result
     }
 
     init() {
@@ -359,6 +473,9 @@ class MenuViewModel: ObservableObject {
     }
     
     deinit {
+        // Performance: Log deinit for memory leak tracking
+        print("🧹 MenuViewModel deinit - cleaning up listeners")
+        
         // Stop listening for changes when the view model is deallocated.
         listenerRegistration?.remove()
         orderListener?.remove()
@@ -367,6 +484,12 @@ class MenuViewModel: ObservableObject {
         allergyTagsListener?.remove()
         drinkFlavorsListener?.remove()
         drinkToppingsListener?.remove()
+        
+        // Clear item listeners dictionary
+        for (_, listener) in itemListeners {
+            listener.remove()
+        }
+        itemListeners.removeAll()
     }
 
     func loadMenuItems() {
@@ -477,13 +600,26 @@ class MenuViewModel: ObservableObject {
                 return
             }
 
-            // Build categories with flags from Firestore
-            let newCategories: [MenuCategory] = documents.map { doc in
+            let categoryIds = documents.map { $0.documentID }
+
+            // Build categories from the category doc itself (embedded `items` / `subCategories`), and
+            // only fall back to the items subcollection when embedded data is missing.
+            var fallbackCategoryIds: [String] = []
+            let builtCategories: [MenuCategory] = documents.map { doc in
                 let data = doc.data()
+                let categoryId = doc.documentID
+
+                let embeddedItems = self.decodeEmbeddedMenuItems(data["items"], categoryId: categoryId)
+                let embeddedSubCategories = self.decodeEmbeddedSubCategories(data["subCategories"], categoryId: categoryId)
+                let hasEmbedded = !embeddedItems.isEmpty || (embeddedSubCategories?.isEmpty == false)
+                if !hasEmbedded {
+                    fallbackCategoryIds.append(categoryId)
+                }
+
                 return MenuCategory(
-                    id: doc.documentID,
-                    items: [],
-                    subCategories: nil,
+                    id: categoryId,
+                    items: embeddedItems,
+                    subCategories: embeddedSubCategories,
                     isDrinks: data["isDrinks"] as? Bool ?? false,
                     lemonadeSodaEnabled: data["lemonadeSodaEnabled"] as? Bool ?? false,
                     isToppingCategory: data["isToppingCategory"] as? Bool ?? false,
@@ -492,15 +628,36 @@ class MenuViewModel: ObservableObject {
                 )
             }
 
-            let categoryIds = documents.map { $0.documentID }
-            let group = DispatchGroup()
+            func finalizeMenuLoad() {
+                self.isLoading = false
+                self.isFetchingMenu = false
+                self.isRefreshing = false
+                self.lastMenuUpdate = Date()
 
-            DispatchQueue.main.async {
-                self.menuCategories = newCategories.sorted { $0.id < $1.id }
-                self.loadingCategories = Set(categoryIds)
+                // Cache menu data after full load
+                self.dataCacheManager.cacheMenuCategories(self.menuCategories)
+
+                // Load cached images immediately and check for updates
+                self.preloadCachedImages()
             }
 
-            for categoryId in categoryIds {
+            DispatchQueue.main.async {
+                self.menuCategories = builtCategories.sorted { $0.id < $1.id }
+                self.loadingCategories = Set(categoryIds)
+                // Categories that were satisfied by embedded data are no longer "loading".
+                for id in categoryIds where !fallbackCategoryIds.contains(id) {
+                    self.loadingCategories.remove(id)
+                }
+
+                if fallbackCategoryIds.isEmpty {
+                    finalizeMenuLoad()
+                }
+            }
+
+            guard !fallbackCategoryIds.isEmpty else { return }
+
+            let group = DispatchGroup()
+            for categoryId in fallbackCategoryIds {
                 group.enter()
                 self.db.collection("menu").document(categoryId).collection("items").getDocuments { [weak self] itemsSnapshot, itemsError in
                     guard let self = self else {
@@ -530,16 +687,7 @@ class MenuViewModel: ObservableObject {
             }
 
             group.notify(queue: .main) {
-                self.isLoading = false
-                self.isFetchingMenu = false
-                self.isRefreshing = false
-                self.lastMenuUpdate = Date()
-
-                // Cache menu data after full load
-                self.dataCacheManager.cacheMenuCategories(self.menuCategories)
-
-                // Load cached images immediately and check for updates
-                self.preloadCachedImages()
+                finalizeMenuLoad()
             }
         }
 

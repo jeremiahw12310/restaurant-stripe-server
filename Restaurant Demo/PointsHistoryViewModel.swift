@@ -148,29 +148,6 @@ class PointsHistoryViewModel: ObservableObject {
             }
     }
     
-    func addTransaction(_ transaction: PointsTransaction, completion: @escaping (Bool) -> Void) {
-        guard let userId = Auth.auth().currentUser?.uid else {
-            errorMessage = "User not authenticated"
-            completion(false)
-            return
-        }
-        
-        let data = transaction.toFirestore()
-        
-        db.collection("pointsTransactions").document(transaction.id).setData(data) { [weak self] error in
-            DispatchQueue.main.async {
-                if let error = error {
-                    self?.errorMessage = "Error adding transaction: \(error.localizedDescription)"
-                    print("❌ Error adding points transaction: \(error.localizedDescription)")
-                    completion(false)
-                } else {
-                    print("✅ Points transaction added successfully")
-                    completion(true)
-                }
-            }
-        }
-    }
-    
     func clearFilter() {
         selectedFilter = nil
     }
@@ -209,53 +186,9 @@ class PointsHistoryViewModel: ObservableObject {
         listenerRegistration = nil
     }
     
-    // MARK: - Convenience Methods for Common Transactions
     func loadMoreTransactions() {
         let total = allFilteredSortedTransactions.count
         guard visibleLimit < total else { return }
         visibleLimit = min(visibleLimit + pageSize, total)
-    }
-
-    func addWelcomePointsTransaction(points: Int, completion: @escaping (Bool) -> Void) {
-        let transaction = PointsTransaction(
-            userId: Auth.auth().currentUser?.uid ?? "",
-            type: .welcome,
-            amount: points,
-            description: "Welcome bonus points for new account"
-        )
-        addTransaction(transaction, completion: completion)
-    }
-    
-    func addReceiptScanTransaction(points: Int, receiptTotal: Double, completion: @escaping (Bool) -> Void) {
-        let transaction = PointsTransaction(
-            userId: Auth.auth().currentUser?.uid ?? "",
-            type: .receiptScan,
-            amount: points,
-            description: "Points earned from receipt scan ($\(String(format: "%.2f", receiptTotal)))",
-            metadata: ["receiptTotal": receiptTotal]
-        )
-        addTransaction(transaction, completion: completion)
-    }
-    
-    func addRewardRedeemedTransaction(points: Int, rewardTitle: String, completion: @escaping (Bool) -> Void) {
-        let transaction = PointsTransaction(
-            userId: Auth.auth().currentUser?.uid ?? "",
-            type: .rewardRedeemed,
-            amount: -points, // Negative because points are spent
-            description: "Redeemed reward: \(rewardTitle)",
-            metadata: ["rewardTitle": rewardTitle]
-        )
-        addTransaction(transaction, completion: completion)
-    }
-    
-    func addAdminAdjustmentTransaction(points: Int, reason: String, completion: @escaping (Bool) -> Void) {
-        let transaction = PointsTransaction(
-            userId: Auth.auth().currentUser?.uid ?? "",
-            type: .adminAdjustment,
-            amount: points,
-            description: "Admin adjustment: \(reason)",
-            metadata: ["reason": reason]
-        )
-        addTransaction(transaction, completion: completion)
     }
 } 

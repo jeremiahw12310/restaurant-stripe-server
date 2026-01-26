@@ -79,6 +79,8 @@ class UserViewModel: ObservableObject {
     private var isDeletingAccount = false
     
     deinit {
+        // Performance: Log deinit for memory leak tracking
+        print("🧹 UserViewModel deinit - cleaning up listeners")
         stopUserListener()
     }
     

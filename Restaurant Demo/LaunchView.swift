@@ -1,6 +1,7 @@
 import SwiftUI
 import FirebaseAuth
 import FirebaseFirestore
+import CryptoKit
 
 struct LaunchView: View {
     @AppStorage("isLoggedIn") private var isLoggedIn = false
@@ -97,6 +98,7 @@ struct LaunchView: View {
                 let rawPhone = (data["phone"] as? String) ?? ""
                 let normalizedPhone = normalizePhoneForBannedLookup(rawPhone)
                 let digitsOnly = normalizedPhone.replacingOccurrences(of: "+", with: "")
+                let hashedId = bannedNumbersDocIdHash(normalizedPhone)
 
                 // If no phone, fall back to the profile flag only.
                 guard !normalizedPhone.isEmpty else {
@@ -108,24 +110,60 @@ struct LaunchView: View {
                 }
 
                 let db = Firestore.firestore()
-                db.collection("bannedNumbers").document(normalizedPhone).getDocument { bannedSnap, _ in
-                    guard loginGateCheckToken == token else { return }
-                    let bannedByNormalized = bannedSnap?.exists == true
-
-                    // If not found, try digits-only legacy format.
-                    if !bannedByNormalized && digitsOnly != normalizedPhone {
-                        db.collection("bannedNumbers").document(digitsOnly).getDocument { altSnap, _ in
-                            guard loginGateCheckToken == token else { return }
-                            let bannedByDigits = altSnap?.exists == true
+                // Prefer hashed doc IDs to reduce enumeration risk; fall back to legacy IDs for compatibility.
+                if !hashedId.isEmpty {
+                    db.collection("bannedNumbers").document(hashedId).getDocument { hashedSnap, _ in
+                        guard loginGateCheckToken == token else { return }
+                        let bannedByHash = hashedSnap?.exists == true
+                        if bannedByHash {
                             DispatchQueue.main.async {
-                                self.isBanned = userIsBanned || bannedByNormalized || bannedByDigits
+                                self.isBanned = true
                                 if !isLoggedIn { isLoggedIn = true }
                             }
+                            return
                         }
-                    } else {
-                        DispatchQueue.main.async {
-                            self.isBanned = userIsBanned || bannedByNormalized
-                            if !isLoggedIn { isLoggedIn = true }
+
+                        db.collection("bannedNumbers").document(normalizedPhone).getDocument { bannedSnap, _ in
+                            guard loginGateCheckToken == token else { return }
+                            let bannedByNormalized = bannedSnap?.exists == true
+
+                            // If not found, try digits-only legacy format.
+                            if !bannedByNormalized && digitsOnly != normalizedPhone {
+                                db.collection("bannedNumbers").document(digitsOnly).getDocument { altSnap, _ in
+                                    guard loginGateCheckToken == token else { return }
+                                    let bannedByDigits = altSnap?.exists == true
+                                    DispatchQueue.main.async {
+                                        self.isBanned = userIsBanned || bannedByNormalized || bannedByDigits
+                                        if !isLoggedIn { isLoggedIn = true }
+                                    }
+                                }
+                            } else {
+                                DispatchQueue.main.async {
+                                    self.isBanned = userIsBanned || bannedByNormalized
+                                    if !isLoggedIn { isLoggedIn = true }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    db.collection("bannedNumbers").document(normalizedPhone).getDocument { bannedSnap, _ in
+                        guard loginGateCheckToken == token else { return }
+                        let bannedByNormalized = bannedSnap?.exists == true
+
+                        if !bannedByNormalized && digitsOnly != normalizedPhone {
+                            db.collection("bannedNumbers").document(digitsOnly).getDocument { altSnap, _ in
+                                guard loginGateCheckToken == token else { return }
+                                let bannedByDigits = altSnap?.exists == true
+                                DispatchQueue.main.async {
+                                    self.isBanned = userIsBanned || bannedByNormalized || bannedByDigits
+                                    if !isLoggedIn { isLoggedIn = true }
+                                }
+                            }
+                        } else {
+                            DispatchQueue.main.async {
+                                self.isBanned = userIsBanned || bannedByNormalized
+                                if !isLoggedIn { isLoggedIn = true }
+                            }
                         }
                     }
                 }
@@ -156,6 +194,13 @@ struct LaunchView: View {
         guard digits.count >= 10 else { return "" }
         let last10 = String(digits.suffix(10))
         return "+1" + last10
+    }
+
+    private func bannedNumbersDocIdHash(_ normalizedPhone: String) -> String {
+        guard !normalizedPhone.isEmpty else { return "" }
+        let data = Data(normalizedPhone.utf8)
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     private func startAnimation() {
