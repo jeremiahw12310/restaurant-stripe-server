@@ -1282,7 +1282,7 @@ If a field is missing, use null.`;
         if (/^\d+$/.test(s)) return String(parseInt(s, 10));
         return s;
       };
-      const normalizeOrderTotal = (v) => {
+      const normalizeMoney = (v) => {
         if (v === null || v === undefined) return v;
         const n = typeof v === 'number' ? v : parseFloat(String(v).trim());
         if (Number.isNaN(n)) return v;
@@ -1294,7 +1294,8 @@ If a field is missing, use null.`;
         ...d,
         // then override the canonical fields with normalized values
         orderNumber: normalizeOrderNumber(d.orderNumber),
-        orderTotal: normalizeOrderTotal(d.orderTotal),
+        orderTotal: normalizeMoney(d.orderTotal),
+        tipAmount: normalizeMoney(d.tipAmount),
         orderDate: normalizeOrderDate(d.orderDate),
         orderTime: normalizeOrderTime(d.orderTime),
       });
@@ -1311,6 +1312,8 @@ If a field is missing, use null.`;
       const responsesMatch = 
         norm1.orderNumber === norm2.orderNumber &&
         norm1.orderTotal === norm2.orderTotal &&
+        norm1.tipAmount === norm2.tipAmount &&
+        norm1.tipLineVisible === norm2.tipLineVisible &&
         norm1.orderDate === norm2.orderDate &&
         norm1.orderTime === norm2.orderTime;
       
@@ -1688,6 +1691,8 @@ VALIDATION RULES:
 EXTRACTION RULES:
 - orderNumber: CRITICAL - Find the number INSIDE the black box with white text that is located directly underneath the word "Nashville" on the receipt. This black box is the ONLY valid source for the order number when a black box is present. On pickup receipts, the order number may be directly under "Nashville" without a black box. On receipts where there is no such black box at all, you MUST follow the paid-online rules described above: only use the bold number immediately next to "Order:" on receipts that clearly say "paid online", and otherwise return an appropriate error without guessing from anywhere else on the receipt.
 - orderTotal: The total amount paid (as a number, e.g. 23.45)
+- tipAmount: The TIP/GRATUITY amount as a number (e.g. 4.81) or null if not visible.
+- tipLineVisible: true only if the Tip/Gratuity line (label + digits) is clearly visible. Otherwise false.
 - orderDate: The date in MM/DD format only (e.g. "12/25")
 - orderTime: The time in HH:MM format only (e.g. "14:30"). This is always located to the right of the date on the receipt.
 
@@ -1716,7 +1721,7 @@ IMPORTANT:
 - SAFETY FIRST: It's better to reject a receipt and ask for a clearer photo than to guess and return incorrect information. If you are not highly confident about any of the key fields, treat the receipt as invalid and return an error message instead of guessing.
 
 Respond ONLY as a JSON object with this exact shape:
-{"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "...", "totalVisibleAndClear": true/false, "orderNumberVisibleAndClear": true/false, "dateVisibleAndClear": true/false, "timeVisibleAndClear": true/false, "keyFieldsTampered": true/false, "tamperingReason": "...", "orderNumberInBlackBox": true/false, "orderNumberDirectlyUnderNashville": true/false, "paidOnlineReceipt": true/false, "orderNumberFromPaidOnlineSection": true/false} 
+{"orderNumber": "...", "orderTotal": ..., "tipAmount": ..., "tipLineVisible": true/false, "orderDate": "...", "orderTime": "...", "totalVisibleAndClear": true/false, "orderNumberVisibleAndClear": true/false, "dateVisibleAndClear": true/false, "timeVisibleAndClear": true/false, "keyFieldsTampered": true/false, "tamperingReason": "...", "orderNumberInBlackBox": true/false, "orderNumberDirectlyUnderNashville": true/false, "paidOnlineReceipt": true/false, "orderNumberFromPaidOnlineSection": true/false} 
 or {"error": "error message"}.
 If a field is missing, use null.`;
 
@@ -1780,7 +1785,7 @@ If a field is missing, use null.`;
         if (/^\d+$/.test(s)) return String(parseInt(s, 10));
         return s;
       };
-      const normalizeOrderTotal = (v) => {
+      const normalizeMoney = (v) => {
         if (v === null || v === undefined) return v;
         const n = typeof v === 'number' ? v : parseFloat(String(v).trim());
         if (Number.isNaN(n)) return v;
@@ -1789,7 +1794,8 @@ If a field is missing, use null.`;
       const normalizeParsedReceipt = (d) => ({
         ...d,
         orderNumber: normalizeOrderNumber(d.orderNumber),
-        orderTotal: normalizeOrderTotal(d.orderTotal),
+        orderTotal: normalizeMoney(d.orderTotal),
+        tipAmount: normalizeMoney(d.tipAmount),
         orderDate: normalizeOrderDate(d.orderDate),
         orderTime: normalizeOrderTime(d.orderTime),
       });
@@ -1799,6 +1805,8 @@ If a field is missing, use null.`;
       const responsesMatch =
         norm1.orderNumber === norm2.orderNumber &&
         norm1.orderTotal === norm2.orderTotal &&
+        norm1.tipAmount === norm2.tipAmount &&
+        norm1.tipLineVisible === norm2.tipLineVisible &&
         norm1.orderDate === norm2.orderDate &&
         norm1.orderTime === norm2.orderTime;
 
