@@ -283,118 +283,113 @@ class AdminUserDetailViewModel: ObservableObject {
         let isAdminFlag = editableIsAdmin
         let isVerifiedFlag = editableIsVerified
 
-        let userRef = db.collection("users").document(userId)
         isLoading = true
         errorMessage = ""
 
-        db.runTransaction({ (transaction, errorPointer) -> Any? in
+        Task {
             do {
-                let snapshot = try transaction.getDocument(userRef)
-                let userData = snapshot.data() ?? [:]
-                let currentPoints = (userData["points"] as? Int) ?? 0
-                let currentLifetime = (userData["lifetimePoints"] as? Int) ?? currentPoints
-                let delta = pointsInt - currentPoints
-                
-                // Calculate new lifetime points: only increase if points are added
-                // Lifetime points should never decrease (they represent total points ever earned)
-                let newLifetimePoints = delta > 0 
-                    ? currentLifetime + delta  // Add delta when points increase
-                    : currentLifetime          // Keep same when points decrease
-                
-                let updateData: [String: Any] = [
-                    "phone": phone,
-                    "points": pointsInt,
-                    "lifetimePoints": newLifetimePoints,
-                    "isAdmin": isAdminFlag,
-                    "isVerified": isVerifiedFlag
-                ]
-                transaction.updateData(updateData, forDocument: userRef)
-                return ["prev": currentPoints, "delta": delta, "lifetime": newLifetimePoints]
-            } catch let error as NSError {
-                errorPointer?.pointee = error
-                return nil
-            }
-        }, completion: { [weak self] result, error in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.isLoading = false
-
-                if let error = error {
-                    let message = "Failed to update user: \(error.localizedDescription)"
-                    self.errorMessage = message
-                    completion(false, message)
+                guard let user = Auth.auth().currentUser else {
+                    await MainActor.run {
+                        self.isLoading = false
+                        let message = "You must be signed in to update users"
+                        self.errorMessage = message
+                        completion(false, message)
+                    }
                     return
                 }
 
-                var previousPoints = self.userSummary.points
-                var delta = 0
-                var newLifetimePoints = self.userSummary.lifetimePoints
-                if let dict = result as? [String: Int] {
-                    previousPoints = dict["prev"] ?? self.userSummary.points
-                    delta = dict["delta"] ?? 0
-                    newLifetimePoints = dict["lifetime"] ?? self.userSummary.lifetimePoints
+                let token = try await user.getIDTokenResult(forcingRefresh: false).token
+                guard let url = URL(string: "\(Config.backendURL)/admin/users/update") else {
+                    await MainActor.run {
+                        self.isLoading = false
+                        let message = "Invalid server URL"
+                        self.errorMessage = message
+                        completion(false, message)
+                    }
+                    return
                 }
 
-                // Update local summary with new values
-                let updatedSummary = UserAccount(
-                    id: self.userSummary.id,
-                    firstName: self.userSummary.firstName,
-                    email: self.userSummary.email,
-                    phoneNumber: phone,
-                    points: pointsInt,
-                    lifetimePoints: newLifetimePoints,
-                    avatarEmoji: self.userSummary.avatarEmoji,
-                    avatarColorName: self.userSummary.avatarColorName,
-                    profilePhotoURL: self.userSummary.profilePhotoURL,
-                    isVerified: isVerifiedFlag,
-                    isAdmin: isAdminFlag,
-                    isEmployee: self.userSummary.isEmployee,
-                    isBanned: self.userSummary.isBanned,
-                    accountCreatedDate: self.userSummary.accountCreatedDate,
-                    profileImage: self.userSummary.profileImage
-                )
-                self.userSummary = updatedSummary
-                self.syncEditableFieldsFromSummary()
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                request.addValue("application/json", forHTTPHeaderField: "Content-Type")
 
-                // Log points adjustment if needed and update history
-                self.logAdminAdjustmentIfNeeded(previousPoints: previousPoints, newPoints: pointsInt, delta: delta)
+                let body: [String: Any] = [
+                    "userId": userId,
+                    "points": pointsInt,
+                    "phone": phone,
+                    "isAdmin": isAdminFlag,
+                    "isVerified": isVerifiedFlag
+                ]
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-                // Trigger referral check only when crossing threshold from <50 to >=50
-                if previousPoints < 50 && pointsInt >= 50 {
-                    self.triggerReferralCheckForUser()
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    await MainActor.run {
+                        self.isLoading = false
+                        let message = "Unexpected response from server"
+                        self.errorMessage = message
+                        completion(false, message)
+                    }
+                    return
                 }
 
-                completion(true, nil)
-            }
-        })
-    }
+                guard (200..<300).contains(http.statusCode) else {
+                    let bodyText = String(data: data, encoding: .utf8) ?? ""
+                    await MainActor.run {
+                        self.isLoading = false
+                        let message = "Failed to update user (\(http.statusCode)). \(bodyText)"
+                        self.errorMessage = message
+                        completion(false, message)
+                    }
+                    return
+                }
 
-    private func logAdminAdjustmentIfNeeded(previousPoints: Int, newPoints: Int, delta: Int) {
-        guard delta != 0 else { return }
+                let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+                let previousPoints = json?["previousPoints"] as? Int ?? self.userSummary.points
+                let delta = json?["delta"] as? Int ?? (pointsInt - previousPoints)
+                let newLifetimePoints = json?["lifetimePoints"] as? Int ?? self.userSummary.lifetimePoints
 
-        let adjustment = PointsTransaction(
-            userId: userId,
-            type: .adminAdjustment,
-            amount: delta,
-            description: "Points adjusted by admin",
-            metadata: [
-                "previousPoints": previousPoints,
-                "newPoints": newPoints
-            ]
-        )
+                await MainActor.run {
+                    self.isLoading = false
 
-        db.collection("pointsTransactions").document(adjustment.id).setData(adjustment.toFirestore()) { [weak self] error in
-            guard let self = self else { return }
-            if let error = error {
-                print("❌ Error logging admin adjustment: \(error.localizedDescription)")
-                return
-            }
+                    let updatedSummary = UserAccount(
+                        id: self.userSummary.id,
+                        firstName: self.userSummary.firstName,
+                        email: self.userSummary.email,
+                        phoneNumber: phone,
+                        points: pointsInt,
+                        lifetimePoints: newLifetimePoints,
+                        avatarEmoji: self.userSummary.avatarEmoji,
+                        avatarColorName: self.userSummary.avatarColorName,
+                        profilePhotoURL: self.userSummary.profilePhotoURL,
+                        isVerified: isVerifiedFlag,
+                        isAdmin: isAdminFlag,
+                        isEmployee: self.userSummary.isEmployee,
+                        isBanned: self.userSummary.isBanned,
+                        accountCreatedDate: self.userSummary.accountCreatedDate,
+                        profileImage: self.userSummary.profileImage
+                    )
+                    self.userSummary = updatedSummary
+                    self.syncEditableFieldsFromSummary()
 
-            print("✅ Admin points adjustment logged (delta: \(delta))")
-            DispatchQueue.main.async {
-                // Prepend new transaction in local history and refresh summary
-                self.transactions.insert(adjustment, at: 0)
-                self.updateSummary(from: self.transactions)
+                    if delta != 0 {
+                        self.loadPointsHistory { _ in }
+                    }
+
+                    if previousPoints < 50 && pointsInt >= 50 {
+                        self.triggerReferralCheckForUser()
+                    }
+
+                    completion(true, nil)
+                }
+            } catch {
+                await MainActor.run {
+                    self.isLoading = false
+                    let message = "Failed to update user: \(error.localizedDescription)"
+                    self.errorMessage = message
+                    completion(false, message)
+                }
             }
         }
     }

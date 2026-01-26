@@ -142,6 +142,7 @@ struct RewardRedemptionRequest: Codable {
     let rewardDescription: String
     let pointsRequired: Int
     let rewardCategory: String
+    let idempotencyKey: String?       // Optional idempotency key to prevent retries
     let selectedItemId: String?      // Optional selected item ID
     let selectedItemName: String?    // Optional selected item name
     let selectedToppingId: String?   // NEW: Optional topping ID (for drink rewards)
@@ -153,12 +154,13 @@ struct RewardRedemptionRequest: Codable {
     let selectedDrinkItemId: String? // NEW: Optional drink item ID (for Full Combo)
     let selectedDrinkItemName: String? // NEW: Optional drink item name (for Full Combo)
     
-    init(userId: String, rewardTitle: String, rewardDescription: String, pointsRequired: Int, rewardCategory: String, selectedItemId: String? = nil, selectedItemName: String? = nil, selectedToppingId: String? = nil, selectedToppingName: String? = nil, selectedItemId2: String? = nil, selectedItemName2: String? = nil, cookingMethod: String? = nil, drinkType: String? = nil, selectedDrinkItemId: String? = nil, selectedDrinkItemName: String? = nil) {
+    init(userId: String, rewardTitle: String, rewardDescription: String, pointsRequired: Int, rewardCategory: String, idempotencyKey: String? = nil, selectedItemId: String? = nil, selectedItemName: String? = nil, selectedToppingId: String? = nil, selectedToppingName: String? = nil, selectedItemId2: String? = nil, selectedItemName2: String? = nil, cookingMethod: String? = nil, drinkType: String? = nil, selectedDrinkItemId: String? = nil, selectedDrinkItemName: String? = nil) {
         self.userId = userId
         self.rewardTitle = rewardTitle
         self.rewardDescription = rewardDescription
         self.pointsRequired = pointsRequired
         self.rewardCategory = rewardCategory
+        self.idempotencyKey = idempotencyKey
         self.selectedItemId = selectedItemId
         self.selectedItemName = selectedItemName
         self.selectedToppingId = selectedToppingId

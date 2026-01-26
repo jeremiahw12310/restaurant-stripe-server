@@ -107,12 +107,20 @@ class RewardRedemptionService: ObservableObject {
         }
         
         do {
+            guard let user = Auth.auth().currentUser else {
+                throw NetworkError.unauthorized
+            }
+            
+            let token = try await user.getIDTokenResult(forcingRefresh: false).token
+            let idempotencyKey = UUID().uuidString
+            
             let request = RewardRedemptionRequest(
                 userId: userId,
                 rewardTitle: rewardTitle,
                 rewardDescription: rewardDescription,
                 pointsRequired: pointsRequired,
                 rewardCategory: rewardCategory,
+                idempotencyKey: idempotencyKey,
                 selectedItemId: selectedItemId,
                 selectedItemName: selectedItemName,
                 selectedToppingId: selectedToppingId,
@@ -129,6 +137,7 @@ class RewardRedemptionService: ObservableObject {
             var urlRequest = URLRequest(url: url)
             urlRequest.httpMethod = "POST"
             urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             
             let jsonData = try JSONEncoder().encode(request)
             urlRequest.httpBody = jsonData
@@ -273,6 +282,7 @@ enum NetworkError: Error, LocalizedError {
     case invalidResponse
     case serverError(String)
     case decodingError
+    case unauthorized
     
     var errorDescription: String? {
         switch self {
@@ -282,6 +292,8 @@ enum NetworkError: Error, LocalizedError {
             return message
         case .decodingError:
             return "Failed to decode response"
+        case .unauthorized:
+            return "You need to sign in to redeem rewards"
         }
     }
 } 

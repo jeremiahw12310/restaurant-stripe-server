@@ -58,6 +58,66 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // =============================================================================
+// Basic in-memory rate limiting (per process)
+// =============================================================================
+
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.length > 0) {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.ip || req.connection?.remoteAddress || 'unknown';
+}
+
+function createInMemoryRateLimiter({ keyFn, windowMs, max, errorCode }) {
+  const hits = new Map();
+
+  return function rateLimiter(req, res, next) {
+    const key = keyFn(req);
+    if (!key) return next();
+
+    const now = Date.now();
+    const entry = hits.get(key);
+    if (!entry || now > entry.resetAt) {
+      hits.set(key, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
+
+    entry.count += 1;
+    if (entry.count > max) {
+      return res.status(429).json({
+        errorCode: errorCode || 'RATE_LIMITED',
+        error: 'Too many requests',
+        retryAfterMs: Math.max(0, entry.resetAt - now)
+      });
+    }
+
+    return next();
+  };
+}
+
+const aiPerUserLimiter = createInMemoryRateLimiter({
+  keyFn: (req) => req.auth?.uid,
+  windowMs: 60 * 1000,
+  max: 60,
+  errorCode: 'AI_RATE_LIMITED'
+});
+
+const aiPerIpLimiter = createInMemoryRateLimiter({
+  keyFn: (req) => getClientIp(req),
+  windowMs: 60 * 1000,
+  max: 30,
+  errorCode: 'AI_RATE_LIMITED'
+});
+
+const analyzeReceiptLimiter = createInMemoryRateLimiter({
+  keyFn: (req) => getClientIp(req),
+  windowMs: 60 * 1000,
+  max: 10,
+  errorCode: 'RECEIPT_RATE_LIMITED'
+});
+
+// =============================================================================
 // Auth helpers (keep dev/prod parity)
 // =============================================================================
 
@@ -228,7 +288,7 @@ app.get('/', (req, res) => {
 });
 
 // Generate personalized combo endpoint
-app.post('/generate-combo', requireFirebaseAuth, async (req, res) => {
+app.post('/generate-combo', requireFirebaseAuth, aiPerUserLimiter, aiPerIpLimiter, async (req, res) => {
   try {
     console.log('🤖 Received personalized combo request');
     console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
@@ -833,7 +893,7 @@ if (!process.env.OPENAI_API_KEY) {
 } else {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-  app.post('/analyze-receipt', upload.single('image'), async (req, res) => {
+  app.post('/analyze-receipt', analyzeReceiptLimiter, upload.single('image'), async (req, res) => {
     try {
       console.log('📥 Received receipt analysis request');
       
@@ -932,7 +992,7 @@ If a field is missing, use null.`;
   });
 
   // Chat endpoint for restaurant assistant (AUTH REQUIRED)
-  app.post('/chat', requireFirebaseAuth, async (req, res) => {
+  app.post('/chat', requireFirebaseAuth, aiPerUserLimiter, aiPerIpLimiter, async (req, res) => {
     try {
       console.log('💬 Received chat request');
       
@@ -1287,7 +1347,7 @@ LOYALTY/REWARDS CONTEXT:
   });
 
   // Dumpling Hero Post Generation endpoint
-  app.post('/generate-dumpling-hero-post', requireFirebaseAuth, async (req, res) => {
+  app.post('/generate-dumpling-hero-post', requireFirebaseAuth, aiPerUserLimiter, aiPerIpLimiter, async (req, res) => {
     try {
       console.log('🤖 Received Dumpling Hero post generation request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
@@ -1455,7 +1515,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
   });
 
   // Dumpling Hero Comment Generation endpoint
-  app.post('/generate-dumpling-hero-comment', requireFirebaseAuth, async (req, res) => {
+  app.post('/generate-dumpling-hero-comment', requireFirebaseAuth, aiPerUserLimiter, aiPerIpLimiter, async (req, res) => {
     try {
       console.log('🤖 Received Dumpling Hero comment generation request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
@@ -1593,7 +1653,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
   });
 
   // Simple Dumpling Hero Comment Generation endpoint (for external use)
-  app.post('/generate-dumpling-hero-comment-simple', requireFirebaseAuth, async (req, res) => {
+  app.post('/generate-dumpling-hero-comment-simple', requireFirebaseAuth, aiPerUserLimiter, aiPerIpLimiter, async (req, res) => {
     try {
       console.log('🤖 Received simple Dumpling Hero comment generation request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));

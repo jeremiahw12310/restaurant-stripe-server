@@ -19,6 +19,15 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
     }
     
+    function isStaff() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isEmployee == true
+        );
+    }
+    
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
@@ -67,8 +76,8 @@ service cloud.firestore {
     // Users collection - users can read their own profile, admins can read all
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
-      allow create: if userCreateIsSafe(userId) || isAdmin();
-      allow update: if isAdmin() || (isOwner(userId) && userSelfUpdateIsSafe());
+      allow create: if userCreateIsSafe(userId);
+      allow update: if isOwner(userId) && userSelfUpdateIsSafe();
       allow delete: if isOwner(userId) || isAdmin();
       
       // User activity subcollection
@@ -86,7 +95,9 @@ service cloud.firestore {
     // Posts collection - public read, authenticated users can create, owners can edit/delete
     match /posts/{postId} {
       allow read: if true; // Public read for all posts
-      allow create: if isAuthenticated(); // Any authenticated user can create posts
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.userId is string;
       allow update, delete: if isPostOwner(resource.data.userId) || isAdmin(); // Only post owner or admin can edit/delete
       
       // Post likes subcollection
@@ -98,7 +109,9 @@ service cloud.firestore {
       // Post replies subcollection
       match /replies/{replyId} {
         allow read: if true; // Public read for replies
-        allow create: if isAuthenticated(); // Any authenticated user can create replies
+        allow create: if isAuthenticated() &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.userId is string;
         allow update, delete: if isAuthenticated() && 
           (resource.data.userId == request.auth.uid || isAdmin()); // Only reply owner or admin can edit/delete
       }
@@ -113,7 +126,9 @@ service cloud.firestore {
     // Collection group queries for replies and likes
     match /{path=**}/replies/{replyId} {
       allow read: if true; // Public read for all replies across all posts
-      allow create: if isAuthenticated(); // Any authenticated user can create replies
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.userId is string;
       allow update, delete: if isAuthenticated() && 
         (resource.data.userId == request.auth.uid || isAdmin()); // Only reply owner or admin can edit/delete
     }
@@ -189,7 +204,7 @@ service cloud.firestore {
     // Points transactions collection - users can read their own; writes are admin/server only
     match /pointsTransactions/{transactionId} {
       allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow write: if isAdmin();
+      allow write: if false;
     }
     
     // Drink flavors collection - public read, admin write
@@ -275,13 +290,26 @@ service cloud.firestore {
     
     // Redeemed rewards collection - readable by any authenticated user for verification purposes.
     match /redeemedRewards/{rewardId} {
-      // Any signed-in user (e.g., employee) can READ reward documents.
-      // Backend (Admin SDK) reads are allowed via isServer().
-      allow read: if isAuthenticated();
+      // Reward owner or staff can read reward documents.
+      allow read: if isAuthenticated() &&
+        (resource.data.userId == request.auth.uid || isStaff());
 
-      // Writes remain restricted to the reward owner, admins, or backend server.
-      // (Keep broad write permissions here as originally implemented to avoid breaking reward flows.)
-      allow write: if (isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin()));
+      // Server-only writes by default (Admin SDK bypasses rules).
+      allow create, delete: if false;
+
+      // Allow staff to mark rewards as used exactly once.
+      allow update: if isStaff() &&
+        resource.data.isUsed == false &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isUsed', 'usedAt']) &&
+        request.resource.data.isUsed == true &&
+        request.resource.data.usedAt is timestamp;
+
+      // Allow owners to mark rewards expired after expiry time (optional UX helper).
+      allow update: if isAuthenticated() &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isExpired']) &&
+        request.resource.data.isExpired == true &&
+        resource.data.expiresAt <= request.time;
     }
 
     // Referrals: server/admin write-only; limited reads

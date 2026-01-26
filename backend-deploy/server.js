@@ -1187,6 +1187,20 @@ const comboPerIpLimiter = createInMemoryRateLimiter({
   errorCode: 'COMBO_RATE_LIMITED'
 });
 
+const receiptAnalyzePerUserLimiter = createInMemoryRateLimiter({
+  keyFn: (req) => req.auth?.uid,
+  windowMs: 60_000,
+  max: parseInt(process.env.RECEIPT_ANALYZE_UID_PER_MIN || '6', 10),
+  errorCode: 'RECEIPT_RATE_LIMITED'
+});
+
+const receiptAnalyzePerIpLimiter = createInMemoryRateLimiter({
+  keyFn: (req) => getClientIp(req),
+  windowMs: 60_000,
+  max: parseInt(process.env.RECEIPT_ANALYZE_IP_PER_MIN || '20', 10),
+  errorCode: 'RECEIPT_RATE_LIMITED'
+});
+
 app.post('/generate-combo', requireFirebaseAuth, comboPerUserLimiter, comboPerIpLimiter, async (req, res) => {
   try {
     console.log('🤖 Received personalized combo request');
@@ -2004,7 +2018,7 @@ if (!process.env.OPENAI_API_KEY) {
     await applyReceiptScanLockout(userId, db);
   }
 
-  app.post('/analyze-receipt', requireFirebaseAuth, upload.single('image'), async (req, res) => {
+  app.post('/analyze-receipt', requireFirebaseAuth, receiptAnalyzePerUserLimiter, receiptAnalyzePerIpLimiter, upload.single('image'), async (req, res) => {
     try {
       console.log('📥 Received receipt analysis request');
       
@@ -5070,16 +5084,18 @@ IMPORTANT:
 
   // Redeem reward endpoint
   app.post('/redeem-reward', async (req, res) => {
+    let pointsRequiredNumber = null;
     try {
       console.log('🎁 Received reward redemption request');
       console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
       
       const { 
-        userId, 
+        userId: requestedUserId, 
         rewardTitle, 
         rewardDescription, 
         pointsRequired, 
         rewardCategory,
+        idempotencyKey,
         selectedItemId,      // Optional selected item ID
         selectedItemName,    // Optional selected item name
         selectedToppingId,   // NEW: Optional topping ID (for drink rewards)
@@ -5092,167 +5108,217 @@ IMPORTANT:
         selectedDrinkItemName // NEW: Optional drink item name (for Full Combo)
       } = req.body;
       
-      if (!userId || !rewardTitle || !pointsRequired) {
+      const auth = await requireUser(req, res);
+      if (!auth) {
+        return;
+      }
+      
+      const userId = auth.uid;
+      if (requestedUserId && requestedUserId !== userId) {
+        return res.status(403).json({ error: 'User mismatch for reward redemption' });
+      }
+      
+      pointsRequiredNumber = Number(pointsRequired);
+      if (!rewardTitle || !pointsRequiredNumber) {
         console.log('❌ Missing required fields for reward redemption');
         return res.status(400).json({ 
-          error: 'Missing required fields: userId, rewardTitle, pointsRequired',
-          received: { userId: !!userId, rewardTitle: !!rewardTitle, pointsRequired: !!pointsRequired }
+          error: 'Missing required fields: rewardTitle, pointsRequired',
+          received: { rewardTitle: !!rewardTitle, pointsRequired: !!pointsRequiredNumber }
         });
+      }
+      
+      if (!Number.isInteger(pointsRequiredNumber) || pointsRequiredNumber <= 0) {
+        return res.status(400).json({ error: 'Invalid pointsRequired value' });
       }
       
       const db = admin.firestore();
       
-      // Get user's current points
-      const userRef = db.collection('users').doc(userId);
-      const userDoc = await userRef.get();
-      
-      if (!userDoc.exists) {
-        console.log('❌ User not found:', userId);
-        return res.status(404).json({ error: 'User not found' });
-      }
-      
-      const userData = userDoc.data();
-      const currentPoints = userData.points || 0;
-      
-      console.log(`👤 User ${userId} has ${currentPoints} points, needs ${pointsRequired} for reward`);
-      
-      // Check if user has enough points
-      if (currentPoints < pointsRequired) {
-        console.log('❌ Insufficient points for redemption');
-        return res.status(400).json({ 
-          error: 'Insufficient points for redemption',
-          currentPoints,
-          pointsRequired,
-          pointsNeeded: pointsRequired - currentPoints
-        });
-      }
-      
-      // Generate 8-digit random code
-      const redemptionCode = Math.floor(10000000 + Math.random() * 90000000).toString();
-      console.log(`🔢 Generated redemption code: ${redemptionCode}`);
-      
-      // Calculate new points balance
-      const newPointsBalance = currentPoints - pointsRequired;
-      
-      // Create redeemed reward document with optional selected item info
-      const redeemedReward = {
-        id: `reward_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        userId: userId,
-        rewardTitle: rewardTitle,
-        rewardDescription: rewardDescription || '',
-        rewardCategory: rewardCategory || 'General',
-        pointsRequired: pointsRequired,
-        redemptionCode: redemptionCode,
-        redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes from now
-        isExpired: false,
-        isUsed: false,
-        // Store selected item info if provided
-        ...(selectedItemId && { selectedItemId }),
-        ...(selectedItemName && { selectedItemName }),
-        // NEW: Store topping info if provided (for drink rewards)
-        ...(selectedToppingId && { selectedToppingId }),
-        ...(selectedToppingName && { selectedToppingName }),
-        // NEW: Store second item info if provided (for half-and-half)
-        ...(selectedItemId2 && { selectedItemId2 }),
-        ...(selectedItemName2 && { selectedItemName2 }),
-        // NEW: Store cooking method if provided (for dumpling rewards)
-        ...(cookingMethod && { cookingMethod }),
-        // NEW: Store drink type if provided (for Lemonade/Soda rewards)
-        ...(drinkType && { drinkType }),
-        // NEW: Store drink item if provided (for Full Combo)
-        ...(selectedDrinkItemId && { selectedDrinkItemId }),
-        ...(selectedDrinkItemName && { selectedDrinkItemName })
-      };
-      
-      // Build description for transaction
-      let transactionDescription = `Redeemed: ${rewardTitle}`;
-      if (selectedItemName) {
-        transactionDescription = `Redeemed: ${selectedItemName}`;
-        if (selectedToppingName) {
-          transactionDescription += ` with ${selectedToppingName}`;
+      const redemptionResult = await db.runTransaction(async (transaction) => {
+        const userRef = db.collection('users').doc(userId);
+        const redeemedRewardsRef = db.collection('redeemedRewards');
+        const pointsTransactionsRef = db.collection('pointsTransactions');
+        
+        const userDoc = await transaction.get(userRef);
+        if (!userDoc.exists) {
+          const error = new Error('USER_NOT_FOUND');
+          error.code = 'USER_NOT_FOUND';
+          throw error;
         }
-        if (selectedItemName2) {
-          transactionDescription = `Redeemed: Half and Half: ${selectedItemName} + ${selectedItemName2}`;
-          if (cookingMethod) {
-            transactionDescription += ` (${cookingMethod})`;
+        
+        const userData = userDoc.data() || {};
+        const currentPoints = userData.points || 0;
+        
+        if (idempotencyKey) {
+          const existingQuery = redeemedRewardsRef
+            .where('userId', '==', userId)
+            .where('idempotencyKey', '==', idempotencyKey)
+            .limit(1);
+          const existingSnapshot = await transaction.get(existingQuery);
+          if (!existingSnapshot.empty) {
+            return {
+              existingReward: existingSnapshot.docs[0].data(),
+              currentPoints
+            };
           }
         }
-      }
+        
+        console.log(`👤 User ${userId} has ${currentPoints} points, needs ${pointsRequiredNumber} for reward`);
+        
+        if (currentPoints < pointsRequiredNumber) {
+          const error = new Error('INSUFFICIENT_POINTS');
+          error.code = 'INSUFFICIENT_POINTS';
+          error.currentPoints = currentPoints;
+          throw error;
+        }
+        
+        const redemptionCode = Math.floor(10000000 + Math.random() * 90000000).toString();
+        console.log(`🔢 Generated redemption code: ${redemptionCode}`);
+        
+        const newPointsBalance = currentPoints - pointsRequiredNumber;
+        
+        const redeemedRewardRef = redeemedRewardsRef.doc();
+        const redeemedReward = {
+          id: redeemedRewardRef.id,
+          userId: userId,
+          rewardTitle: rewardTitle,
+          rewardDescription: rewardDescription || '',
+          rewardCategory: rewardCategory || 'General',
+          pointsRequired: pointsRequiredNumber,
+          redemptionCode: redemptionCode,
+          redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
+          expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+          isExpired: false,
+          isUsed: false,
+          pointsBalanceAfter: newPointsBalance,
+          ...(idempotencyKey && { idempotencyKey }),
+          ...(selectedItemId && { selectedItemId }),
+          ...(selectedItemName && { selectedItemName }),
+          ...(selectedToppingId && { selectedToppingId }),
+          ...(selectedToppingName && { selectedToppingName }),
+          ...(selectedItemId2 && { selectedItemId2 }),
+          ...(selectedItemName2 && { selectedItemName2 }),
+          ...(cookingMethod && { cookingMethod }),
+          ...(drinkType && { drinkType }),
+          ...(selectedDrinkItemId && { selectedDrinkItemId }),
+          ...(selectedDrinkItemName && { selectedDrinkItemName })
+        };
+        
+        let transactionDescription = `Redeemed: ${rewardTitle}`;
+        if (selectedItemName) {
+          transactionDescription = `Redeemed: ${selectedItemName}`;
+          if (selectedToppingName) {
+            transactionDescription += ` with ${selectedToppingName}`;
+          }
+          if (selectedItemName2) {
+            transactionDescription = `Redeemed: Half and Half: ${selectedItemName} + ${selectedItemName2}`;
+            if (cookingMethod) {
+              transactionDescription += ` (${cookingMethod})`;
+            }
+          }
+        }
+        
+        const transactionRef = pointsTransactionsRef.doc();
+        const pointsTransaction = {
+          id: transactionRef.id,
+          userId: userId,
+          type: 'reward_redemption',
+          amount: -pointsRequiredNumber,
+          description: transactionDescription,
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          isEarned: false,
+          redemptionCode: redemptionCode,
+          rewardTitle: rewardTitle,
+          redeemedRewardId: redeemedRewardRef.id,
+          ...(idempotencyKey && { idempotencyKey }),
+          ...(selectedItemName && { selectedItemName }),
+          ...(selectedToppingName && { selectedToppingName }),
+          ...(selectedItemName2 && { selectedItemName2 }),
+          ...(cookingMethod && { cookingMethod })
+        };
+        
+        transaction.update(userRef, { points: newPointsBalance });
+        transaction.set(redeemedRewardRef, redeemedReward);
+        transaction.set(transactionRef, pointsTransaction);
+        
+        return {
+          redemptionCode,
+          newPointsBalance,
+          pointsDeducted: pointsRequiredNumber,
+          rewardTitle,
+          selectedItemName: selectedItemName || null,
+          selectedToppingName: selectedToppingName || null,
+          selectedItemName2: selectedItemName2 || null,
+          cookingMethod: cookingMethod || null,
+          drinkType: drinkType || null,
+          selectedDrinkItemId: selectedDrinkItemId || null,
+          selectedDrinkItemName: selectedDrinkItemName || null,
+          expiresAt: redeemedReward.expiresAt
+        };
+      });
       
-      // Create points transaction for deduction
-      const pointsTransaction = {
-        id: `deduction_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        userId: userId,
-        type: 'reward_redemption',
-        amount: -pointsRequired, // Negative amount for deduction
-        description: transactionDescription,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        isEarned: false,
-        redemptionCode: redemptionCode,
-        rewardTitle: rewardTitle,
-        ...(selectedItemName && { selectedItemName }),
-        ...(selectedToppingName && { selectedToppingName }),
-        ...(selectedItemName2 && { selectedItemName2 }),
-        ...(cookingMethod && { cookingMethod })
-      };
+      const existingExpiresAt = redemptionResult.existingReward?.expiresAt?.toDate
+        ? redemptionResult.existingReward.expiresAt.toDate()
+        : redemptionResult.existingReward?.expiresAt;
       
-      // Perform database operations in a batch
-      const batch = db.batch();
-      
-      // Update user points
-      batch.update(userRef, { points: newPointsBalance });
-      
-      // Add redeemed reward
-      const redeemedRewardRef = db.collection('redeemedRewards').doc(redeemedReward.id);
-      batch.set(redeemedRewardRef, redeemedReward);
-      
-      // Add points transaction
-      const transactionRef = db.collection('pointsTransactions').doc(pointsTransaction.id);
-      batch.set(transactionRef, pointsTransaction);
-      
-      // Commit the batch
-      await batch.commit();
+      const responseData = redemptionResult.existingReward
+        ? {
+            success: true,
+            redemptionCode: redemptionResult.existingReward.redemptionCode,
+            newPointsBalance: redemptionResult.currentPoints,
+            pointsDeducted: redemptionResult.existingReward.pointsRequired,
+            rewardTitle: redemptionResult.existingReward.rewardTitle,
+            selectedItemName: redemptionResult.existingReward.selectedItemName || null,
+            selectedToppingName: redemptionResult.existingReward.selectedToppingName || null,
+            selectedItemName2: redemptionResult.existingReward.selectedItemName2 || null,
+            cookingMethod: redemptionResult.existingReward.cookingMethod || null,
+            drinkType: redemptionResult.existingReward.drinkType || null,
+            selectedDrinkItemId: redemptionResult.existingReward.selectedDrinkItemId || null,
+            selectedDrinkItemName: redemptionResult.existingReward.selectedDrinkItemName || null,
+            expiresAt: existingExpiresAt,
+            message: 'Reward redeemed successfully! Show the code to your cashier.'
+          }
+        : {
+            success: true,
+            redemptionCode: redemptionResult.redemptionCode,
+            newPointsBalance: redemptionResult.newPointsBalance,
+            pointsDeducted: redemptionResult.pointsDeducted,
+            rewardTitle: redemptionResult.rewardTitle,
+            selectedItemName: redemptionResult.selectedItemName,
+            selectedToppingName: redemptionResult.selectedToppingName,
+            selectedItemName2: redemptionResult.selectedItemName2,
+            cookingMethod: redemptionResult.cookingMethod,
+            drinkType: redemptionResult.drinkType,
+            selectedDrinkItemId: redemptionResult.selectedDrinkItemId,
+            selectedDrinkItemName: redemptionResult.selectedDrinkItemName,
+            expiresAt: redemptionResult.expiresAt,
+            message: 'Reward redeemed successfully! Show the code to your cashier.'
+          };
       
       console.log(`✅ Reward redeemed successfully!`);
-      console.log(`💰 Points deducted: ${pointsRequired}`);
-      console.log(`💳 New balance: ${newPointsBalance}`);
-      console.log(`🔢 Redemption code: ${redemptionCode}`);
-      if (selectedItemName) {
-        console.log(`🍽️ Selected item: ${selectedItemName}`);
-      }
-      if (selectedToppingName) {
-        console.log(`🧋 Selected topping: ${selectedToppingName}`);
-      }
-      if (selectedItemName2) {
-        console.log(`🥟 Second item: ${selectedItemName2}`);
-      }
-      if (cookingMethod) {
-        console.log(`🔥 Cooking method: ${cookingMethod}`);
-      }
+      console.log(`🔢 Redemption code: ${responseData.redemptionCode}`);
+      console.log(`💰 Points deducted: ${responseData.pointsDeducted}`);
+      console.log(`💳 New balance: ${responseData.newPointsBalance}`);
       
-      res.json({
-        success: true,
-        redemptionCode: redemptionCode,
-        newPointsBalance: newPointsBalance,
-        pointsDeducted: pointsRequired,
-        rewardTitle: rewardTitle,
-        selectedItemName: selectedItemName || null,
-        selectedToppingName: selectedToppingName || null,  // NEW: Include in response
-        selectedItemName2: selectedItemName2 || null,      // NEW: Include in response
-        cookingMethod: cookingMethod || null,               // NEW: Include in response
-        drinkType: drinkType || null,                       // NEW: Include in response
-        selectedDrinkItemId: selectedDrinkItemId || null,   // NEW: Include in response (for Full Combo)
-        selectedDrinkItemName: selectedDrinkItemName || null, // NEW: Include in response (for Full Combo)
-        expiresAt: redeemedReward.expiresAt,
-        message: 'Reward redeemed successfully! Show the code to your cashier.'
-      });
+      res.json(responseData);
       
     } catch (error) {
       console.error('❌ Error redeeming reward:', error);
-      res.status(500).json({ 
+      if (error.code === 'INSUFFICIENT_POINTS') {
+        return res.status(400).json({
+          error: 'Insufficient points for redemption',
+          currentPoints: error.currentPoints,
+          pointsRequired: pointsRequiredNumber,
+          pointsNeeded: pointsRequiredNumber - error.currentPoints
+        });
+      }
+      
+      if (error.code === 'USER_NOT_FOUND') {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      
+      res.status(500).json({
         error: 'Failed to redeem reward',
-        details: error.message 
+        details: error.message
       });
     }
   });
@@ -5641,6 +5707,123 @@ IMPORTANT:
     } catch (error) {
       console.error('❌ Error listing admin users:', error);
       res.status(500).json({ error: 'Failed to list users' });
+    }
+  });
+
+  /**
+   * POST /admin/users/update
+   *
+   * Updates a user's account fields and logs an admin audit action.
+   * Body:
+   * - userId: string (required)
+   * - points: number (required, non-negative integer)
+   * - phone: string (optional)
+   * - isAdmin: bool (optional)
+   * - isVerified: bool (optional)
+   */
+  app.post('/admin/users/update', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const {
+        userId,
+        points,
+        phone,
+        isAdmin: isAdminFlag,
+        isVerified: isVerifiedFlag
+      } = req.body || {};
+
+      if (!userId || typeof userId !== 'string') {
+        return res.status(400).json({ error: 'userId is required' });
+      }
+
+      const pointsInt = Number(points);
+      if (!Number.isInteger(pointsInt) || pointsInt < 0) {
+        return res.status(400).json({ error: 'points must be a non-negative integer' });
+      }
+
+      const db = admin.firestore();
+      const result = await db.runTransaction(async (transaction) => {
+        const userRef = db.collection('users').doc(userId);
+        const userDoc = await transaction.get(userRef);
+        if (!userDoc.exists) {
+          const error = new Error('USER_NOT_FOUND');
+          error.code = 'USER_NOT_FOUND';
+          throw error;
+        }
+
+        const userData = userDoc.data() || {};
+        const currentPoints = typeof userData.points === 'number' ? userData.points : 0;
+        const currentLifetime = typeof userData.lifetimePoints === 'number'
+          ? userData.lifetimePoints
+          : currentPoints;
+        const delta = pointsInt - currentPoints;
+        const newLifetimePoints = delta > 0 ? currentLifetime + delta : currentLifetime;
+
+        const updateData = {
+          points: pointsInt,
+          lifetimePoints: newLifetimePoints,
+          isAdmin: isAdminFlag === true,
+          isVerified: isVerifiedFlag === true,
+          phone: typeof phone === 'string' ? phone : (userData.phone || '')
+        };
+
+        transaction.update(userRef, updateData);
+
+        if (delta !== 0) {
+          const transactionRef = db.collection('pointsTransactions').doc();
+          transaction.set(transactionRef, {
+            id: transactionRef.id,
+            userId,
+            type: 'admin_adjustment',
+            amount: delta,
+            description: 'Points adjusted by admin',
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            isEarned: delta > 0,
+            performedBy: adminContext.uid,
+            metadata: {
+              previousPoints: currentPoints,
+              newPoints: pointsInt
+            }
+          });
+        }
+
+        const actionRef = db.collection('adminActions').doc();
+        transaction.set(actionRef, {
+          action: 'admin_user_update',
+          targetUserId: userId,
+          performedBy: adminContext.uid,
+          changes: {
+            points: pointsInt,
+            phone: typeof phone === 'string' ? phone : (userData.phone || ''),
+            isAdmin: isAdminFlag === true,
+            isVerified: isVerifiedFlag === true
+          },
+          previousPoints: currentPoints,
+          delta,
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        return {
+          userId,
+          points: pointsInt,
+          lifetimePoints: newLifetimePoints,
+          phone: updateData.phone,
+          isAdmin: updateData.isAdmin,
+          isVerified: updateData.isVerified,
+          previousPoints: currentPoints,
+          delta
+        };
+      });
+
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      console.error('❌ Error updating admin user:', error);
+      if (error.code === 'USER_NOT_FOUND') {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      return res.status(500).json({ error: 'Failed to update user' });
     }
   });
 
