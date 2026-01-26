@@ -1,5 +1,6 @@
 import Foundation
 import Firebase
+import FirebaseAuth
 
 class RewardRedemptionService: ObservableObject {
     @Published var isLoading = false

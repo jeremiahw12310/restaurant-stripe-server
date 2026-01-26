@@ -5723,8 +5723,16 @@ IMPORTANT:
    */
   app.post('/admin/users/update', async (req, res) => {
     try {
+      console.log('📥 Received admin user update request');
+      console.log('📦 Request body:', JSON.stringify(req.body, null, 2));
+      
       const adminContext = await requireAdmin(req, res);
-      if (!adminContext) return;
+      if (!adminContext) {
+        console.log('❌ Admin authentication failed');
+        return; // requireAdmin already sent the response
+      }
+
+      console.log('✅ Admin authenticated:', adminContext.uid);
 
       const {
         userId,
@@ -5735,13 +5743,23 @@ IMPORTANT:
       } = req.body || {};
 
       if (!userId || typeof userId !== 'string') {
-        return res.status(400).json({ error: 'userId is required' });
+        console.log('❌ Missing or invalid userId');
+        return res.status(400).json({ 
+          errorCode: 'INVALID_REQUEST',
+          error: 'userId is required and must be a string' 
+        });
       }
 
       const pointsInt = Number(points);
       if (!Number.isInteger(pointsInt) || pointsInt < 0) {
-        return res.status(400).json({ error: 'points must be a non-negative integer' });
+        console.log('❌ Invalid points value:', points);
+        return res.status(400).json({ 
+          errorCode: 'INVALID_REQUEST',
+          error: 'points must be a non-negative integer' 
+        });
       }
+
+      console.log(`🔄 Updating user ${userId}: points=${pointsInt}, isAdmin=${isAdminFlag}, isVerified=${isVerifiedFlag}`);
 
       const db = admin.firestore();
       const result = await db.runTransaction(async (transaction) => {
@@ -5761,6 +5779,7 @@ IMPORTANT:
         const delta = pointsInt - currentPoints;
         const newLifetimePoints = delta > 0 ? currentLifetime + delta : currentLifetime;
 
+        // Handle boolean flags - explicitly set to false if undefined/null
         const updateData = {
           points: pointsInt,
           lifetimePoints: newLifetimePoints,
@@ -5768,6 +5787,8 @@ IMPORTANT:
           isVerified: isVerifiedFlag === true,
           phone: typeof phone === 'string' ? phone : (userData.phone || '')
         };
+
+        console.log('📝 Update data:', JSON.stringify(updateData, null, 2));
 
         transaction.update(userRef, updateData);
 
@@ -5817,13 +5838,32 @@ IMPORTANT:
         };
       });
 
+      console.log('✅ User update successful:', JSON.stringify(result, null, 2));
       return res.json({ success: true, ...result });
     } catch (error) {
       console.error('❌ Error updating admin user:', error);
+      console.error('❌ Error stack:', error.stack);
+      
       if (error.code === 'USER_NOT_FOUND') {
-        return res.status(404).json({ error: 'User not found' });
+        return res.status(404).json({ 
+          errorCode: 'USER_NOT_FOUND',
+          error: `User with ID '${req.body?.userId || 'unknown'}' not found` 
+        });
       }
-      return res.status(500).json({ error: 'Failed to update user' });
+      
+      // Check for Firestore permission errors
+      if (error.code === 7 || error.message?.includes('permission') || error.message?.includes('PERMISSION_DENIED')) {
+        return res.status(403).json({ 
+          errorCode: 'PERMISSION_DENIED',
+          error: 'Firestore permission denied. Check that the service account has proper permissions.' 
+        });
+      }
+      
+      return res.status(500).json({ 
+        errorCode: 'INTERNAL_ERROR',
+        error: `Failed to update user: ${error.message || 'Unknown error'}`,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
     }
   });
 

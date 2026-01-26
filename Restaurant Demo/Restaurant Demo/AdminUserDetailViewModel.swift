@@ -323,24 +323,61 @@ class AdminUserDetailViewModel: ObservableObject {
                 ]
                 request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
+                print("📤 Sending admin user update request to: \(url.absoluteString)")
+                print("📦 Request body: userId=\(userId), points=\(pointsInt), isAdmin=\(isAdminFlag), isVerified=\(isVerifiedFlag)")
+                
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse else {
+                    let message = "Unexpected response from server (not HTTP)"
+                    print("❌ \(message)")
                     await MainActor.run {
                         self.isLoading = false
-                        let message = "Unexpected response from server"
                         self.errorMessage = message
                         completion(false, message)
                     }
                     return
                 }
 
+                print("📥 Response status: \(http.statusCode)")
+                print("📥 Response headers: \(http.allHeaderFields)")
+
                 guard (200..<300).contains(http.statusCode) else {
                     let bodyText = String(data: data, encoding: .utf8) ?? ""
+                    print("❌ Server error response: \(bodyText)")
+                    
+                    // Try to parse error message from JSON response
+                    var errorMessage = "Failed to update user"
+                    if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        if let error = errorJson["error"] as? String {
+                            errorMessage = error
+                        } else if let errorCode = errorJson["errorCode"] as? String {
+                            errorMessage = "\(errorCode): \(errorJson["error"] as? String ?? "Unknown error")"
+                        }
+                    } else if !bodyText.isEmpty {
+                        errorMessage = bodyText
+                    }
+                    
+                    // Add status code context
+                    let statusMessage: String
+                    switch http.statusCode {
+                    case 401:
+                        statusMessage = "Authentication failed - please sign in again"
+                    case 403:
+                        statusMessage = "Permission denied - admin access required"
+                    case 404:
+                        statusMessage = "User not found"
+                    case 400:
+                        statusMessage = "Invalid request: \(errorMessage)"
+                    case 500:
+                        statusMessage = "Server error: \(errorMessage)"
+                    default:
+                        statusMessage = "HTTP \(http.statusCode): \(errorMessage)"
+                    }
+                    
                     await MainActor.run {
                         self.isLoading = false
-                        let message = "Failed to update user (\(http.statusCode)). \(bodyText)"
-                        self.errorMessage = message
-                        completion(false, message)
+                        self.errorMessage = statusMessage
+                        completion(false, statusMessage)
                     }
                     return
                 }
@@ -384,9 +421,26 @@ class AdminUserDetailViewModel: ObservableObject {
                     completion(true, nil)
                 }
             } catch {
+                let message: String
+                if let urlError = error as? URLError {
+                    switch urlError.code {
+                    case .notConnectedToInternet, .networkConnectionLost:
+                        message = "No internet connection - please check your network"
+                    case .timedOut:
+                        message = "Request timed out - server may be slow or unreachable"
+                    case .cannotFindHost, .cannotConnectToHost:
+                        message = "Cannot reach server - check your backend URL configuration"
+                    default:
+                        message = "Network error: \(urlError.localizedDescription)"
+                    }
+                    print("❌ Network error: \(urlError.code.rawValue) - \(urlError.localizedDescription)")
+                } else {
+                    message = "Failed to update user: \(error.localizedDescription)"
+                    print("❌ Error updating user: \(error)")
+                }
+                
                 await MainActor.run {
                     self.isLoading = false
-                    let message = "Failed to update user: \(error.localizedDescription)"
                     self.errorMessage = message
                     completion(false, message)
                 }
