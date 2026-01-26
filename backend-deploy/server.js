@@ -9055,7 +9055,8 @@ IMPORTANT:
    * 
    * Response:
    * {
-   *   isBanned: boolean
+   *   isBanned: boolean,
+   *   hasUserProfile: boolean
    * }
    */
   app.get('/check-ban-status', async (req, res) => {
@@ -9119,7 +9120,44 @@ IMPORTANT:
         isBanned = altBannedDoc.exists;
       }
 
-      res.json({ isBanned });
+      // Check whether there is an existing Firestore user profile for this phone number.
+      // This supports the UX where banned users can still sign in to delete their account,
+      // but if their account is already deleted (no profile exists), we block OTP.
+      let hasUserProfile = false;
+      try {
+        const primaryProfileSnap = await db
+          .collection('users')
+          .where('phone', '==', normalizedPhone)
+          .limit(1)
+          .get();
+        hasUserProfile = !primaryProfileSnap.empty;
+
+        if (!hasUserProfile) {
+          // Try legacy formats if the profile was stored without "+" or without country code.
+          const digitsOnly = normalizedPhone.replace('+', '');
+          const last10 = digitsOnly.slice(-10);
+          const legacyCandidates = [digitsOnly, last10].filter(Boolean);
+
+          for (const candidate of legacyCandidates) {
+            const legacySnap = await db
+              .collection('users')
+              .where('phone', '==', candidate)
+              .limit(1)
+              .get();
+            if (!legacySnap.empty) {
+              hasUserProfile = true;
+              break;
+            }
+          }
+        }
+      } catch (profileErr) {
+        // Fail closed for profile existence (conservative): if we cannot verify,
+        // treat as "profile exists" so we don't accidentally lock users out due to server issues.
+        console.warn('⚠️ Error checking hasUserProfile in /check-ban-status:', profileErr?.message || profileErr);
+        hasUserProfile = true;
+      }
+
+      res.json({ isBanned, hasUserProfile });
     } catch (error) {
       console.error('❌ Error checking ban status:', error);
       res.status(500).json({ error: 'Failed to check ban status' });

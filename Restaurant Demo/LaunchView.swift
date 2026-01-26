@@ -92,11 +92,42 @@ struct LaunchView: View {
 
             // If snapshot exists and has data, allow logged-in UI.
             if let snapshot, snapshot.exists, let data = snapshot.data(), !data.isEmpty {
-                // Check if user is banned
+                // Check if user is banned (by profile flag) and also by bannedNumbers collection (phone-based).
                 let userIsBanned = data["isBanned"] as? Bool ?? false
-                DispatchQueue.main.async {
-                    self.isBanned = userIsBanned
-                    if !isLoggedIn { isLoggedIn = true }
+                let rawPhone = (data["phone"] as? String) ?? ""
+                let normalizedPhone = normalizePhoneForBannedLookup(rawPhone)
+                let digitsOnly = normalizedPhone.replacingOccurrences(of: "+", with: "")
+
+                // If no phone, fall back to the profile flag only.
+                guard !normalizedPhone.isEmpty else {
+                    DispatchQueue.main.async {
+                        self.isBanned = userIsBanned
+                        if !isLoggedIn { isLoggedIn = true }
+                    }
+                    return
+                }
+
+                let db = Firestore.firestore()
+                db.collection("bannedNumbers").document(normalizedPhone).getDocument { bannedSnap, _ in
+                    guard loginGateCheckToken == token else { return }
+                    let bannedByNormalized = bannedSnap?.exists == true
+
+                    // If not found, try digits-only legacy format.
+                    if !bannedByNormalized && digitsOnly != normalizedPhone {
+                        db.collection("bannedNumbers").document(digitsOnly).getDocument { altSnap, _ in
+                            guard loginGateCheckToken == token else { return }
+                            let bannedByDigits = altSnap?.exists == true
+                            DispatchQueue.main.async {
+                                self.isBanned = userIsBanned || bannedByNormalized || bannedByDigits
+                                if !isLoggedIn { isLoggedIn = true }
+                            }
+                        }
+                    } else {
+                        DispatchQueue.main.async {
+                            self.isBanned = userIsBanned || bannedByNormalized
+                            if !isLoggedIn { isLoggedIn = true }
+                        }
+                    }
                 }
                 return
             }
@@ -117,6 +148,14 @@ struct LaunchView: View {
                 if isLoggedIn { isLoggedIn = false }
             }
         }
+    }
+
+    /// Normalizes a phone number string into `+1XXXXXXXXXX` when possible (for bannedNumbers lookup).
+    private func normalizePhoneForBannedLookup(_ phone: String) -> String {
+        let digits = phone.filter { $0.isNumber }
+        guard digits.count >= 10 else { return "" }
+        let last10 = String(digits.suffix(10))
+        return "+1" + last10
     }
 
     private func startAnimation() {

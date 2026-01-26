@@ -478,7 +478,7 @@ struct EnterPhoneView: View {
                 authVM.showBanAlert = false
             }
         } message: {
-            Text("This phone number cannot be used to create an account. Please contact support if you believe this is an error.")
+            Text("This banned account has already been deleted, so you can’t sign in again. Please contact support if you believe this is an error.")
         }
     }
 

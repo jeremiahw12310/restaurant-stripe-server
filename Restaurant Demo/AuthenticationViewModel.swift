@@ -97,9 +97,14 @@ class AuthenticationViewModel: ObservableObject {
                     }
                     return
                 }
+
+                // Additive field (backward compatible): if missing, default to true so older servers
+                // don't accidentally lock users out.
+                let hasUserProfile = (json["hasUserProfile"] as? Bool) ?? true
                 
-                // If banned, show alert and stop
-                if isBanned {
+                // If banned AND the account is already deleted (no profile exists), block OTP.
+                // Otherwise allow banned users to authenticate so they can delete their account.
+                if isBanned && !hasUserProfile {
                     await MainActor.run {
                         self.isLoading = false
                         self.showBanAlert = true
@@ -108,7 +113,7 @@ class AuthenticationViewModel: ObservableObject {
                     return
                 }
                 
-                // Phone number is not banned, proceed with SMS verification
+                // Not banned OR banned-with-existing-profile: proceed with SMS verification
                 await MainActor.run {
                     PhoneAuthProvider.provider().verifyPhoneNumber(self.formattedPhoneNumber, uiDelegate: nil) { [weak self] verificationID, error in
                         DispatchQueue.main.async {
