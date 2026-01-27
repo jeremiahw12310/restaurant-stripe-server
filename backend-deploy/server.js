@@ -564,6 +564,76 @@ app.post('/referrals/accept', requireFirebaseAuth, referralPerUserLimiter, refer
       });
       // Also check for new account bonus pattern
       await service.checkNewAccountBonusPattern(uid);
+      
+      // Flag high-velocity referral accepts from shared device fingerprints or phone-hash clusters
+      if (deviceInfo) {
+        const fingerprintHash = service.createDeviceFingerprint(deviceInfo);
+        const fingerprintDoc = await db.collection('deviceFingerprints').doc(fingerprintHash).get();
+        
+        if (fingerprintDoc.exists) {
+          const fingerprintData = fingerprintDoc.data();
+          const associatedUserIds = fingerprintData.associatedUserIds || [];
+          
+          // Check if multiple accounts on this device have accepted referrals recently
+          const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+          let referralCountOnDevice = 0;
+          
+          for (const deviceUserId of associatedUserIds) {
+            const deviceUserReferrals = await db.collection('referrals')
+              .where('referredUserId', '==', deviceUserId)
+              .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(oneDayAgo))
+              .get();
+            referralCountOnDevice += deviceUserReferrals.size;
+          }
+          
+          if (referralCountOnDevice >= 3) {
+            await service.flagSuspiciousBehavior(uid, {
+              flagType: 'referral_abuse',
+              severity: 'high',
+              description: `High-velocity referral accepts from shared device: ${referralCountOnDevice} referrals accepted by ${associatedUserIds.length} account(s) on same device in last 24 hours`,
+              evidence: {
+                fingerprintHash,
+                accountsOnDevice: associatedUserIds.length,
+                referralCountOnDevice,
+                timeWindow: '24 hours',
+                deviceInfo
+              }
+            });
+          }
+        }
+      }
+      
+      // Check for phone hash cluster abuse
+      if (referredPhoneHash) {
+        const phoneHashDoc = await db.collection('abusePreventionHashes').doc(referredPhoneHash).get();
+        if (phoneHashDoc.exists) {
+          const phoneHashData = phoneHashDoc.data();
+          const referredByHashes = phoneHashData.referredByHashes || [];
+          
+          // Check if this phone hash has been referred by multiple different phone hashes recently
+          if (referredByHashes.length >= 3) {
+            const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+            const recentReferrals = await db.collection('referrals')
+              .where('referredUserId', '==', uid)
+              .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(oneDayAgo))
+              .get();
+            
+            if (recentReferrals.size > 0) {
+              await service.flagSuspiciousBehavior(uid, {
+                flagType: 'referral_abuse',
+                severity: 'medium',
+                description: `Phone hash cluster: This phone number has been referred by ${referredByHashes.length} different referrers across account history`,
+                evidence: {
+                  phoneHash: referredPhoneHash,
+                  referredByCount: referredByHashes.length,
+                  recentReferrals: recentReferrals.size,
+                  timeWindow: '24 hours'
+                }
+              });
+            }
+          }
+        }
+      }
     } catch (detectionError) {
       console.error('❌ Error in referral pattern detection (non-blocking):', detectionError);
     }
@@ -3195,6 +3265,34 @@ If a field is missing, use null.`;
       } catch (e) {
         if (e && e.code === "DUPLICATE_RECEIPT") {
           await logFailureAndCheckLockout(uid, "DUPLICATE_RECEIPT", db, ipAddress);
+          
+          // Flag repeated duplicate receipt submissions within short windows
+          try {
+            const service = new SuspiciousBehaviorService(db);
+            const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+            const recentDuplicates = await db.collection('receiptScanAttempts')
+              .where('userId', '==', uid)
+              .where('success', '==', false)
+              .where('failureReason', '==', 'DUPLICATE_RECEIPT')
+              .where('timestamp', '>=', admin.firestore.Timestamp.fromDate(oneHourAgo))
+              .get();
+            
+            if (recentDuplicates.size >= 3) {
+              await service.flagSuspiciousBehavior(uid, {
+                flagType: 'receipt_pattern',
+                severity: 'medium',
+                description: `Repeated duplicate receipt submissions: ${recentDuplicates.size} duplicate attempts in last hour`,
+                evidence: {
+                  duplicateAttempts: recentDuplicates.size,
+                  timeWindow: '1 hour',
+                  lastAttempt: new Date().toISOString()
+                }
+              });
+            }
+          } catch (detectionError) {
+            console.error('❌ Error flagging repeated duplicate receipts (non-blocking):', detectionError);
+          }
+          
           return sendError(
             res,
             409,
@@ -3268,6 +3366,28 @@ If a field is missing, use null.`;
           orderTime: data.orderTime,
           createdAt: new Date()
         });
+        
+        // Flag bursty scan attempts that approach rate-limit thresholds
+        const oneMinuteAgo = new Date(Date.now() - 60 * 1000);
+        const recentAttempts = await db.collection('receiptScanAttempts')
+          .where('userId', '==', uid)
+          .where('timestamp', '>=', admin.firestore.Timestamp.fromDate(oneMinuteAgo))
+          .get();
+        
+        // Flag if user is making 4+ attempts per minute (approaching the 6/min limit)
+        if (recentAttempts.size >= 4) {
+          await service.flagSuspiciousBehavior(uid, {
+            flagType: 'receipt_pattern',
+            severity: 'medium',
+            description: `Bursty scan attempts: ${recentAttempts.size} attempts in last minute (approaching rate limit)`,
+            evidence: {
+              attemptsInLastMinute: recentAttempts.size,
+              rateLimitThreshold: 6,
+              timeWindow: '1 minute',
+              lastAttempt: new Date().toISOString()
+            }
+          });
+        }
       } catch (detectionError) {
         console.error('❌ Error in receipt pattern detection (non-blocking):', detectionError);
       }
@@ -6627,11 +6747,42 @@ IMPORTANT:
         }
       }
 
-      // ========== PHASE 4: USER DOCUMENT DELETION ==========
+      // ========== PHASE 4: RECORD DELETION FOR RECREATE DETECTION ==========
+      // Record deletion metadata to detect rapid delete→recreate patterns
+      try {
+        const userPhone = userData.phone || '';
+        if (userPhone) {
+          const phoneHash = hashPhoneNumber(userPhone);
+          if (phoneHash) {
+            // Record deletion timestamp for this phone hash
+            const deletionRecordRef = db.collection('accountDeletions').doc(`${phoneHash}_${Date.now()}`);
+            await deletionRecordRef.set({
+              phoneHash,
+              deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+              deletedUserId: uid,
+              // Store device fingerprint if available (from request headers)
+              deviceFingerprint: req.headers['x-device-fingerprint'] || null
+            });
+            
+            // Also update abusePreventionHashes with deletion timestamp
+            const abuseHashRef = db.collection('abusePreventionHashes').doc(phoneHash);
+            await abuseHashRef.set({
+              phoneHash,
+              lastAccountDeletedAt: admin.firestore.FieldValue.serverTimestamp(),
+              lastDeletedUserId: uid
+            }, { merge: true });
+          }
+        }
+      } catch (deletionRecordError) {
+        // Non-critical - log but don't fail deletion
+        console.error('⚠️ Error recording deletion metadata (non-blocking):', deletionRecordError);
+      }
+
+      // ========== PHASE 5: USER DOCUMENT DELETION ==========
       await db.collection('users').doc(uid).delete();
       console.log(`✅ Deleted user document: ${uid}`);
 
-      // ========== PHASE 5: FIREBASE AUTH USER DELETION ==========
+      // ========== PHASE 6: FIREBASE AUTH USER DELETION ==========
       try {
         await admin.auth().deleteUser(uid);
         console.log(`✅ Deleted Firebase Auth user: ${uid}`);
@@ -6754,6 +6905,37 @@ IMPORTANT:
 
       if (usersSnap.empty) {
         console.log('✅ No orphaned accounts found');
+        
+        // Check for rapid delete→recreate patterns even if no orphans found
+        try {
+          const phoneHash = hashPhoneNumber(normalizedPhone);
+          if (phoneHash) {
+            const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+            const recentDeletions = await db.collection('accountDeletions')
+              .where('phoneHash', '==', phoneHash)
+              .where('deletedAt', '>=', admin.firestore.Timestamp.fromDate(oneWeekAgo))
+              .orderBy('deletedAt', 'desc')
+              .get();
+            
+            if (recentDeletions.size >= 2) {
+              const service = new SuspiciousBehaviorService(db);
+              await service.flagSuspiciousBehavior(callerUid, {
+                flagType: 'account_recreation',
+                severity: recentDeletions.size >= 4 ? 'high' : 'medium',
+                description: `Rapid account deletion/recreation pattern: ${recentDeletions.size} deletions in last 7 days for this phone number`,
+                evidence: {
+                  phoneHash,
+                  deletionCount: recentDeletions.size,
+                  timeWindow: '7 days',
+                  lastDeletion: recentDeletions.docs[0]?.data()?.deletedAt?.toDate?.()?.toISOString() || null
+                }
+              });
+            }
+          }
+        } catch (detectionError) {
+          console.error('❌ Error checking delete/recreate pattern (non-blocking):', detectionError);
+        }
+        
         return res.json({ deletedCount: 0 });
       }
 
@@ -6789,6 +6971,37 @@ IMPORTANT:
       if (deletedCount > 0) {
         await batch.commit();
         console.log(`✅ Deleted ${deletedCount} orphaned user document(s)`);
+      }
+
+      // Check for rapid delete→recreate patterns after cleanup
+      try {
+        const phoneHash = hashPhoneNumber(normalizedPhone);
+        if (phoneHash) {
+          const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+          const recentDeletions = await db.collection('accountDeletions')
+            .where('phoneHash', '==', phoneHash)
+            .where('deletedAt', '>=', admin.firestore.Timestamp.fromDate(oneWeekAgo))
+            .orderBy('deletedAt', 'desc')
+            .get();
+          
+          if (recentDeletions.size >= 2) {
+            const service = new SuspiciousBehaviorService(db);
+            await service.flagSuspiciousBehavior(callerUid, {
+              flagType: 'account_recreation',
+              severity: recentDeletions.size >= 4 ? 'high' : 'medium',
+              description: `Rapid account deletion/recreation pattern: ${recentDeletions.size} deletions in last 7 days for this phone number (${deletedCount} orphaned accounts cleaned up)`,
+              evidence: {
+                phoneHash,
+                deletionCount: recentDeletions.size,
+                orphanedAccountsDeleted: deletedCount,
+                timeWindow: '7 days',
+                lastDeletion: recentDeletions.docs[0]?.data()?.deletedAt?.toDate?.()?.toISOString() || null
+              }
+            });
+          }
+        }
+      } catch (detectionError) {
+        console.error('❌ Error checking delete/recreate pattern (non-blocking):', detectionError);
       }
 
       return res.json({ deletedCount });

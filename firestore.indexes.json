@@ -178,6 +178,14 @@
         { "fieldPath": "isExpired", "order": "ASCENDING" },
         { "fieldPath": "redeemedAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "accountDeletions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "phoneHash", "order": "ASCENDING" },
+        { "fieldPath": "deletedAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
