@@ -1071,7 +1071,7 @@ struct RewardDetailView: View {
     }
 }
 
-// MARK: - Dutch Bros Energy Reward Card (Optimized)
+// MARK: - Energy Reward Card (Optimized)
 struct DiagonalRewardCard: View {
     let title: String
     let description: String

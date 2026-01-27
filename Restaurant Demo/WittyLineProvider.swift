@@ -84,5 +84,5 @@ final class WittyLineProvider {
         }
     }
 
-    private func pick(_ options: [String]) -> String { options.randomElement() ?? options.first! }
+    private func pick(_ options: [String]) -> String { options.randomElement() ?? options.first ?? "Something went wrong." }
 }

@@ -832,7 +832,10 @@ struct ReferralView: View {
             within24h = false
         }
         let db = Firestore.firestore()
-        db.collection("users").document(user.uid).getDocument { snap, _ in
+        db.collection("users").document(user.uid).getDocument { snap, error in
+            if let error = error {
+                DebugLogger.debug("❌ ReferralView: Error checking referral status: \(error.localizedDescription)", category: "Referral")
+            }
             let used = (snap?.data()? ["referredBy"] as? String)?.isEmpty == false
             self.hasUsedReferral = used
             // Show only if within 24h AND no referral already used
@@ -963,11 +966,17 @@ struct ReferralView: View {
                 }
 
                 if !referralId.isEmpty {
-                    db.collection("referrals").document(referralId).getDocument { refDoc, _ in
+                    db.collection("referrals").document(referralId).getDocument { refDoc, error in
+                        if let error = error {
+                            DebugLogger.debug("❌ ReferralView: Error loading referral doc: \(error.localizedDescription)", category: "Referral")
+                        }
                         updateFromReferralDoc(refDoc)
                     }
                 } else {
-                    db.collection("referrals").whereField("referredUserId", isEqualTo: uid).limit(to: 1).getDocuments { snap, _ in
+                    db.collection("referrals").whereField("referredUserId", isEqualTo: uid).limit(to: 1).getDocuments { snap, error in
+                        if let error = error {
+                            DebugLogger.debug("❌ ReferralView: Error querying referrals: \(error.localizedDescription)", category: "Referral")
+                        }
                         updateFromReferralDoc(snap?.documents.first)
                     }
                 }
@@ -1002,7 +1011,11 @@ struct ReferralView: View {
             var req = URLRequest(url: url)
             req.httpMethod = "GET"
             req.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            URLSession.shared.dataTask(with: req) { data, resp, _ in
+            URLSession.shared.dataTask(with: req) { data, resp, error in
+                if let error = error {
+                    DebugLogger.debug("❌ ReferralView: Error fetching connections: \(error.localizedDescription)", category: "Referral")
+                    return
+                }
                 guard let http = resp as? HTTPURLResponse, http.statusCode >= 200 && http.statusCode < 300, let data = data else { return }
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     if let inbound = json["inbound"] as? [String: Any] {

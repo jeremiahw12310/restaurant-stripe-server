@@ -137,10 +137,10 @@ struct HomeRewardsSection: View {
                 .padding(.bottom, 8)
             }
             
-            // Dutch Bros style header
+            // Premium style header
             HStack {
                 HStack(spacing: 8) {
-                    // Enhanced award icon with Dutch Bros energy - moved closer to text
+                    // Enhanced award icon - moved closer to text
                     ZStack {
                         Image("dumpaward")
                             .resizable()
@@ -277,7 +277,7 @@ struct HomeRewardsSection: View {
     }
 }
 
-// MARK: - Home Header Section (Welcome + Logo) - Dutch Bros Style
+// MARK: - Home Header Section (Welcome + Logo) - Premium Style
 struct HomeHeaderSection: View {
     @EnvironmentObject var userVM: UserViewModel
     @Binding var animate: Bool // cardAnimations[0]
@@ -285,7 +285,7 @@ struct HomeHeaderSection: View {
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
-                // Dutch Bros-style welcome message
+                // Premium welcome message
                 HStack(spacing: 6) {
                     Text("Hey there,")
                         .font(.system(size: 18, weight: .semibold, design: .rounded))
@@ -295,7 +295,7 @@ struct HomeHeaderSection: View {
                     
                 }
 
-                // Bold name with Dutch Bros energy
+                // Bold name with energy
                 HStack(spacing: 12) {
                     Text(userVM.firstName)
                         .font(.system(size: 36, weight: .black, design: .rounded))
@@ -324,7 +324,7 @@ struct HomeHeaderSection: View {
                     }
                 }
                 
-                // Dutch Bros-style status line
+                // Premium status line
                 HStack(spacing: 8) {
                     Text("Ready to fuel up?")
                         .font(.system(size: 14, weight: .medium, design: .rounded))
@@ -339,7 +339,7 @@ struct HomeHeaderSection: View {
 
             Spacer(minLength: 16)
 
-            // Enhanced logo with Dutch Bros energy
+            // Enhanced logo with energy
             ZStack {
                 
                 // Logo with enhanced shadow
@@ -370,7 +370,7 @@ struct HomeHeaderSection: View {
     }
 }
 
-// MARK: - Points & Avatar Glass Card - Dutch Bros Style
+// MARK: - Points & Avatar Glass Card - Premium Style
 struct HomePointsCardSection: View {
     @EnvironmentObject var userVM: UserViewModel
     // animated points number from parent
@@ -378,7 +378,7 @@ struct HomePointsCardSection: View {
     // binding to parent progress animation bool (cardAnimations[0])
     @Binding var animate: Bool
 
-    // Helpers - Dutch Bros style loyalty tiers
+    // Helpers - Premium style loyalty tiers
     private var loyaltyStatus: String {
         switch userVM.lifetimePoints {
         case 0..<500: return "STARTER"
@@ -536,7 +536,7 @@ struct HomePointsCardSection: View {
         .animation(.spring(response: 0.8, dampingFraction: 0.7).delay(0.1), value: animate)
     }
 
-    // MARK: - Enhanced Sub views with Dutch Bros energy
+    // MARK: - Enhanced Sub views
     private var avatarView: some View {
         ZStack {
             // Background glow effect
@@ -584,7 +584,7 @@ struct HomePointsCardSection: View {
 
     private var pointsCounterView: some View {
         VStack(spacing: 8) {
-            // Dutch Bros style points display with flexible width to accommodate large numbers
+            // Premium style points display with flexible width to accommodate large numbers
             HStack(alignment: .bottom, spacing: 4) {
                 // Animated text with scaling to fit
                 Text("\(Int(animatedPoints))")
@@ -617,7 +617,7 @@ struct HomePointsCardSection: View {
 
     private var progressBarView: some View {
         VStack(spacing: 12) {
-            // Dutch Bros style progress bar
+            // Premium style progress bar
             ZStack(alignment: .leading) {
                 // Background with energy
                 RoundedRectangle(cornerRadius: 12)
@@ -628,7 +628,7 @@ struct HomePointsCardSection: View {
                             .stroke(Theme.darkGoldGradient, lineWidth: 2)
                     )
                 
-                // Dynamic progress bar with Dutch Bros energy
+                // Dynamic progress bar
                 RoundedRectangle(cornerRadius: 12)
                     .fill(
                         LinearGradient(
@@ -647,7 +647,7 @@ struct HomePointsCardSection: View {
             }
             .animation(.easeInOut(duration: 3.0), value: animatedPoints)
             
-            // Progress labels with Dutch Bros energy
+            // Progress labels
             HStack {
                 HStack(spacing: 4) {
                     Text("0")
@@ -680,7 +680,7 @@ struct HomePointsCardSection: View {
 
     private var cardBackground: some View {
         ZStack {
-            // Dutch Bros style card background
+            // Premium style card background
             RoundedRectangle(cornerRadius: 28)
                 .fill(Theme.cardGradient)
                 .overlay(
@@ -819,7 +819,7 @@ struct HomeLocationSection: View {
 
     var body: some View {
         VStack(spacing: 24) {
-            // Dutch Bros style header
+            // Premium style header
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("VISIT US")
@@ -851,7 +851,7 @@ struct HomeLocationSection: View {
                 .animation(.easeInOut(duration: 0.6).delay(0.4), value: animate)
             }
             
-            // Enhanced map with Dutch Bros energy
+            // Enhanced map
             ZStack {
                 Map(position: $mapCameraPosition, interactionModes: []) {
                     Marker("Dumpling House", coordinate: locationCoordinate)
@@ -874,7 +874,7 @@ struct HomeLocationSection: View {
 
             }
 
-            // Dutch Bros style action buttons
+            // Premium style action buttons
             HStack(spacing: 16) {
                 actionButton(title: "CALL US", icon: "phone.fill", color: Theme.energyGreen, action: makeCall)
                     .scaleEffect(animate ? 1.0 : 0.8)
@@ -887,7 +887,7 @@ struct HomeLocationSection: View {
                     .animation(.spring(response: 0.7, dampingFraction: 0.6).delay(0.7), value: animate)
             }
 
-            // Enhanced order button with Dutch Bros energy
+            // Enhanced order button
             GeometryReader { geometry in
                 actionButton(title: "ORDER NOW", icon: "bag.fill", color: Theme.energyOrange) {
                     openOrder()
@@ -916,7 +916,7 @@ struct HomeLocationSection: View {
         .animation(.spring(response: 0.8, dampingFraction: 0.7).delay(0.1), value: animate)
     }
 
-    // MARK: - Dutch Bros Style Action Button
+    // MARK: - Premium Style Action Button
     private func actionButton(title: String, icon: String, color: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {

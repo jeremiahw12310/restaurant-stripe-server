@@ -294,7 +294,7 @@ struct UnifiedGreetingPointsCard: View {
 
         // Find surrounding stops
         var lower = stops[0]
-        var upper = stops.last!
+        var upper = stops.last ?? stops[0]
         for i in 0..<(stops.count - 1) {
             let a = stops[i]
             let b = stops[i + 1]

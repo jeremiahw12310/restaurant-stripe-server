@@ -2646,9 +2646,10 @@ func uploadReceiptImage(_ image: UIImage, completion: @escaping (Result<[String:
                 return
             }
             
-            // Print response for debugging
+            // Print response summary for debugging (truncated to avoid logging sensitive data)
             if let responseString = String(data: data, encoding: .utf8) {
-                DebugLogger.debug("📥 Response: \(responseString)", category: "ReceiptScan")
+                let truncated = responseString.count > 200 ? "\(responseString.prefix(200))... [truncated]" : responseString
+                DebugLogger.debug("📥 Response (\(data.count) bytes): \(truncated)", category: "ReceiptScan")
             }
             
             // If non-2xx, attempt to surface a server error as JSON for better UX mapping

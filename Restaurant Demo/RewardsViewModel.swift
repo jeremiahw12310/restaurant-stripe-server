@@ -305,8 +305,8 @@ class RewardsViewModel: ObservableObject {
 
     func triggerConfetti() {
         showConfetti = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            self.showConfetti = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.showConfetti = false
         }
     }
     

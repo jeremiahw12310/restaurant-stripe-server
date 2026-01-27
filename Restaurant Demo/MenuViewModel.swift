@@ -1366,6 +1366,7 @@ class MenuViewModel: ObservableObject {
         deleteItemFromCategory(categoryId: firstCategory.id, item: item, completion: completion)
     }
 
+    #if DEBUG
     /// Test function to validate Firebase Storage URLs (for debugging only)
     func testImageURL(_ urlString: String) {
         // This function is for debugging - logs removed for production
@@ -1385,6 +1386,7 @@ class MenuViewModel: ObservableObject {
             // Silent test - no logging
         }.resume()
     }
+    #endif
 
     /// Creates a new category in Firestore if it doesn't exist
     func createCategoryIfNeeded(categoryId: String, completion: @escaping (Bool, String?) -> Void) {
@@ -1782,11 +1784,11 @@ class MenuViewModel: ObservableObject {
     
     // Update half and half price
     func updateHalfAndHalfPrice(_ newPrice: Double, completion: ((Error?) -> Void)? = nil) {
-        configDocRef.setData(["halfAndHalfPrice": newPrice]) { error in
+        configDocRef.setData(["halfAndHalfPrice": newPrice]) { [weak self] error in
             if let error = error {
                 DebugLogger.debug("❌ Failed to update half and half price: \(error.localizedDescription)", category: "Menu")
             } else {
-                self.halfAndHalfPrice = newPrice
+                self?.halfAndHalfPrice = newPrice
                 DebugLogger.debug("✅ Updated half and half price to: $\(newPrice)", category: "Menu")
             }
             completion?(error)
@@ -1808,9 +1810,12 @@ class MenuViewModel: ObservableObject {
             orderedItemIdsByCategory[categoryId] = []
         }
         
-        if !orderedItemIdsByCategory[categoryId]!.contains(itemId) {
+        // Safe access using optional binding
+        guard var itemIds = orderedItemIdsByCategory[categoryId] else { return }
+        if !itemIds.contains(itemId) {
             DebugLogger.debug("🔍 Adding item '\(itemId)' to ordered items for category '\(categoryId)'", category: "Menu")
-            orderedItemIdsByCategory[categoryId]!.append(itemId)
+            itemIds.append(itemId)
+            orderedItemIdsByCategory[categoryId] = itemIds
         }
         
         // Update the menu order in Firestore
@@ -2802,6 +2807,7 @@ class MenuViewModel: ObservableObject {
     
     // MARK: - Image Debugging
     
+    #if DEBUG
     /// Debug function to test all image URLs in the current menu
     func debugAllImageURLs() {
         DebugLogger.debug("🔍 Debugging all image URLs in menu...", category: "Menu")
@@ -2840,6 +2846,7 @@ class MenuViewModel: ObservableObject {
         DebugLogger.debug("Valid URLs: \(validURLs)", category: "Menu")
         DebugLogger.debug("Invalid URLs: \(invalidURLs)", category: "Menu")
     }
+    #endif
     
     /// Convert image URL using the same logic as MenuItemCard
     private func convertImageURL(_ imageURL: String) -> URL? {

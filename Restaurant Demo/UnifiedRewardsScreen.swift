@@ -9,7 +9,7 @@ private struct UnifiedRewardsIdentifiableSuccess: Identifiable {
 }
 
 // MARK: - Unified Rewards Screen
-/// Premium Dutch Bros style rewards screen with energy and sophistication
+/// Premium style rewards screen with energy and sophistication
 struct UnifiedRewardsScreen: View {
     enum Mode {
         case tabRoot     // Used inside the tab-bar

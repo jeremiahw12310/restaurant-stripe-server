@@ -17,7 +17,7 @@ struct LifetimePointsView: View {
     private var currentLevel: LifetimeLevel {
         levels.first { level in
             userVM.lifetimePoints >= level.minPoints && userVM.lifetimePoints <= level.maxPoints
-        } ?? levels.last! // Default to highest level if user exceeds all levels
+        } ?? levels.last ?? LifetimeLevel(name: "ICON", minPoints: 25000, maxPoints: 999999, color: Theme.energyRed, icon: "👑", description: "Legendary status")
     }
     
     private var nextLevel: LifetimeLevel? {
@@ -35,7 +35,7 @@ struct LifetimePointsView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                // Dutch Bros style background
+                // Premium style background
                 LinearGradient(
                     gradient: Gradient(colors: [
                         Theme.modernBackground,
@@ -83,7 +83,7 @@ struct LifetimePointsView: View {
     
     private var headerSection: some View {
         VStack(spacing: 20) {
-            // Total lifetime points with Dutch Bros energy
+            // Total lifetime points with energy
             VStack(spacing: 12) {
                 Text("\(userVM.lifetimePoints)")
                     .font(.system(size: 52, weight: .black, design: .rounded))
@@ -137,7 +137,7 @@ struct LifetimePointsView: View {
                 Spacer()
             }
             
-            // Progress within current level with Dutch Bros energy
+            // Progress within current level
             VStack(spacing: 12) {
                 HStack {
                     Text("\(userVM.lifetimePoints - currentLevel.minPoints)")

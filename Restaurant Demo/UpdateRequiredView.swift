@@ -8,106 +8,95 @@ struct UpdateRequiredView: View {
     let updateMessage: String?
     let onRetry: () -> Void
     
-    @State private var isChecking = false
+    @State private var isButtonPressed = false
     
     var body: some View {
         ZStack {
-            // Background
-            Color.black
-                .ignoresSafeArea()
+            // Cream/white gradient background matching app style
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Theme.modernBackground,
+                    Theme.modernCardSecondary,
+                    Theme.modernBackground
+                ]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
             
-            VStack(spacing: 30) {
+            VStack(spacing: 24) {
                 Spacer()
                 
-                // App Icon or Logo
-                Image("dumpsplash")
+                // App Logo
+                Image("logo")
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 120, height: 120)
-                    .cornerRadius(20)
+                    .frame(width: 160, height: 160)
+                    .shadow(color: Theme.cardShadow, radius: 10, x: 0, y: 4)
                 
                 // Title
                 Text("Update Required")
-                    .font(.system(size: 32, weight: .bold))
-                    .foregroundColor(.white)
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundColor(Theme.modernPrimary)
+                    .padding(.top, 8)
                 
-                // Message
-                VStack(spacing: 12) {
-                    if let message = updateMessage, !message.isEmpty {
-                        Text(message)
-                            .font(.system(size: 18))
-                            .foregroundColor(.white.opacity(0.9))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 40)
-                    } else {
-                        Text("A new version of Dumpling House is available.")
-                            .font(.system(size: 18))
-                            .foregroundColor(.white.opacity(0.9))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 40)
-                    }
-                    
-                    Text("Please update to continue using the app.")
-                        .font(.system(size: 16))
-                        .foregroundColor(.white.opacity(0.7))
+                // Message - only show if updateMessage is provided
+                if let message = updateMessage, !message.isEmpty {
+                    Text(message)
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundColor(Theme.modernSecondary)
                         .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
+                        .padding(.horizontal, 32)
+                        .padding(.top, 8)
                 }
-                
-                // Version Info
-                VStack(spacing: 4) {
-                    Text("Current Version: \(currentVersion)")
-                        .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.6))
-                    
-                    Text("Required Version: \(minimumVersion)")
-                        .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.6))
-                }
-                .padding(.top, 8)
                 
                 Spacer()
                 
-                // Update Button
+                // Update Button - matching app's gold button style
                 Button(action: {
+                    isButtonPressed = true
                     openAppStore()
+                    // Reset after animation
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        isButtonPressed = false
+                    }
                 }) {
-                    HStack {
+                    HStack(spacing: 12) {
+                        Text("UPDATE NOW")
+                            .font(.system(size: 18, weight: .black, design: .rounded))
+                            .tracking(0.5)
+                        
                         Image(systemName: "arrow.down.circle.fill")
-                            .font(.system(size: 20))
-                        Text("Update Now")
-                            .font(.system(size: 18, weight: .semibold))
+                            .font(.system(size: 18, weight: .bold))
                     }
                     .foregroundColor(.white)
+                    .padding(.vertical, 18)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 56)
                     .background(
-                        LinearGradient(
-                            gradient: Gradient(colors: [Color.blue, Color.blue.opacity(0.8)]),
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(Theme.darkGoldGradient)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 20)
+                                    .stroke(
+                                        LinearGradient(
+                                            gradient: Gradient(colors: [
+                                                Color.white.opacity(0.4),
+                                                Color.white.opacity(0.1)
+                                            ]),
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        ),
+                                        lineWidth: 2
+                                    )
+                            )
                     )
-                    .cornerRadius(16)
-                    .padding(.horizontal, 40)
+                    .shadow(color: Theme.goldShadow, radius: 8, x: 0, y: 4)
                 }
-                .padding(.bottom, 20)
-                
-                // Retry Button (for network issues)
-                Button(action: {
-                    isChecking = true
-                    Task {
-                        await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
-                        isChecking = false
-                        onRetry()
-                    }
-                }) {
-                    Text(isChecking ? "Checking..." : "Retry")
-                        .font(.system(size: 16))
-                        .foregroundColor(.white.opacity(0.7))
-                }
-                .disabled(isChecking)
-                .padding(.bottom, 40)
+                .buttonStyle(PlainButtonStyle())
+                .scaleEffect(isButtonPressed ? 0.96 : 1.0)
+                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isButtonPressed)
+                .padding(.horizontal, 40)
+                .padding(.bottom, 50)
             }
         }
     }

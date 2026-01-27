@@ -524,7 +524,12 @@ class AuthenticationViewModel: ObservableObject {
             DeviceFingerprint.addToRequest(&req)
             let body: [String: Any] = ["code": code.uppercased(), "deviceId": UIDevice.current.identifierForVendor?.uuidString ?? ""]
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-            URLSession.shared.dataTask(with: req) { data, resp, _ in
+            URLSession.shared.dataTask(with: req) { data, resp, error in
+                if let error = error {
+                    DebugLogger.debug("⚠️ Signup referral request failed: \(error.localizedDescription)", category: "Auth")
+                    DispatchQueue.main.async { completion() }
+                    return
+                }
                 if let http = resp as? HTTPURLResponse, http.statusCode >= 200 && http.statusCode < 300 {
                     var referrerId: String? = nil
                     if let data = data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -593,7 +598,11 @@ class AuthenticationViewModel: ObservableObject {
             req.addValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = Data("{}".utf8)
             
-            URLSession.shared.dataTask(with: req) { data, resp, _ in
+            URLSession.shared.dataTask(with: req) { data, resp, error in
+                if let error = error {
+                    DebugLogger.debug("⚠️ Failed to preload referral code: \(error.localizedDescription)", category: "Auth")
+                    return
+                }
                 guard let http = resp as? HTTPURLResponse,
                       http.statusCode >= 200 && http.statusCode < 300,
                       let data = data,

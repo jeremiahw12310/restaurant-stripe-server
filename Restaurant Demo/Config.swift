@@ -57,13 +57,22 @@ struct Config {
     // Performance monitoring
     static let enablePerformanceMonitoring = true
     static let performanceLoggingEnabled = false // Set to true for debugging
+    
+    // App Store configuration
+    // Set this once you create your app in App Store Connect (before approval)
+    // You can find the App Store ID in App Store Connect → Your App → App Information → Apple ID
+    // Format: "1234567890" (just the number, not the full URL)
+    static let appStoreID: String? = "6758052536"
 }
 
 extension Config {
     // Whitelisted Order Online URL for Community link policy
     static var orderOnlineURL: URL {
         // Default to backend base + "/order"; update if a dedicated ordering domain is used
-        return URL(string: backendURL + "/order")!
+        guard let url = URL(string: backendURL + "/order") else {
+            fatalError("Invalid backend URL configuration: \(backendURL)/order")
+        }
+        return url
     }
 }
 

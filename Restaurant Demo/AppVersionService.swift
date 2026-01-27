@@ -105,16 +105,16 @@ class AppVersionService {
     /// Get the App Store URL for the app
     /// - Returns: App Store URL if available, nil otherwise
     func getAppStoreURL() -> URL? {
-        // Option 1: Use App Store ID from environment/config (recommended)
-        // Set this in your Config.swift or as an environment variable
-        // You can find your App Store ID in App Store Connect
-        // Format: https://apps.apple.com/app/id1234567890
+        // Option 1: Use App Store ID from Config.swift (recommended)
+        // Set Config.appStoreID after creating app in App Store Connect
+        if let appStoreID = Config.appStoreID, !appStoreID.isEmpty {
+            return URL(string: "https://apps.apple.com/app/id\(appStoreID)")
+        }
         
         // Option 2: Use bundle identifier to search App Store
-        // This will open the App Store search for your app
+        // This works before the app is approved and on the App Store
+        // It will open the App Store search for your app
         if let bundleId = Bundle.main.bundleIdentifier {
-            // Try direct app link first (if you know the App Store ID)
-            // For now, use search as fallback
             let encodedBundleId = bundleId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? bundleId
             return URL(string: "https://apps.apple.com/search?term=\(encodedBundleId)")
         }

@@ -96,7 +96,11 @@ class UserViewModel: ObservableObject {
         // Remove after diagnosing duplicate/test-user behavior.
         if let user = Auth.auth().currentUser {
             DebugLogger.debug("🔎 AUTH uid: \(user.uid)", category: "User")
-            DebugLogger.debug("🔎 AUTH phone: \(user.phoneNumber ?? "nil")", category: "User")
+            // Redact phone number for privacy - only show last 4 digits
+            let phoneRedacted = user.phoneNumber.map { phone in
+                phone.count > 4 ? "***\(phone.suffix(4))" : "***"
+            } ?? "nil"
+            DebugLogger.debug("🔎 AUTH phone: \(phoneRedacted)", category: "User")
         } else {
             DebugLogger.debug("🔎 AUTH user is nil", category: "User")
         }

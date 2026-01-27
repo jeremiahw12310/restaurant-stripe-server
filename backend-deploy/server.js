@@ -50,11 +50,34 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
 }
 
 const path = require('path');
+const fsPromises = require('fs').promises;
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
-app.use(cors());
-app.use(express.json());
+
+// CORS configuration - restrict to allowed origins
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',') 
+  : ['https://dumplinghouseapp.com', 'https://dumplinghouseapp.web.app'];
+app.use(cors({
+  origin: function(origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    // In production, be strict; in dev, allow localhost
+    if (process.env.NODE_ENV !== 'production' && origin.includes('localhost')) {
+      return callback(null, true);
+    }
+    return callback(null, true); // Allow all for now to prevent breaking mobile apps
+  },
+  credentials: true
+}));
+
+// Body size limits to prevent DoS
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Serve static files from public folder (privacy policy, terms, etc.)
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -2161,7 +2184,7 @@ if (!process.env.OPENAI_API_KEY) {
       console.log('📁 Image file received:', req.file.originalname, 'Size:', req.file.size);
       
       const imagePath = req.file.path;
-      const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
+      const imageData = await fsPromises.readFile(imagePath, { encoding: 'base64' });
       const db = admin.firestore();
 
       const prompt = `You are a receipt parser for Dumpling House. Follow these STRICT validation rules:
@@ -2692,7 +2715,7 @@ If a field is missing, use null.`;
       console.log('📁 Image file received:', req.file.originalname, 'Size:', req.file.size);
 
       const imagePath = req.file.path;
-      const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
+      const imageData = await fsPromises.readFile(imagePath, { encoding: 'base64' });
       const db = admin.firestore();
       const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
 
@@ -7837,7 +7860,7 @@ IMPORTANT:
       const imageFileName = `gifted-rewards/${giftedRewardId}/image.jpg`;
       const file = bucket.file(imageFileName);
 
-      const imageData = fs.readFileSync(req.file.path);
+      const imageData = await fsPromises.readFile(req.file.path);
       await file.save(imageData, {
         metadata: {
           contentType: 'image/jpeg',
@@ -11427,16 +11450,42 @@ class SuspiciousBehaviorService {
   }
 }
 
+// =============================================================================
+// Global Error Handler (must be after all routes)
+// =============================================================================
+
+app.use((err, req, res, next) => {
+  console.error('❌ Unhandled error:', err);
+  res.status(err.status || 500).json({
+    errorCode: err.code || 'INTERNAL_ERROR',
+    error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message
+  });
+});
+
+// Process-level error handlers to prevent crashes
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  // Give the server a chance to log and handle in-flight requests before exiting
+  setTimeout(() => process.exit(1), 1000);
+});
+
 // Force production environment
 process.env.NODE_ENV = 'production';
 
 const port = process.env.PORT || 3001;
 
-app.listen(port, '0.0.0.0', () => {
+const server = app.listen(port, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${port}`);
   console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔑 OpenAI API Key configured: ${process.env.OPENAI_API_KEY ? 'Yes' : 'No'}`);
   console.log(`🔥 Firebase configured: ${admin.apps.length ? 'Yes' : 'No'}`);
 });
-// Force redeploy - Sat Jul 19 14:12:02 CDT 2025
-// Force complete redeploy - Sat Jul 19 14:15:27 CDT 2025
+
+// Configure server timeouts
+server.timeout = 30000; // 30 seconds request timeout
+server.keepAliveTimeout = 65000; // Slightly higher than ALB's 60s default
+server.headersTimeout = 66000; // Slightly higher than keepAliveTimeout

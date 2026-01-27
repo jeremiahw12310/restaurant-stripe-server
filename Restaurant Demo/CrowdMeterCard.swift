@@ -435,7 +435,7 @@ struct CrowdMeterCard: View {
     
     private var cardBackground: some View {
         ZStack {
-            // Dutch Bros style card background
+            // Premium style card background
             RoundedRectangle(cornerRadius: 28)
                 .fill(Theme.cardGradient)
                 .overlay(

@@ -131,7 +131,7 @@ struct HomeView: View {
 
     var body: some View {
         let content = ZStack {
-            // Dutch Bros style background with energy
+            // Premium style background
             LinearGradient(
                 gradient: Gradient(colors: [
                     Theme.modernBackground,
@@ -351,7 +351,7 @@ struct HomeView: View {
                     }
                 )
             }
-            // Employees-Only Floating Button (Dutch Bros Style)
+            // Employees-Only Floating Button (Premium Style)
             if userVM.isEmployee {
                 VStack {
                     Spacer()
@@ -1238,12 +1238,13 @@ struct HomeView: View {
         // If referral is currently showing, don't start the timer yet.
         guard !showReferral else { return }
         
-        glimmerTimer = Timer.scheduledTimer(withTimeInterval: 1/8, repeats: true) { _ in // OPTIMIZED: Reduced from 15fps to 8fps for lower energy usage
-            time += 1/8
-            if Date().timeIntervalSince(lastScroll) > 0.7 {
-                if glimmerOpacity > 0 {
+        glimmerTimer = Timer.scheduledTimer(withTimeInterval: 1/8, repeats: true) { [weak self] _ in // OPTIMIZED: Reduced from 15fps to 8fps for lower energy usage
+            guard let self = self else { return }
+            self.time += 1/8
+            if Date().timeIntervalSince(self.lastScroll) > 0.7 {
+                if self.glimmerOpacity > 0 {
                     // Fade out much more smoothly and slowly
-                    glimmerOpacity = max(0, glimmerOpacity - 0.03) // OPTIMIZED: Increased step size for faster fade
+                    self.glimmerOpacity = max(0, self.glimmerOpacity - 0.03) // OPTIMIZED: Increased step size for faster fade
                 }
             }
         }
@@ -1329,8 +1330,9 @@ struct HomeView: View {
         }
         
         // Start confetti animation
-        welcomeConfettiTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
-            DispatchQueue.main.async {
+        welcomeConfettiTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
                 for i in self.welcomeConfettiPieces.indices {
                     self.welcomeConfettiPieces[i].y += self.welcomeConfettiPieces[i].velocity * 0.05
                     self.welcomeConfettiPieces[i].rotation += self.welcomeConfettiPieces[i].angularVelocity
