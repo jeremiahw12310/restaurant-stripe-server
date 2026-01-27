@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Support — Dumpling House Rewards</title>
+    <style>
+      :root {
+        --bg: #fafafc;
+        --bg2: #f3f4f8;
+        --card: #ffffff;
+        --text: #262640;
+        --muted: #666680;
+        --gold: #d8a53f;
+        --gold2: #bf8c26;
+        --stroke: rgba(38, 38, 64, 0.10);
+        --shadow: rgba(0, 0, 0, 0.10);
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: ui-rounded, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        background: linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%);
+        min-height: 100vh;
+        color: var(--text);
+        line-height: 1.6;
+      }
+      .container {
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 40px 24px 60px;
+      }
+      header {
+        text-align: center;
+        margin-bottom: 32px;
+      }
+      h1 {
+        font-size: 28px;
+        font-weight: 800;
+        color: var(--text);
+        margin-bottom: 8px;
+      }
+      .subtitle {
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .card {
+        background: var(--card);
+        border-radius: 20px;
+        padding: 28px;
+        margin-bottom: 20px;
+        border: 1px solid var(--stroke);
+        box-shadow: 0 4px 20px var(--shadow);
+      }
+      h2 {
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--gold2);
+        margin-bottom: 14px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      h2::before {
+        content: "";
+        display: inline-block;
+        width: 4px;
+        height: 20px;
+        background: linear-gradient(180deg, var(--gold), var(--gold2));
+        border-radius: 2px;
+      }
+      p, li {
+        font-size: 15px;
+        color: var(--text);
+        margin-bottom: 12px;
+      }
+      ul {
+        padding-left: 20px;
+        margin-bottom: 12px;
+      }
+      li {
+        margin-bottom: 8px;
+      }
+      strong {
+        color: var(--gold2);
+      }
+      a {
+        color: var(--gold);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      .email-link {
+        display: inline-block;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--gold);
+        margin-top: 8px;
+      }
+      .links {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-top: 16px;
+      }
+      .links a {
+        display: inline-block;
+        padding: 12px 16px;
+        background: var(--bg2);
+        border-radius: 12px;
+        transition: background 0.2s;
+      }
+      .links a:hover {
+        background: var(--bg);
+        text-decoration: none;
+      }
+      footer {
+        text-align: center;
+        padding: 24px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>Support</h1>
+        <p class="subtitle">Dumpling House Rewards</p>
+      </header>
+
+      <div class="card">
+        <h2>Get Help</h2>
+        <p>
+          We're here to help! If you have questions about the Dumpling House Rewards app, need assistance with your account,
+          or have feedback to share, please don't hesitate to reach out.
+        </p>
+        <p>
+          Our support team typically responds within 24-48 hours.
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>Contact Us</h2>
+        <p>For support inquiries, please email us at:</p>
+        <p>
+          <a href="mailto:support@bytequack.com" class="email-link">support@bytequack.com</a>
+        </p>
+        <p>
+          When contacting support, please include:
+        </p>
+        <ul>
+          <li>Your phone number or account information (if applicable)</li>
+          <li>A description of the issue or question</li>
+          <li>Any relevant screenshots or details</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>Common Questions</h2>
+        <p>Before reaching out, you might find answers in our legal pages:</p>
+        <div class="links">
+          <a href="/privacy.html">Privacy Policy</a>
+          <a href="/terms.html">Terms of Service</a>
+        </div>
+      </div>
+
+      <footer>
+      </footer>
+    </div>
+  </body>
+</html>

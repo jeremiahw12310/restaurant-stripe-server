@@ -20,7 +20,9 @@
       }
     ],
     "rewrites": [
-      { "source": "/refer", "destination": "/refer.html" }
+      { "source": "/refer", "destination": "/refer.html" },
+      { "source": "/support", "destination": "/support.html" },
+      { "source": "/marketing", "destination": "/marketing.html" }
     ]
   },
   "firestore": {
