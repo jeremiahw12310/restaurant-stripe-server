@@ -77,7 +77,9 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
       allow create: if userCreateIsSafe(userId);
-      allow update: if isOwner(userId) && userSelfUpdateIsSafe();
+      allow update: if (isOwner(userId) && userSelfUpdateIsSafe()) || 
+                    (isAdmin() && request.auth.uid == userId && 
+                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['oldReceiptTestingEnabled']));
       allow delete: if isOwner(userId) || isAdmin();
       
       // User activity subcollection
