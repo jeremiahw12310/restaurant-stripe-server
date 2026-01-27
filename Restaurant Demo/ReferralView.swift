@@ -860,10 +860,11 @@ struct ReferralView: View {
         guard let uid = Auth.auth().currentUser?.uid else { return }
         let db = Firestore.firestore()
 
-        // Outbound: I referred others
+        // Outbound: I referred others (limited to 100 for performance)
         outboundListener?.remove()
         outboundListener = db.collection("referrals")
             .whereField("referrerUserId", isEqualTo: uid)
+            .limit(to: 100)
             .addSnapshotListener { snap, _ in
                 guard let docs = snap?.documents else {
                     self.outboundConnections = []

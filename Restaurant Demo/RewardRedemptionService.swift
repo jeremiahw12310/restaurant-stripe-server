@@ -239,6 +239,7 @@ class RewardRedemptionService: ObservableObject {
             let snapshot = try await db.collection("redeemedRewards")
                 .whereField("userId", isEqualTo: userId)
                 .order(by: "redeemedAt", descending: true)
+                .limit(to: 100)
                 .getDocuments()
             
             let redeemedRewards = snapshot.documents.compactMap { document in

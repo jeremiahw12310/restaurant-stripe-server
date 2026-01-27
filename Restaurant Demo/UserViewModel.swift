@@ -545,8 +545,8 @@ class UserViewModel: ObservableObject {
         let db = Firestore.firestore()
         let batch = db.batch()
         
-        // Update all posts by this user
-        db.collection("posts").whereField("userId", isEqualTo: userId).getDocuments { snapshot, error in
+        // Update all posts by this user (limited to 500 for performance)
+        db.collection("posts").whereField("userId", isEqualTo: userId).limit(to: 500).getDocuments { snapshot, error in
             if let error = error {
                 DebugLogger.debug("❌ Error fetching user posts: \(error.localizedDescription)", category: "User")
                 completion(false)
@@ -595,9 +595,9 @@ class UserViewModel: ObservableObject {
     }
     
     private func updateProfilePhotoInAllReplies(userId: String, profilePhotoURL: String, completion: @escaping (Bool) -> Void) {
-        // Get all posts that have replies
+        // Get all posts that have replies (limited to 500 for performance)
         let db = Firestore.firestore()
-        db.collection("posts").getDocuments { snapshot, error in
+        db.collection("posts").limit(to: 500).getDocuments { snapshot, error in
             if let error = error {
                 DebugLogger.debug("❌ Error fetching posts for reply updates: \(error.localizedDescription)", category: "User")
                 completion(false)
@@ -616,8 +616,8 @@ class UserViewModel: ObservableObject {
             for postDoc in postDocuments {
                 group.enter()
                 
-                // Get replies for this post
-                postDoc.reference.collection("replies").whereField("userId", isEqualTo: userId).getDocuments { replySnapshot, replyError in
+                // Get replies for this post (limited to 100 for performance)
+                postDoc.reference.collection("replies").whereField("userId", isEqualTo: userId).limit(to: 100).getDocuments { replySnapshot, replyError in
                     defer { group.leave() }
                     
                     if let replyError = replyError {
@@ -662,8 +662,8 @@ class UserViewModel: ObservableObject {
         let db = Firestore.firestore()
         let batch = db.batch()
         
-        // Update all posts by this user
-        db.collection("posts").whereField("userId", isEqualTo: userId).getDocuments { snapshot, error in
+        // Update all posts by this user (limited to 500 for performance)
+        db.collection("posts").whereField("userId", isEqualTo: userId).limit(to: 500).getDocuments { snapshot, error in
             if let error = error {
                 DebugLogger.debug("❌ Error fetching user posts: \(error.localizedDescription)", category: "User")
                 completion(false)
@@ -712,9 +712,9 @@ class UserViewModel: ObservableObject {
     }
     
     private func clearProfilePhotoFromAllReplies(userId: String, completion: @escaping (Bool) -> Void) {
-        // Get all posts that have replies
+        // Get all posts that have replies (limited to 500 for performance)
         let db = Firestore.firestore()
-        db.collection("posts").getDocuments { snapshot, error in
+        db.collection("posts").limit(to: 500).getDocuments { snapshot, error in
             if let error = error {
                 DebugLogger.debug("❌ Error fetching posts for reply updates: \(error.localizedDescription)", category: "User")
                 completion(false)
@@ -733,8 +733,8 @@ class UserViewModel: ObservableObject {
             for postDoc in postDocuments {
                 group.enter()
                 
-                // Get replies for this post
-                postDoc.reference.collection("replies").whereField("userId", isEqualTo: userId).getDocuments { replySnapshot, replyError in
+                // Get replies for this post (limited to 100 for performance)
+                postDoc.reference.collection("replies").whereField("userId", isEqualTo: userId).limit(to: 100).getDocuments { replySnapshot, replyError in
                     defer { group.leave() }
                     
                     if let replyError = replyError {
@@ -781,8 +781,8 @@ class UserViewModel: ObservableObject {
         let db = Firestore.firestore()
         let batch = db.batch()
         
-        // Update all posts by this user
-        db.collection("posts").whereField("userId", isEqualTo: userId).getDocuments { snapshot, error in
+        // Update all posts by this user (limited to 500 for performance)
+        db.collection("posts").whereField("userId", isEqualTo: userId).limit(to: 500).getDocuments { snapshot, error in
             if let error = error {
                 DebugLogger.debug("❌ Error fetching user posts: \(error.localizedDescription)", category: "User")
                 completion(false)
@@ -829,9 +829,9 @@ class UserViewModel: ObservableObject {
     }
     
     private func updateAvatarInAllReplies(userId: String, avatarEmoji: String, avatarColorName: String, completion: @escaping (Bool) -> Void) {
-        // Get all posts that have replies
+        // Get all posts that have replies (limited to 500 for performance)
         let db = Firestore.firestore()
-        db.collection("posts").getDocuments { snapshot, error in
+        db.collection("posts").limit(to: 500).getDocuments { snapshot, error in
             if let error = error {
                 DebugLogger.debug("❌ Error fetching posts for reply updates: \(error.localizedDescription)", category: "User")
                 completion(false)
@@ -850,8 +850,8 @@ class UserViewModel: ObservableObject {
             for postDoc in postDocuments {
                 group.enter()
                 
-                // Get replies for this post
-                postDoc.reference.collection("replies").whereField("userId", isEqualTo: userId).getDocuments { replySnapshot, replyError in
+                // Get replies for this post (limited to 100 for performance)
+                postDoc.reference.collection("replies").whereField("userId", isEqualTo: userId).limit(to: 100).getDocuments { replySnapshot, replyError in
                     defer { group.leave() }
                     
                     if let replyError = replyError {

@@ -59,10 +59,11 @@ struct ReferralHistoryView: View {
         guard let uid = Auth.auth().currentUser?.uid else { return }
         let db = Firestore.firestore()
         
-        // Outbound
+        // Outbound (limited to 100 for performance)
         outboundListener?.remove()
         outboundListener = db.collection("referrals")
             .whereField("referrerUserId", isEqualTo: uid)
+            .limit(to: 100)
             .addSnapshotListener { snap, _ in
                 guard let docs = snap?.documents else {
                     self.outbound = []
@@ -95,10 +96,11 @@ struct ReferralHistoryView: View {
                 }
             }
         
-        // Inbound
+        // Inbound (limited to 100 for performance)
         inboundListener?.remove()
         inboundListener = db.collection("referrals")
             .whereField("referredUserId", isEqualTo: uid)
+            .limit(to: 100)
             .addSnapshotListener { snap, _ in
                 guard let docs = snap?.documents, !docs.isEmpty else {
                     self.inbound = []

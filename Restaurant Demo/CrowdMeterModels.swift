@@ -206,9 +206,9 @@ class CrowdMeterViewModel: ObservableObject {
     }
     
     func getWeeklyData(completion: @escaping ([CrowdLevel]) -> Void) {
-        // Load data for all users, not just admins
+        // Load data for all users, not just admins (limited to 100 for performance)
         
-        db.collection("crowdMeter").getDocuments { snapshot, error in
+        db.collection("crowdMeter").limit(to: 100).getDocuments { snapshot, error in
             DispatchQueue.main.async {
                 if let error = error {
                     self.errorMessage = "Failed to load weekly data: \(error.localizedDescription)"

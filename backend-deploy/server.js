@@ -12,6 +12,9 @@ const Redis = require('ioredis');
 const { OpenAI } = require('openai');
 const { DateTime } = require('luxon');
 
+// Input validation schemas and middleware
+const { validate, chatSchema, comboSchema, referralAcceptSchema, adminUserUpdateSchema, redeemRewardSchema } = require('./validation');
+
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
 
@@ -486,14 +489,12 @@ app.post('/referrals/create', requireFirebaseAuth, referralPerUserLimiter, refer
 });
 
 // Accept referral code
-app.post('/referrals/accept', requireFirebaseAuth, referralPerUserLimiter, referralPerIpLimiter, async (req, res) => {
+app.post('/referrals/accept', requireFirebaseAuth, referralPerUserLimiter, referralPerIpLimiter, validate(referralAcceptSchema), async (req, res) => {
   try {
     const uid = req.auth.uid;
 
     const { code } = req.body;
-    if (!code) {
-      return res.status(400).json({ error: 'Missing code' });
-    }
+    // Validation middleware ensures code exists and is properly formatted
 
     const db = admin.firestore();
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
@@ -1436,7 +1437,7 @@ const submitReceiptLimiter = createRateLimiter({
   errorCode: 'RECEIPT_RATE_LIMITED'
 });
 
-app.post('/generate-combo', requireFirebaseAuth, comboPerUserLimiter, comboPerIpLimiter, async (req, res) => {
+app.post('/generate-combo', requireFirebaseAuth, comboPerUserLimiter, comboPerIpLimiter, validate(comboSchema), async (req, res) => {
   try {
     console.log('🤖 Received personalized combo request');
     console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
@@ -3699,15 +3700,12 @@ If a field is missing, use null.`;
     errorCode: 'CHAT_RATE_LIMITED'
   });
 
-  app.post('/chat', requireFirebaseAuth, chatPerUserLimiter, chatPerIpLimiter, async (req, res) => {
+  app.post('/chat', requireFirebaseAuth, chatPerUserLimiter, chatPerIpLimiter, validate(chatSchema), async (req, res) => {
     try {
       console.log('💬 Received chat request');
       
       const { message, conversation_history, userFirstName, userPreferences, userPoints } = req.body;
-      
-      if (!message) {
-        return res.status(400).json({ error: 'Message is required' });
-      }
+      // Validation middleware ensures message exists and meets length requirements
 
       // Daily quota (cross-restart protection against runaway spend)
       const db = admin.firestore();
@@ -5377,7 +5375,7 @@ IMPORTANT:
   });
 
   // Redeem reward endpoint
-  app.post('/redeem-reward', requireFirebaseAuth, async (req, res) => {
+  app.post('/redeem-reward', requireFirebaseAuth, validate(redeemRewardSchema), async (req, res) => {
     let pointsRequiredNumber = null;
     try {
       console.log('🎁 Received reward redemption request');
@@ -6009,7 +6007,7 @@ IMPORTANT:
    * - isAdmin: bool (optional)
    * - isVerified: bool (optional)
    */
-  app.post('/admin/users/update', async (req, res) => {
+  app.post('/admin/users/update', validate(adminUserUpdateSchema), async (req, res) => {
     try {
       console.log('📥 Received admin user update request');
       console.log('📦 Request body:', JSON.stringify(req.body, null, 2));
@@ -6029,14 +6027,7 @@ IMPORTANT:
         isAdmin: isAdminFlag,
         isVerified: isVerifiedFlag
       } = req.body || {};
-
-      if (!userId || typeof userId !== 'string') {
-        console.log('❌ Missing or invalid userId');
-        return res.status(400).json({ 
-          errorCode: 'INVALID_REQUEST',
-          error: 'userId is required and must be a string' 
-        });
-      }
+      // Validation middleware ensures userId is present and valid
 
       const pointsInt = Number(points);
       if (!Number.isInteger(pointsInt) || pointsInt < 0) {

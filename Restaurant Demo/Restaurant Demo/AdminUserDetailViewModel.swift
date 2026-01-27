@@ -181,10 +181,11 @@ class AdminUserDetailViewModel: ObservableObject {
         let group = DispatchGroup()
         var firstError: String?
 
-        // Outbound (this user referred others)
+        // Outbound (this user referred others, limited to 100 for performance)
         group.enter()
         db.collection("referrals")
             .whereField("referrerUserId", isEqualTo: userId)
+            .limit(to: 100)
             .getDocuments { snapshot, error in
                 if let error = error {
                     if firstError == nil { firstError = "Error loading outbound referrals: \(error.localizedDescription)" }
