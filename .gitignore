@@ -124,6 +124,7 @@ DerivedData/
 
 # Build artifacts
 build/
+.build/
 build.log
 xcodebuild.log
 xcodebuild_verbose.log

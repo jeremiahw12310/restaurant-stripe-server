@@ -19,26 +19,47 @@ struct LaunchView: View {
     @State private var isBanned: Bool = false
     @StateObject private var userVM = UserViewModel()
     
+    // Version check state
+    @State private var versionCheckComplete: Bool = false
+    @State private var updateRequired: Bool = false
+    @State private var versionCheckResponse: AppVersionService.VersionCheckResponse? = nil
+    @State private var currentVersion: String = ""
+    
     var body: some View {
         ZStack {
-            // The content that will be revealed underneath is always present in the hierarchy.
-            if isLoggedIn {
-                if isBanned {
-                    // Banned users see deletion-only screen
-                    BannedAccountDeletionView()
-                        .environmentObject(userVM)
-                } else {
-                    // Normal users see full app
-                    ContentView()
+            // Version check: Show update required screen if update is needed
+            if versionCheckComplete && updateRequired {
+                if let response = versionCheckResponse {
+                    UpdateRequiredView(
+                        minimumVersion: response.minimumRequiredVersion,
+                        currentVersion: currentVersion,
+                        updateMessage: response.updateMessage,
+                        onRetry: {
+                            checkAppVersion()
+                        }
+                    )
                 }
-            } else {
-                // We pass a binding of the launchPhase to the SplashView
-                // so it knows when to start its own animation.
-                SplashView(launchPhase: $launchPhase)
+            } else if versionCheckComplete {
+                // Version check passed, show normal app content
+                // The content that will be revealed underneath is always present in the hierarchy.
+                if isLoggedIn {
+                    if isBanned {
+                        // Banned users see deletion-only screen
+                        BannedAccountDeletionView()
+                            .environmentObject(userVM)
+                    } else {
+                        // Normal users see full app
+                        ContentView()
+                    }
+                } else {
+                    // We pass a binding of the launchPhase to the SplashView
+                    // so it knows when to start its own animation.
+                    SplashView(launchPhase: $launchPhase)
+                }
             }
             
-            // The launch screen overlay.
-            if launchPhase != .finished {
+            // The launch screen overlay (only show if version check hasn't completed or update not required).
+            if !versionCheckComplete || (versionCheckComplete && !updateRequired && launchPhase != .finished) {
                 // ✅ FIX: By placing the image in the background of a view that fills the space,
                 // we guarantee it is always perfectly centered and properly scaled.
                 Color.black // A solid black background to prevent any transparency glitches.
@@ -55,6 +76,12 @@ struct LaunchView: View {
             }
         }
         .onAppear {
+            // Get current version
+            currentVersion = getCurrentAppVersion()
+            
+            // Check app version first before showing main app
+            checkAppVersion()
+            
             // Keep AppStorage in sync with Firebase Auth state, but ONLY enter the logged-in UI
             // once the user's Firestore profile doc exists. This prevents a half-signed-in state
             // where Auth is present but users/{uid} is missing (causes "Friend"/"user not found").
@@ -70,6 +97,48 @@ struct LaunchView: View {
             if let handle = authListenerHandle {
                 Auth.auth().removeStateDidChangeListener(handle)
                 authListenerHandle = nil
+            }
+        }
+    }
+    
+    /// Get the current app version from Info.plist
+    private func getCurrentAppVersion() -> String {
+        // Try CFBundleShortVersionString first (marketing version, e.g., "1.0.0")
+        if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+            return version
+        }
+        // Fallback to CFBundleVersion (build number)
+        if let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String {
+            return build
+        }
+        return "0.0.0"
+    }
+    
+    /// Check if app version meets minimum requirements
+    private func checkAppVersion() {
+        Task {
+            let result = await AppVersionService.shared.checkVersionRequirement()
+            
+            await MainActor.run {
+                switch result {
+                case .success(let (updateRequired, response)):
+                    self.updateRequired = updateRequired
+                    self.versionCheckResponse = response
+                    self.versionCheckComplete = true
+                    
+                    if updateRequired {
+                        DebugLogger.debug("🚫 Update required: current=\(currentVersion), minimum=\(response.minimumRequiredVersion)", category: "VersionCheck")
+                    } else {
+                        DebugLogger.debug("✅ Version check passed: current=\(currentVersion)", category: "VersionCheck")
+                    }
+                    
+                case .failure(let error):
+                    // If version check fails (network error, endpoint doesn't exist, etc.),
+                    // allow app to continue (graceful degradation)
+                    DebugLogger.debug("⚠️ Version check failed, allowing app to continue: \(error.localizedDescription)", category: "VersionCheck")
+                    self.updateRequired = false
+                    self.versionCheckComplete = true
+                }
             }
         }
     }
