@@ -181,7 +181,7 @@ struct MenuItemCard_Previews: PreviewProvider {
             price: 12.99,
             imageURL: "gs://dumplinghouseapp.firebasestorage.app/Subject.png",
             isAvailable: true,
-            paymentLinkID: "price_sample123"
+            paymentLinkID: ""
         ), isPressed: false)
         .padding()
         .previewLayout(.sizeThatFits)
@@ -194,7 +194,7 @@ struct MenuItemCard_Previews: PreviewProvider {
             price: 12.99,
             imageURL: "gs://dumplinghouseapp.firebasestorage.app/Subject.png",
             isAvailable: true,
-            paymentLinkID: "price_sample123"
+            paymentLinkID: ""
         ), isPressed: false)
         .padding()
         .previewLayout(.sizeThatFits)

@@ -7,7 +7,7 @@ struct MenuItem: Codable, Identifiable, Hashable {
     var price: Double
     var imageURL: String
     var isAvailable: Bool
-    // ✅ NEW: The ID for the Stripe Payment Link for this item.
+    // Optional payment link ID for external ordering.
     var paymentLinkID: String
     var isDumpling: Bool = false // New property, default false
     // Drink-related properties

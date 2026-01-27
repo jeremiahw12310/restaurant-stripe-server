@@ -235,7 +235,7 @@ struct ReceiptScanView: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 30, height: 30)
-                        stepText(title: "Dumpling Hero AI counts points", subtitle: "We never store your photos")
+                        stepText(title: "Dumpling Hero AI counts points", subtitle: "Your receipt is processed securely")
                         Spacer()
                     }
                     HStack(alignment: .center, spacing: 12) {

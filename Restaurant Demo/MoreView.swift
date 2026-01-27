@@ -52,12 +52,6 @@ struct MoreView: View {
                     } label: {
                         settingsRowLabel(title: "Rewards", systemImage: "gift.fill")
                     }
-
-                    NavigationLink {
-                        FeedView()
-                    } label: {
-                        settingsRowLabel(title: "Community (Coming Soon)", systemImage: "person.3.fill")
-                    }
                 }
 
                 Section("Support & Legal") {

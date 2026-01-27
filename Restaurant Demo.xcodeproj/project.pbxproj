@@ -513,7 +513,6 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.food-and-drink";
 				INFOPLIST_KEY_NSCameraUsageDescription = "This app uses the camera to scan receipts and earn loyalty points.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need access to your microphone to capture your voice for chat.";
-				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "We use access to save debug copies of preprocessed receipt images so admins can verify receipt detection.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "This app accesses your photo library to select profile pictures and receipt images.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "We use speech recognition so you can talk to Dumpling Hero hands-free to ask questions and get help.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -559,7 +558,6 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.food-and-drink";
 				INFOPLIST_KEY_NSCameraUsageDescription = "This app uses the camera to scan receipts and earn loyalty points.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need access to your microphone to capture your voice for chat.";
-				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "We use access to save debug copies of preprocessed receipt images so admins can verify receipt detection.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "This app accesses your photo library to select profile pictures and receipt images.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "We use speech recognition so you can talk to Dumpling Hero hands-free to ask questions and get help.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

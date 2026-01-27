@@ -122,31 +122,7 @@ class MenuViewViewModel: ObservableObject {
     
     func handleOrderCombo() {
         guard let combo = personalizedCombo else { return }
-        
-        // Create line items for Stripe checkout
-        let lineItems = combo.items.map { item in
-            [
-                "price_data": [
-                    "currency": "usd",
-                    "product_data": [
-                        "name": item.id,
-                        "description": item.description
-                    ],
-                    "unit_amount": Int(item.price * 100) // Convert to cents
-                ],
-                "quantity": 1
-            ]
-        }
-        
-        // Add combo discount or special pricing if needed
-        let requestBody: [String: Any] = [
-            "line_items": lineItems,
-            "metadata": [
-                "combo_type": "personalized",
-                "items_count": combo.items.count
-            ]
-        ]
-        
+
         // Navigate to order web view
         showOrderWebView = true
     }

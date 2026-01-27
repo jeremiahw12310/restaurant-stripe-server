@@ -4,7 +4,6 @@ import os
 
 extension Notification.Name {
     static let switchToHomeTab = Notification.Name("switchToHomeTab")
-    static let switchToCommunityTab = Notification.Name("switchToCommunityTab")
     static let switchToMoreTab = Notification.Name("switchToMoreTab")
     static let incomingReferralCode = Notification.Name("incomingReferralCode")
     static let openRewardsHistory = Notification.Name("openRewardsHistory")
@@ -83,9 +82,6 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .switchToHomeTab)) { _ in
                 selectedTab = 0
             }
-            .onReceive(NotificationCenter.default.publisher(for: .switchToCommunityTab)) { _ in
-                selectedTab = 4
-            }
             .onReceive(NotificationCenter.default.publisher(for: .switchToMoreTab)) { _ in
                 selectedTab = 4
             }
@@ -146,7 +142,7 @@ struct ContentView: View {
             themeManager.contentContext = .ordering
         case 3: // Rewards
             themeManager.contentContext = .menu
-        case 4: // Community
+        case 4: // More
             themeManager.contentContext = .community
         default:
             themeManager.contentContext = .menu

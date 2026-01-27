@@ -26,7 +26,7 @@ struct DrinksListView: View {
                 if showAdminTools {
                     VStack(spacing: 10) {
                         Button("Organize Items") {
-                            // TODO: Add organize functionality if needed
+                            // Placeholder for future organization feature
                         }
                         .foregroundColor(.blue)
                         .font(.system(size: 16, weight: .bold))

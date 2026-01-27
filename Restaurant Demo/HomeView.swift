@@ -1226,7 +1226,6 @@ struct HomeView: View {
     }
     
     private func openOrderView() {
-        // Directly present external ordering site in SafariView
         showOrderHandoff = true
     }
     
