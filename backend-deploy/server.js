@@ -1462,15 +1462,7 @@ app.post('/generate-combo', requireFirebaseAuth, comboPerUserLimiter, comboPerIp
     }
 
     const { userName, dietaryPreferences, menuItems, previousRecommendations } = req.body;
-    
-    // userName is required; dietaryPreferences are optional (we'll normalize below)
-    if (!userName) {
-      console.log('❌ Missing required fields. Received:', { userName: !!userName });
-      return res.status(400).json({ 
-        error: 'Missing required field: userName',
-        received: { userName: !!userName }
-      });
-    }
+    // Validation middleware ensures userName is present and valid
 
     // Normalize dietary preferences so downstream logic always has a safe object
     const normalizedDietaryPreferences = {

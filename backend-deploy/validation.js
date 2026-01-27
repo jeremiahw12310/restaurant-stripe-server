@@ -42,7 +42,11 @@ const chatSchema = Joi.object({
  * POST /generate-combo
  */
 const comboSchema = Joi.object({
-  userName: Joi.string().trim().max(50).allow('', null).optional(),
+  userName: Joi.string().trim().min(1).max(50).required()
+    .messages({
+      'string.empty': 'User name is required',
+      'any.required': 'User name is required'
+    }),
   dietaryPreferences: Joi.object({
     spiceLevel: Joi.string().valid('none', 'mild', 'medium', 'spicy', '').allow(null).optional(),
     allergies: Joi.array().items(Joi.string().max(50)).max(20).optional(),
@@ -62,10 +66,11 @@ const comboSchema = Joi.object({
  * POST /referrals/accept
  */
 const referralAcceptSchema = Joi.object({
-  code: Joi.string().trim().uppercase().alphanum().min(4).max(10).required()
+  code: Joi.string().trim().uppercase().alphanum().length(6).required()
     .messages({
       'string.empty': 'Referral code is required',
       'string.alphanum': 'Referral code must contain only letters and numbers',
+      'string.length': 'Referral code must be exactly 6 characters',
       'any.required': 'Referral code is required'
     }),
   deviceId: Joi.string().max(100).allow('', null).optional()
