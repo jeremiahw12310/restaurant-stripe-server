@@ -1080,7 +1080,7 @@ struct ReferralView: View {
         guard !myCode.isEmpty else { return }
         user.getIDToken { token, _ in
             guard let token = token else { return }
-            let url = URL(string: "\(Config.backendURL)/analytics/referral-share")!
+            guard let url = URL(string: "\(Config.backendURL)/analytics/referral-share") else { return }
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
             req.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -1114,7 +1114,11 @@ struct ReferralView: View {
                 self.errorMessage = "Missing auth token."
                 return
             }
-            let url = URL(string: "\(Config.backendURL)/referrals/create")!
+            guard let url = URL(string: "\(Config.backendURL)/referrals/create") else {
+                self.isLoading = false
+                self.errorMessage = "Invalid URL configuration."
+                return
+            }
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
             req.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -1194,7 +1198,10 @@ struct ReferralView: View {
                 DispatchQueue.main.async { self.acceptStatus = "Missing auth token." }
                 return
             }
-            let url = URL(string: "\(Config.backendURL)/referrals/accept")!
+            guard let url = URL(string: "\(Config.backendURL)/referrals/accept") else {
+                DispatchQueue.main.async { self.acceptStatus = "Invalid URL configuration." }
+                return
+            }
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
             req.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

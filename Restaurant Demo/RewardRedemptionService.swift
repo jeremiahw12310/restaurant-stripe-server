@@ -23,9 +23,15 @@ class RewardRedemptionService: ObservableObject {
         do {
             let url: URL
             if let tierId, !tierId.isEmpty {
-                url = URL(string: "\(baseURL)/reward-tier-items/by-id/\(tierId)")!
+                guard let tierURL = URL(string: "\(baseURL)/reward-tier-items/by-id/\(tierId)") else {
+                    return .failure(NetworkError.invalidURL)
+                }
+                url = tierURL
             } else {
-                url = URL(string: "\(baseURL)/reward-tier-items/\(pointsRequired)")!
+                guard let pointsURL = URL(string: "\(baseURL)/reward-tier-items/\(pointsRequired)") else {
+                    return .failure(NetworkError.invalidURL)
+                }
+                url = pointsURL
             }
             var urlRequest = URLRequest(url: url)
             urlRequest.httpMethod = "GET"
@@ -134,7 +140,9 @@ class RewardRedemptionService: ObservableObject {
                 selectedDrinkItemName: selectedDrinkItemName
             )
             
-            let url = URL(string: "\(baseURL)/redeem-reward")!
+            guard let url = URL(string: "\(baseURL)/redeem-reward") else {
+                throw NetworkError.invalidURL
+            }
             var urlRequest = URLRequest(url: url)
             urlRequest.httpMethod = "POST"
             urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -284,6 +292,7 @@ enum NetworkError: Error, LocalizedError {
     case serverError(String)
     case decodingError
     case unauthorized
+    case invalidURL
     
     var errorDescription: String? {
         switch self {
@@ -295,6 +304,8 @@ enum NetworkError: Error, LocalizedError {
             return "Failed to decode response"
         case .unauthorized:
             return "You need to sign in to redeem rewards"
+        case .invalidURL:
+            return "Invalid URL configuration"
         }
     }
 } 

@@ -741,7 +741,9 @@ class RewardTierAdminViewModel: ObservableObject {
                     return
                 }
                 
-                let url = URL(string: "\(Config.backendURL)/admin/reward-tiers")!
+                guard let url = URL(string: "\(Config.backendURL)/admin/reward-tiers") else {
+                    throw NSError(domain: "RewardTierAdmin", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL configuration"])
+                }
                 var request = URLRequest(url: url)
                 request.httpMethod = "GET"
                 request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -783,7 +785,9 @@ class RewardTierAdminViewModel: ObservableObject {
                 return
             }
             
-            let url = URL(string: "\(Config.backendURL)/admin/reward-tiers/\(tierId)/remove-item/\(itemId)")!
+            guard let url = URL(string: "\(Config.backendURL)/admin/reward-tiers/\(tierId)/remove-item/\(itemId)") else {
+                throw NSError(domain: "RewardTierAdmin", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL configuration"])
+            }
             var request = URLRequest(url: url)
             request.httpMethod = "DELETE"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -1045,7 +1049,9 @@ class AddItemToTierViewModel: ObservableObject {
                 return
             }
             
-            let url = URL(string: "\(Config.backendURL)/admin/reward-tiers/\(tierId)/add-item")!
+            guard let url = URL(string: "\(Config.backendURL)/admin/reward-tiers/\(tierId)/add-item") else {
+                throw NSError(domain: "AddItemToTier", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL configuration"])
+            }
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")

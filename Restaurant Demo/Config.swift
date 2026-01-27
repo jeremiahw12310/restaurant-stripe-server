@@ -115,4 +115,17 @@ extension Config {
  1. Deploy server to Railway/Render/Heroku
  2. Change currentEnvironment to .production
  3. Build and test!
- */ 
+ */
+
+// MARK: - Network Configuration
+extension URLSession {
+    /// Configured URLSession with explicit timeouts for production use
+    /// Use this instead of URLSession.shared for better timeout handling
+    static let configured: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 60
+        config.waitsForConnectivity = true
+        return URLSession(configuration: config)
+    }()
+} 

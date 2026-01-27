@@ -738,7 +738,9 @@ struct GiftedRewardDetailView: View {
         )
         
         do {
-            let url = URL(string: "\(Config.backendURL)/rewards/claim-gift")!
+            guard let url = URL(string: "\(Config.backendURL)/rewards/claim-gift") else {
+                throw NetworkError.invalidURL
+            }
             var urlRequest = URLRequest(url: url)
             urlRequest.httpMethod = "POST"
             urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")

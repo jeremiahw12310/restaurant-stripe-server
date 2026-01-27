@@ -764,7 +764,9 @@ final class AdminRewardsScanViewModel: ObservableObject {
 
         do {
             let token = try await requireIdToken()
-            let url = URL(string: "\(Config.backendURL)/admin/rewards/validate")!
+            guard let url = URL(string: "\(Config.backendURL)/admin/rewards/validate") else {
+                throw NSError(domain: "AdminRewardsScan", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL configuration."])
+            }
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -815,7 +817,9 @@ final class AdminRewardsScanViewModel: ObservableObject {
 
         do {
             let token = try await requireIdToken()
-            let url = URL(string: "\(Config.backendURL)/admin/rewards/consume")!
+            guard let url = URL(string: "\(Config.backendURL)/admin/rewards/consume") else {
+                throw NSError(domain: "AdminRewardsScan", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL configuration."])
+            }
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")

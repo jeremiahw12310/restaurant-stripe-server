@@ -336,7 +336,10 @@ class RewardsViewModel: ObservableObject {
         
         do {
             let token = try await user.getIDTokenResult(forcingRefresh: false).token
-            let url = URL(string: "\(Config.backendURL)/me/gifted-rewards")!
+            guard let url = URL(string: "\(Config.backendURL)/me/gifted-rewards") else {
+                DebugLogger.debug("❌ Invalid URL for gifted rewards", category: "Rewards")
+                return
+            }
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -413,7 +416,10 @@ class RewardsViewModel: ObservableObject {
         
         do {
             let token = try await user.getIDTokenResult(forcingRefresh: false).token
-            let url = URL(string: "\(Config.backendURL)/refund-expired-reward")!
+            guard let url = URL(string: "\(Config.backendURL)/refund-expired-reward") else {
+                DebugLogger.debug("❌ Invalid URL for refund", category: "Rewards")
+                return
+            }
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

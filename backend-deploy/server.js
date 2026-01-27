@@ -3,35 +3,36 @@ const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs');
+const { randomUUID } = require('crypto');
+const pino = require('pino');
+const pinoHttp = require('pino-http');
+const rateLimit = require('express-rate-limit');
+const RedisStore = require('rate-limit-redis');
+const Redis = require('ioredis');
 const { OpenAI } = require('openai');
 const { DateTime } = require('luxon');
 
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
 
+let firebaseInitialized = false;
+
 // Simple Firebase initialization - use service account key if present
 if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
   try {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
     
-    // Debug: Log service account details (without exposing the full private key)
-    console.log('🔍 Service Account Debug:');
-    console.log('   - project_id:', serviceAccount.project_id);
-    console.log('   - client_email:', serviceAccount.client_email);
-    console.log('   - private_key exists:', !!serviceAccount.private_key);
-    console.log('   - private_key length:', serviceAccount.private_key?.length || 0);
-    console.log('   - private_key has newlines:', serviceAccount.private_key?.includes('\n') || false);
-    console.log('   - private_key starts with:', serviceAccount.private_key?.substring(0, 30) + '...');
+    // Log only project identifier (safe to expose)
+    console.log('🔍 Service Account loaded for project:', serviceAccount.project_id);
     
     const credential = admin.credential.cert(serviceAccount);
     admin.initializeApp({ credential });
+    firebaseInitialized = true;
     console.log('✅ Firebase Admin initialized with service account key');
     
     // Test if credential can generate access token
     credential.getAccessToken().then(token => {
       console.log('✅ Service account can generate access tokens');
-      console.log('   - Token type:', token.access_token ? 'Bearer token received' : 'No token');
-      console.log('   - Expires in:', token.expires_in, 'seconds');
     }).catch(err => {
       console.error('❌ Service account CANNOT generate access tokens:', err.message);
     });
@@ -41,6 +42,7 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
 } else if (process.env.FIREBASE_AUTH_TYPE === 'adc' || process.env.GOOGLE_CLOUD_PROJECT) {
   try {
     admin.initializeApp({ projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp' });
+    firebaseInitialized = true;
     console.log('✅ Firebase Admin initialized with project ID for ADC');
   } catch (error) {
     console.error('❌ Error initializing Firebase Admin with ADC:', error);
@@ -53,7 +55,45 @@ const path = require('path');
 const fsPromises = require('fs').promises;
 
 const app = express();
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ dest: 'uploads/', limits: { fileSize: 10 * 1024 * 1024 } });
+const logger = pino({
+  level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug')
+});
+
+app.use(pinoHttp({
+  logger,
+  genReqId: (req) => {
+    const existing = req.headers['x-request-id'];
+    if (Array.isArray(existing) && existing.length > 0) return existing[0];
+    if (typeof existing === 'string' && existing.trim()) return existing;
+    return randomUUID();
+  }
+}));
+app.use((req, res, next) => {
+  if (req.id) res.setHeader('X-Request-Id', req.id);
+  next();
+});
+
+const redisUrl = process.env.REDIS_URL;
+const redisClient = redisUrl ? new Redis(redisUrl, { enableAutoPipelining: true }) : null;
+if (redisClient) {
+  redisClient.on('error', (err) => console.error('❌ Redis error:', err));
+}
+
+function validateEnvironment() {
+  const missing = [];
+  if (!process.env.OPENAI_API_KEY) missing.push('OPENAI_API_KEY');
+  if (!firebaseInitialized && !admin.apps.length) missing.push('FIREBASE_AUTH');
+
+  if (missing.length === 0) return;
+
+  const message = `❌ Missing required configuration: ${missing.join(', ')}`;
+  if (process.env.NODE_ENV === 'production') {
+    console.error(message);
+    process.exit(1);
+  }
+  console.warn(message);
+}
 
 // CORS configuration - restrict to allowed origins
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
@@ -70,7 +110,7 @@ app.use(cors({
     if (process.env.NODE_ENV !== 'production' && origin.includes('localhost')) {
       return callback(null, true);
     }
-    return callback(null, true); // Allow all for now to prevent breaking mobile apps
+    return callback(new Error('Not allowed by CORS'), false);
   },
   credentials: true
 }));
@@ -135,16 +175,31 @@ async function requireAdminAuth(req, res, next) {
   }
 }
 
-function createInMemoryRateLimiter({ keyFn, windowMs, max, errorCode }) {
-  const buckets = new Map(); // key -> { count, resetAt }
+function normalizeRateLimitOptions({ windowMs, max }) {
   const m = typeof max === 'number' && max > 0 ? max : parseInt(String(max || ''), 10);
   const w = typeof windowMs === 'number' && windowMs > 0 ? windowMs : 60_000;
+  return { m, w };
+}
+
+function createInMemoryRateLimiter({ keyFn, windowMs, max, errorCode }) {
+  const buckets = new Map(); // key -> { count, resetAt }
+  const { m, w } = normalizeRateLimitOptions({ windowMs, max });
+  let lastCleanupAt = 0;
 
   return function rateLimitMiddleware(req, res, next) {
     if (!m || m <= 0) return next();
     const key = keyFn(req);
     if (!key) return next();
     const now = Date.now();
+
+    if (now - lastCleanupAt > w) {
+      for (const [bucketKey, bucket] of buckets.entries()) {
+        if (!bucket || bucket.resetAt <= now) {
+          buckets.delete(bucketKey);
+        }
+      }
+      lastCleanupAt = now;
+    }
 
     const existing = buckets.get(key);
     if (!existing || existing.resetAt <= now) {
@@ -165,6 +220,47 @@ function createInMemoryRateLimiter({ keyFn, windowMs, max, errorCode }) {
 
     return next();
   };
+}
+
+function createRateLimiter({ keyFn, windowMs, max, errorCode }) {
+  const { m, w } = normalizeRateLimitOptions({ windowMs, max });
+  if (!m || m <= 0) {
+    return function rateLimitDisabled(req, res, next) {
+      return next();
+    };
+  }
+  if (!redisClient) {
+    return createInMemoryRateLimiter({ keyFn, windowMs: w, max: m, errorCode });
+  }
+
+  return rateLimit({
+    windowMs: w,
+    max: m,
+    skip: (req) => {
+      const key = keyFn(req);
+      if (!key) return true;
+      req.rateLimitKey = key;
+      return false;
+    },
+    keyGenerator: (req) => req.rateLimitKey || keyFn(req),
+    standardHeaders: true,
+    legacyHeaders: false,
+    store: new RedisStore({
+      sendCommand: (...args) => redisClient.call(...args)
+    }),
+    handler: (req, res) => {
+      const resetTime = req.rateLimit?.resetTime;
+      const retryAfterSeconds = resetTime
+        ? Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+        : undefined;
+      if (retryAfterSeconds) res.set('Retry-After', String(retryAfterSeconds));
+      return res.status(429).json({
+        errorCode: errorCode || 'RATE_LIMITED',
+        error: 'Too many requests. Please slow down.',
+        retryAfterSeconds
+      });
+    }
+  });
 }
 
 async function enforceDailyQuota({ db, uid, endpointKey, limit }) {
@@ -328,14 +424,14 @@ function validateDietaryRestrictions(items, dietaryPreferences, allMenuItems) {
 const MAX_REFERRALS_PER_USER = 10;
 
 // Referral endpoint rate limiting (moderate brute-force protection)
-const referralPerUserLimiter = createInMemoryRateLimiter({
+const referralPerUserLimiter = createRateLimiter({
   keyFn: (req) => req.auth?.uid,
   windowMs: 60_000,
   max: 5,
   errorCode: 'REFERRAL_RATE_LIMITED'
 });
 
-const referralPerIpLimiter = createInMemoryRateLimiter({
+const referralPerIpLimiter = createRateLimiter({
   keyFn: (req) => getClientIp(req),
   windowMs: 60_000,
   max: 10,
@@ -1306,34 +1402,34 @@ app.get('/app-version', (req, res) => {
 });
 
 // Generate personalized combo endpoint
-const comboPerUserLimiter = createInMemoryRateLimiter({
+const comboPerUserLimiter = createRateLimiter({
   keyFn: (req) => req.auth?.uid,
   windowMs: 60_000,
   max: parseInt(process.env.COMBO_UID_PER_MIN || '6', 10),
   errorCode: 'COMBO_RATE_LIMITED'
 });
-const comboPerIpLimiter = createInMemoryRateLimiter({
+const comboPerIpLimiter = createRateLimiter({
   keyFn: (req) => getClientIp(req),
   windowMs: 60_000,
   max: parseInt(process.env.COMBO_IP_PER_MIN || '20', 10),
   errorCode: 'COMBO_RATE_LIMITED'
 });
 
-const receiptAnalyzePerUserLimiter = createInMemoryRateLimiter({
+const receiptAnalyzePerUserLimiter = createRateLimiter({
   keyFn: (req) => req.auth?.uid,
   windowMs: 60_000,
   max: parseInt(process.env.RECEIPT_ANALYZE_UID_PER_MIN || '6', 10),
   errorCode: 'RECEIPT_RATE_LIMITED'
 });
 
-const receiptAnalyzePerIpLimiter = createInMemoryRateLimiter({
+const receiptAnalyzePerIpLimiter = createRateLimiter({
   keyFn: (req) => getClientIp(req),
   windowMs: 60_000,
   max: parseInt(process.env.RECEIPT_ANALYZE_IP_PER_MIN || '20', 10),
   errorCode: 'RECEIPT_RATE_LIMITED'
 });
 
-const submitReceiptLimiter = createInMemoryRateLimiter({
+const submitReceiptLimiter = createRateLimiter({
   keyFn: (req) => getClientIp(req),
   windowMs: 60 * 1000,
   max: 10,
@@ -3590,13 +3686,13 @@ If a field is missing, use null.`;
   });
 
   // Chat endpoint for restaurant assistant (AUTH REQUIRED + rate limits)
-  const chatPerUserLimiter = createInMemoryRateLimiter({
+  const chatPerUserLimiter = createRateLimiter({
     keyFn: (req) => req.auth?.uid,
     windowMs: 60_000,
     max: parseInt(process.env.CHAT_UID_PER_MIN || '12', 10),
     errorCode: 'CHAT_RATE_LIMITED'
   });
-  const chatPerIpLimiter = createInMemoryRateLimiter({
+  const chatPerIpLimiter = createRateLimiter({
     keyFn: (req) => getClientIp(req),
     windowMs: 60_000,
     max: parseInt(process.env.CHAT_IP_PER_MIN || '30', 10),
@@ -4229,13 +4325,13 @@ LOYALTY/REWARDS CONTEXT:
   });
 
   // Shared rate limits for Dumpling Hero OpenAI endpoints
-  const heroPerUserLimiter = createInMemoryRateLimiter({
+  const heroPerUserLimiter = createRateLimiter({
     keyFn: (req) => req.auth?.uid,
     windowMs: 60_000,
     max: parseInt(process.env.HERO_UID_PER_MIN || '8', 10),
     errorCode: 'HERO_RATE_LIMITED'
   });
-  const heroPerIpLimiter = createInMemoryRateLimiter({
+  const heroPerIpLimiter = createRateLimiter({
     keyFn: (req) => getClientIp(req),
     windowMs: 60_000,
     max: parseInt(process.env.HERO_IP_PER_MIN || '20', 10),
@@ -4687,13 +4783,13 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
   });
 
   // Dumpling Hero Comment Preview endpoint (for preview before posting)
-  const heroPreviewPerUserLimiter = createInMemoryRateLimiter({
+  const heroPreviewPerUserLimiter = createRateLimiter({
     keyFn: (req) => req.auth?.uid,
     windowMs: 60_000,
     max: parseInt(process.env.HERO_PREVIEW_UID_PER_MIN || '10', 10),
     errorCode: 'HERO_RATE_LIMITED'
   });
-  const heroPreviewPerIpLimiter = createInMemoryRateLimiter({
+  const heroPreviewPerIpLimiter = createRateLimiter({
     keyFn: (req) => getClientIp(req),
     windowMs: 60_000,
     max: parseInt(process.env.HERO_PREVIEW_IP_PER_MIN || '25', 10),
@@ -11462,6 +11558,42 @@ app.use((err, req, res, next) => {
   });
 });
 
+const port = process.env.PORT || 3001;
+let server;
+let isShuttingDown = false;
+
+validateEnvironment();
+
+server = app.listen(port, '0.0.0.0', () => {
+  console.log(`🚀 Server running on port ${port}`);
+  console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔑 OpenAI API Key configured: ${process.env.OPENAI_API_KEY ? 'Yes' : 'No'}`);
+  console.log(`🔥 Firebase configured: ${admin.apps.length ? 'Yes' : 'No'}`);
+});
+
+function shutdown(signal, exitCode = 0) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`🧹 Shutdown initiated (${signal})`);
+  
+  // Close Redis connection if it exists
+  if (redisClient) {
+    redisClient.disconnect();
+    console.log('✅ Redis disconnected');
+  }
+  
+  if (server) {
+    server.close(() => {
+      console.log('✅ Server closed');
+      process.exit(exitCode);
+    });
+  } else {
+    process.exit(exitCode);
+  }
+
+  setTimeout(() => process.exit(exitCode || 1), 10000).unref();
+}
+
 // Process-level error handlers to prevent crashes
 process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
@@ -11469,21 +11601,11 @@ process.on('unhandledRejection', (reason, promise) => {
 
 process.on('uncaughtException', (error) => {
   console.error('❌ Uncaught Exception:', error);
-  // Give the server a chance to log and handle in-flight requests before exiting
-  setTimeout(() => process.exit(1), 1000);
+  shutdown('uncaughtException', 1);
 });
 
-// Force production environment
-process.env.NODE_ENV = 'production';
-
-const port = process.env.PORT || 3001;
-
-const server = app.listen(port, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${port}`);
-  console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔑 OpenAI API Key configured: ${process.env.OPENAI_API_KEY ? 'Yes' : 'No'}`);
-  console.log(`🔥 Firebase configured: ${admin.apps.length ? 'Yes' : 'No'}`);
-});
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 // Configure server timeouts
 server.timeout = 30000; // 30 seconds request timeout
