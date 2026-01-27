@@ -1238,13 +1238,12 @@ struct HomeView: View {
         // If referral is currently showing, don't start the timer yet.
         guard !showReferral else { return }
         
-        glimmerTimer = Timer.scheduledTimer(withTimeInterval: 1/8, repeats: true) { [weak self] _ in // OPTIMIZED: Reduced from 15fps to 8fps for lower energy usage
-            guard let self = self else { return }
-            self.time += 1/8
-            if Date().timeIntervalSince(self.lastScroll) > 0.7 {
-                if self.glimmerOpacity > 0 {
+        glimmerTimer = Timer.scheduledTimer(withTimeInterval: 1/8, repeats: true) { _ in // OPTIMIZED: Reduced from 15fps to 8fps for lower energy usage
+            time += 1/8
+            if Date().timeIntervalSince(lastScroll) > 0.7 {
+                if glimmerOpacity > 0 {
                     // Fade out much more smoothly and slowly
-                    self.glimmerOpacity = max(0, self.glimmerOpacity - 0.03) // OPTIMIZED: Increased step size for faster fade
+                    glimmerOpacity = max(0, glimmerOpacity - 0.03) // OPTIMIZED: Increased step size for faster fade
                 }
             }
         }
@@ -1330,23 +1329,22 @@ struct HomeView: View {
         }
         
         // Start confetti animation
-        welcomeConfettiTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                for i in self.welcomeConfettiPieces.indices {
-                    self.welcomeConfettiPieces[i].y += self.welcomeConfettiPieces[i].velocity * 0.05
-                    self.welcomeConfettiPieces[i].rotation += self.welcomeConfettiPieces[i].angularVelocity
+        welcomeConfettiTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+            DispatchQueue.main.async {
+                for i in welcomeConfettiPieces.indices {
+                    welcomeConfettiPieces[i].y += welcomeConfettiPieces[i].velocity * 0.05
+                    welcomeConfettiPieces[i].rotation += welcomeConfettiPieces[i].angularVelocity
                 }
                 
                 // Remove confetti that has fallen off screen
-                self.welcomeConfettiPieces.removeAll { piece in
+                welcomeConfettiPieces.removeAll { piece in
                     piece.y > UIScreen.main.bounds.height + 50
                 }
                 
                 // Stop animation when all confetti is gone
-                if self.welcomeConfettiPieces.isEmpty {
-                    self.welcomeConfettiTimer?.invalidate()
-                    self.welcomeConfettiTimer = nil
+                if welcomeConfettiPieces.isEmpty {
+                    welcomeConfettiTimer?.invalidate()
+                    welcomeConfettiTimer = nil
                 }
             }
         }
