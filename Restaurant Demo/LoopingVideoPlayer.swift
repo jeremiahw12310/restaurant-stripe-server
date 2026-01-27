@@ -21,11 +21,11 @@ struct LoopingVideoPlayer: UIViewRepresentable {
             try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default, options: [])
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
-            print("⚠️ Audio session configuration failed: \(error)")
+            DebugLogger.debug("⚠️ Audio session configuration failed: \(error)", category: "Video")
         }
         
         guard let path = Bundle.main.path(forResource: videoName, ofType: videoType) else {
-            print("⚠️ Video file not found: \(videoName).\(videoType)")
+            DebugLogger.debug("⚠️ Video file not found: \(videoName).\(videoType)", category: "Video")
             return view
         }
         
@@ -113,7 +113,7 @@ struct LoopingVideoPlayer: UIViewRepresentable {
                     case .readyToPlay:
                         player?.play()
                     case .failed:
-                        print("⚠️ Video playback failed: \(playerItem.error?.localizedDescription ?? "Unknown error")")
+                        DebugLogger.debug("⚠️ Video playback failed: \(playerItem.error?.localizedDescription ?? "Unknown error")", category: "Video")
                     case .unknown:
                         break
                     @unknown default:

@@ -287,7 +287,7 @@ struct RewardItemSelectionView: View {
         
         let tierId = reward.rewardTierId ?? "none"
         let tierInfo = "Reward: '\(reward.title)', TierId: '\(tierId)', Points: \(reward.pointsRequired)"
-        print("🎁 Loading eligible items - \(tierInfo)")
+        DebugLogger.debug("🎁 Loading eligible items - \(tierInfo)", category: "Rewards")
         
         let result = await redemptionService.fetchEligibleItems(
             pointsRequired: reward.pointsRequired,
@@ -301,17 +301,17 @@ struct RewardItemSelectionView: View {
                 eligibleItems = filteredItemsForReward(items)
                 let filteredCount = eligibleItems.count
                 
-                print("✅ Loaded items - \(tierInfo): \(originalCount) items from backend, \(filteredCount) items after filtering")
+                DebugLogger.debug("✅ Loaded items - \(tierInfo): \(originalCount) items from backend, \(filteredCount) items after filtering", category: "Rewards")
                 
                 if eligibleItems.isEmpty && originalCount > 0 {
-                    print("⚠️ Warning: All items were filtered out. Category filter: '\(reward.eligibleCategoryId ?? "none")'")
+                    DebugLogger.debug("⚠️ Warning: All items were filtered out. Category filter: '\(reward.eligibleCategoryId ?? "none")'", category: "Rewards")
                 } else if eligibleItems.isEmpty {
-                    print("⚠️ Warning: Backend returned empty items array for tier. This tier may not be configured in Firestore 'rewardTierItems' collection.")
+                    DebugLogger.debug("⚠️ Warning: Backend returned empty items array for tier. This tier may not be configured in Firestore 'rewardTierItems' collection.", category: "Rewards")
                 }
                 
                 isLoading = false
             case .failure(let error):
-                print("❌ Failed to load items - \(tierInfo): \(error.localizedDescription)")
+                DebugLogger.debug("❌ Failed to load items - \(tierInfo): \(error.localizedDescription)", category: "Rewards")
                 errorMessage = error.localizedDescription
                 isLoading = false
             }
@@ -322,7 +322,7 @@ struct RewardItemSelectionView: View {
         guard let categoryFilter = reward.eligibleCategoryId?.trimmingCharacters(in: .whitespacesAndNewlines),
               !categoryFilter.isEmpty else {
             // No category filter - return all items as-is
-            print("📋 No category filter applied, showing all \(items.count) items from backend")
+            DebugLogger.debug("📋 No category filter applied, showing all \(items.count) items from backend", category: "Rewards")
             return items
         }
         
@@ -335,7 +335,7 @@ struct RewardItemSelectionView: View {
             return categoryId.caseInsensitiveCompare(categoryFilter) == .orderedSame
         }
         
-        print("📋 Filtered \(items.count) items to \(filtered.count) items matching category '\(categoryFilter)'")
+        DebugLogger.debug("📋 Filtered \(items.count) items to \(filtered.count) items matching category '\(categoryFilter)'", category: "Rewards")
         return filtered
     }
 }

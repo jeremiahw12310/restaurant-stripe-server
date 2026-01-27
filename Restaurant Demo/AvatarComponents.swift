@@ -15,7 +15,7 @@ struct ProfileImageView: View {
             .scaleEffect(cardAnimations.indices.contains(0) && cardAnimations[0] ? 1.0 : 0.8)
             .animation(.spring(response: 0.6, dampingFraction: 0.7).delay(1.3), value: cardAnimations.indices.contains(0) ? cardAnimations[0] : false)
             .onAppear {
-                print("🖼️ HomeView: Profile image displayed")
+                DebugLogger.debug("🖼️ HomeView: Profile image displayed", category: "User")
             }
     }
 }
@@ -46,7 +46,7 @@ struct EmojiAvatarView: View {
                 .animation(.spring(response: 0.6, dampingFraction: 0.6).delay(1.4), value: cardAnimations.indices.contains(0) ? cardAnimations[0] : false)
         }
         .onAppear {
-            print("🖼️ HomeView: No profile image, showing emoji avatar")
+            DebugLogger.debug("🖼️ HomeView: No profile image, showing emoji avatar", category: "User")
         }
     }
 }

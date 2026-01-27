@@ -1028,7 +1028,7 @@ class AdminNotificationsViewModel: ObservableObject {
             .limit(to: 10)
             .getDocuments { [weak self] snapshot, error in
                 if let error = error {
-                    print("❌ Error loading sent notifications: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ Error loading sent notifications: \(error.localizedDescription)", category: "Admin")
                     return
                 }
                 

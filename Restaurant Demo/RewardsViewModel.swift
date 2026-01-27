@@ -34,7 +34,7 @@ class RewardsViewModel: ObservableObject {
 
     deinit {
         // Performance: Log deinit for memory leak tracking
-        print("🧹 RewardsViewModel deinit - cleaning up listeners")
+        DebugLogger.debug("🧹 RewardsViewModel deinit - cleaning up listeners", category: "Rewards")
         if let handle = authHandle {
             Auth.auth().removeStateDidChangeListener(handle)
         }
@@ -183,7 +183,7 @@ class RewardsViewModel: ObservableObject {
             .addSnapshotListener { [weak self] snapshot, error in
                 guard let self = self else { return }
                 if let error = error {
-                    print("❌ Active redemption listener error: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ Active redemption listener error: \(error.localizedDescription)", category: "Rewards")
                     return
                 }
                 let docs = snapshot?.documents ?? []
@@ -350,7 +350,7 @@ class RewardsViewModel: ObservableObject {
             guard httpResponse.statusCode == 200 else {
                 let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 let errorMessage = errorData?["error"] as? String ?? "Failed to load gifted rewards"
-                print("❌ Error loading gifted rewards: \(errorMessage)")
+                DebugLogger.debug("❌ Error loading gifted rewards: \(errorMessage)", category: "Rewards")
                 return
             }
             
@@ -370,10 +370,10 @@ class RewardsViewModel: ObservableObject {
             }
             
             self.giftedRewards = parsedGifts
-            print("✅ Loaded \(parsedGifts.count) gifted rewards")
+            DebugLogger.debug("✅ Loaded \(parsedGifts.count) gifted rewards", category: "Rewards")
             
         } catch {
-            print("❌ Error loading gifted rewards: \(error.localizedDescription)")
+            DebugLogger.debug("❌ Error loading gifted rewards: \(error.localizedDescription)", category: "Rewards")
             self.giftedRewards = []
         }
     }
@@ -402,12 +402,12 @@ class RewardsViewModel: ObservableObject {
     @MainActor
     func refundExpiredReward(rewardId: String? = nil, redemptionCode: String? = nil) async {
         guard let user = Auth.auth().currentUser else {
-            print("❌ No authenticated user for refund")
+            DebugLogger.debug("❌ No authenticated user for refund", category: "Rewards")
             return
         }
         
         guard rewardId != nil || redemptionCode != nil else {
-            print("❌ Must provide either rewardId or redemptionCode")
+            DebugLogger.debug("❌ Must provide either rewardId or redemptionCode", category: "Rewards")
             return
         }
         
@@ -429,9 +429,9 @@ class RewardsViewModel: ObservableObject {
             request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
             
             if let rewardId = rewardId {
-                print("💰 Requesting refund for expired reward ID: \(rewardId)")
+                DebugLogger.debug("💰 Requesting refund for expired reward ID: \(rewardId)", category: "Rewards")
             } else if let code = redemptionCode {
-                print("💰 Requesting refund for expired reward code: \(code)")
+                DebugLogger.debug("💰 Requesting refund for expired reward code: \(code)", category: "Rewards")
             }
             
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -447,7 +447,7 @@ class RewardsViewModel: ObservableObject {
                 let alreadyRefunded = json?["alreadyRefunded"] as? Bool ?? false
                 
                 if alreadyRefunded {
-                    print("✅ Points already refunded for this reward")
+                    DebugLogger.debug("✅ Points already refunded for this reward", category: "Rewards")
                     return
                 }
                 
@@ -463,11 +463,11 @@ class RewardsViewModel: ObservableObject {
                     self.showRefundNotification = false
                 }
                 
-                print("✅ Refund successful: \(pointsRefunded) points refunded, new balance: \(newPointsBalance)")
+                DebugLogger.debug("✅ Refund successful: \(pointsRefunded) points refunded, new balance: \(newPointsBalance)", category: "Rewards")
             } else {
                 let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 let errorMessage = errorData?["error"] as? String ?? "Failed to refund reward"
-                print("❌ Error refunding reward: \(errorMessage)")
+                DebugLogger.debug("❌ Error refunding reward: \(errorMessage)", category: "Rewards")
                 
                 // Still show a notification even if refund failed (might have been refunded server-side)
                 refundNotificationMessage = "Reward expired - checking refund status"
@@ -478,7 +478,7 @@ class RewardsViewModel: ObservableObject {
             }
             
         } catch {
-            print("❌ Error refunding expired reward: \(error.localizedDescription)")
+            DebugLogger.debug("❌ Error refunding expired reward: \(error.localizedDescription)", category: "Rewards")
             
             // Show notification about expiration
             refundNotificationMessage = "Reward expired"

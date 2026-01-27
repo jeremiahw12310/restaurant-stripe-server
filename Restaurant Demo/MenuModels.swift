@@ -126,10 +126,10 @@ struct MenuItem: Codable, Identifiable, Hashable {
                 let urlString = "https://firebasestorage.googleapis.com/v0/b/\(bucketName)/o/\(encodedPath)?alt=media"
                 
                 if let url = URL(string: urlString) {
-                    print("✅ Resolved gs:// URL: \(urlString)")
+                    DebugLogger.debug("✅ Resolved gs:// URL: \(urlString)", category: "Menu")
                     return url
                 } else {
-                    print("❌ Failed to construct URL from: \(urlString)")
+                    DebugLogger.debug("❌ Failed to construct URL from: \(urlString)", category: "Menu")
                 }
             }
         } else if imageURL.hasPrefix("http") {
@@ -277,7 +277,7 @@ struct DrinkFlavor: Codable, Identifiable, Hashable {
                 if let url = URL(string: urlString) {
                     return url
                 } else {
-                    print("❌ Failed to construct URL from: \(urlString)")
+                    DebugLogger.debug("❌ Failed to construct URL from: \(urlString)", category: "Menu")
                 }
             }
         } else if icon.hasPrefix("http") {

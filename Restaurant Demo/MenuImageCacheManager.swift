@@ -48,7 +48,7 @@ class MenuImageCacheManager {
         cacheDirectory = cachesURL.appendingPathComponent("MenuImageCache", isDirectory: true)
         
         if !cachingEnabled {
-            print("⚠️ MENU IMAGE CACHING DISABLED BY KILL SWITCH")
+            DebugLogger.debug("⚠️ MENU IMAGE CACHING DISABLED BY KILL SWITCH", category: "Cache")
             return
         }
         
@@ -56,7 +56,7 @@ class MenuImageCacheManager {
         do {
             // Create directory if it doesn't exist
             try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-            print("🗂️ MenuImageCache initialized at: \(cacheDirectory.path)")
+            DebugLogger.debug("🗂️ MenuImageCache initialized at: \(cacheDirectory.path)", category: "Cache")
             
             // Check cache version - clear if incompatible
             validateCacheVersion()
@@ -64,7 +64,7 @@ class MenuImageCacheManager {
             // Check and cleanup if cache is too large
             cleanupIfNeeded()
         } catch {
-            print("⚠️ CRITICAL: Cache initialization failed, disabling caching: \(error)")
+            DebugLogger.debug("⚠️ CRITICAL: Cache initialization failed, disabling caching: \(error)", category: "Cache")
             // Auto-disable caching to prevent future crashes
             UserDefaults.standard.set(false, forKey: "menuImageCachingEnabled")
             clearCache()
@@ -77,12 +77,12 @@ class MenuImageCacheManager {
         let storedVersion = UserDefaults.standard.string(forKey: cacheVersionKey)
         
         if storedVersion != currentCacheVersion {
-            print("⚠️ Cache version mismatch (stored: \(storedVersion ?? "none"), current: \(currentCacheVersion))")
-            print("🧹 Clearing cache for compatibility...")
+            DebugLogger.debug("⚠️ Cache version mismatch (stored: \(storedVersion ?? "none"), current: \(currentCacheVersion))", category: "Cache")
+            DebugLogger.debug("🧹 Clearing cache for compatibility...", category: "Cache")
             clearCache()
             UserDefaults.standard.set(currentCacheVersion, forKey: cacheVersionKey)
         } else {
-            print("✅ Cache version valid: \(currentCacheVersion)")
+            DebugLogger.debug("✅ Cache version valid: \(currentCacheVersion)", category: "Cache")
         }
     }
     
@@ -114,7 +114,7 @@ class MenuImageCacheManager {
                 }
             }
         } catch {
-            print("⚠️ Error reading cached image: \(error)")
+            DebugLogger.debug("⚠️ Error reading cached image: \(error)", category: "Cache")
         }
         
         return nil
@@ -134,7 +134,7 @@ class MenuImageCacheManager {
     /// Download image from URL and cache it
     private func downloadAndCache(url: String, priority: CachePriority = .normal, metadata: MenuImageMetadata, completion: @escaping (UIImage?) -> Void) {
         guard let imageURL = URL(string: url) else {
-            print("❌ Invalid URL: \(url)")
+            DebugLogger.debug("❌ Invalid URL: \(url)", category: "Cache")
             completion(nil)
             return
         }
@@ -149,20 +149,20 @@ class MenuImageCacheManager {
             }
             
             if let error = error {
-                print("❌ Download failed: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Download failed: \(error.localizedDescription)", category: "Cache")
                 completion(nil)
                 return
             }
             
             guard let data = data, let originalImage = UIImage(data: data) else {
-                print("❌ Failed to decode image data")
+                DebugLogger.debug("❌ Failed to decode image data", category: "Cache")
                 completion(nil)
                 return
             }
             
             // Smart compression - PNG for transparency, JPEG for opaque
             guard let compressed = self.compressImage(originalImage) else {
-                print("❌ Failed to compress image")
+                DebugLogger.debug("❌ Failed to compress image", category: "Cache")
                 completion(originalImage)
                 return
             }
@@ -180,8 +180,8 @@ class MenuImageCacheManager {
                 let originalSize = data.count
                 let compressedSize = compressed.data.count
                 let savings = Float(originalSize - compressedSize) / Float(originalSize) * 100
-                print("✅ Cached: \(url.split(separator: "/").last ?? "unknown")")
-                print("   Size: \(self.formatBytes(originalSize)) → \(self.formatBytes(compressedSize)) (\(String(format: "%.0f", savings))% saved)")
+                DebugLogger.debug("✅ Cached: \(url.split(separator: "/").last ?? "unknown")", category: "Cache")
+                DebugLogger.debug("   Size: \(self.formatBytes(originalSize)) → \(self.formatBytes(compressedSize)) (\(String(format: "%.0f", savings))% saved)", category: "Cache")
                 
                 // Create image from compressed data
                 if let cachedImage = UIImage(data: compressed.data) {
@@ -192,7 +192,7 @@ class MenuImageCacheManager {
                     completion(originalImage)
                 }
             } catch {
-                print("❌ Failed to save cached image: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Failed to save cached image: \(error.localizedDescription)", category: "Cache")
                 completion(originalImage)
             }
         }
@@ -209,7 +209,7 @@ class MenuImageCacheManager {
         if shouldStart {
             task.resume()
         } else {
-            print("⏳ Already downloading: \(url)")
+            DebugLogger.debug("⏳ Already downloading: \(url)", category: "Cache")
             // Task will be deallocated since it's not stored or resumed
         }
     }
@@ -226,7 +226,7 @@ class MenuImageCacheManager {
             return
         }
         
-        print("🎯 Preloading \(urls.count) category icons...")
+        DebugLogger.debug("🎯 Preloading \(urls.count) category icons...", category: "Cache")
         
         let group = DispatchGroup()
         
@@ -243,7 +243,7 @@ class MenuImageCacheManager {
         }
         
         group.notify(queue: .main) {
-            print("✅ Category icons preloaded!")
+            DebugLogger.debug("✅ Category icons preloaded!", category: "Cache")
             completion()
         }
     }
@@ -260,7 +260,7 @@ class MenuImageCacheManager {
             return
         }
         
-        print("📸 Preloading \(urls.count) menu item images (batch size: \(batchSize))...")
+        DebugLogger.debug("📸 Preloading \(urls.count) menu item images (batch size: \(batchSize))...", category: "Cache")
         
         var loadedCount = 0
         let totalCount = urls.count
@@ -271,18 +271,18 @@ class MenuImageCacheManager {
         }
         
         guard !itemsToLoad.isEmpty else {
-            print("✅ All menu items already cached!")
+            DebugLogger.debug("✅ All menu items already cached!", category: "Cache")
             completion(0)
             return
         }
         
-        print("🔄 Need to download \(itemsToLoad.count)/\(totalCount) items")
+        DebugLogger.debug("🔄 Need to download \(itemsToLoad.count)/\(totalCount) items", category: "Cache")
         
         // Process in batches to avoid overwhelming the system
         func loadBatch(startIndex: Int) {
             let endIndex = min(startIndex + batchSize, itemsToLoad.count)
             guard startIndex < endIndex else {
-                print("✅ Preloading complete! Loaded \(loadedCount)/\(itemsToLoad.count) items")
+                DebugLogger.debug("✅ Preloading complete! Loaded \(loadedCount)/\(itemsToLoad.count) items", category: "Cache")
                 completion(loadedCount)
                 return
             }
@@ -314,7 +314,7 @@ class MenuImageCacheManager {
         downloadTasksQueue.async(flags: .barrier) {
             for (url, task) in self.downloadTasks {
                 task.cancel()
-                print("🛑 Cancelled download: \(url)")
+                DebugLogger.debug("🛑 Cancelled download: \(url)", category: "Cache")
             }
             self.downloadTasks.removeAll()
         }
@@ -323,7 +323,7 @@ class MenuImageCacheManager {
     /// Clear memory cache only (for memory warnings)
     func clearMemoryCache() {
         memoryCache.removeAll()
-        print("🧹 Cleared menu image memory cache")
+        DebugLogger.debug("🧹 Cleared menu image memory cache", category: "Cache")
     }
     
     /// Clear all cached images
@@ -340,9 +340,9 @@ class MenuImageCacheManager {
             for file in files {
                 try? fileManager.removeItem(at: file)
             }
-            print("🗑️ Cleared all cached menu images")
+            DebugLogger.debug("🗑️ Cleared all cached menu images", category: "Cache")
         } catch {
-            print("❌ Failed to clear cache: \(error.localizedDescription)")
+            DebugLogger.debug("❌ Failed to clear cache: \(error.localizedDescription)", category: "Cache")
         }
         
         // Clear metadata
@@ -400,12 +400,12 @@ class MenuImageCacheManager {
         if hasTransparency(image: image) {
             // Image has transparency - save as PNG to preserve it
             guard let pngData = image.pngData() else { return nil }
-            print("   Format: PNG (has transparency)")
+            DebugLogger.debug("   Format: PNG (has transparency)", category: "Cache")
             return (pngData, "png")
         } else {
             // Image is opaque - save as JPEG for better compression
             guard let jpegData = image.jpegData(compressionQuality: compressionQuality) else { return nil }
-            print("   Format: JPEG (opaque)")
+            DebugLogger.debug("   Format: JPEG (opaque)", category: "Cache")
             return (jpegData, "jpg")
         }
     }
@@ -431,7 +431,7 @@ class MenuImageCacheManager {
         
         // Extra safety: Check if data is valid before decoding
         if data.count == 0 || data.count > 1_000_000 { // Sanity check
-            print("⚠️ Invalid metadata size, clearing: \(data.count) bytes")
+            DebugLogger.debug("⚠️ Invalid metadata size, clearing: \(data.count) bytes", category: "Cache")
             UserDefaults.standard.removeObject(forKey: metadataKey)
             return nil
         }
@@ -440,8 +440,8 @@ class MenuImageCacheManager {
             let metadataDict = try JSONDecoder().decode([String: MenuImageMetadata].self, from: data)
             return metadataDict[url]
         } catch {
-            print("⚠️ Corrupted metadata detected, clearing cache: \(error.localizedDescription)")
-            print("🔧 Auto-disabling caching to prevent crashes")
+            DebugLogger.debug("⚠️ Corrupted metadata detected, clearing cache: \(error.localizedDescription)", category: "Cache")
+            DebugLogger.debug("🔧 Auto-disabling caching to prevent crashes", category: "Cache")
             // Clear ALL cache-related keys to be safe
             UserDefaults.standard.removeObject(forKey: metadataKey)
             UserDefaults.standard.removeObject(forKey: cacheVersionKey)
@@ -458,7 +458,7 @@ class MenuImageCacheManager {
             do {
                 metadataDict = try JSONDecoder().decode([String: MenuImageMetadata].self, from: data)
             } catch {
-                print("⚠️ Corrupted metadata during save, starting fresh: \(error.localizedDescription)")
+                DebugLogger.debug("⚠️ Corrupted metadata during save, starting fresh: \(error.localizedDescription)", category: "Cache")
                 UserDefaults.standard.removeObject(forKey: metadataKey)
                 metadataDict = [:]
             }
@@ -470,7 +470,7 @@ class MenuImageCacheManager {
             let data = try JSONEncoder().encode(metadataDict)
             UserDefaults.standard.set(data, forKey: metadataKey)
         } catch {
-            print("❌ Failed to encode metadata: \(error.localizedDescription)")
+            DebugLogger.debug("❌ Failed to encode metadata: \(error.localizedDescription)", category: "Cache")
         }
     }
     
@@ -479,8 +479,8 @@ class MenuImageCacheManager {
         let currentSize = getCacheSize()
         
         if currentSize > maxCacheSize {
-            print("⚠️ Cache size (\(formatBytes(Int(currentSize)))) exceeds limit (\(formatBytes(Int(maxCacheSize))))")
-            print("🧹 Cleaning up old images...")
+            DebugLogger.debug("⚠️ Cache size (\(formatBytes(Int(currentSize)))) exceeds limit (\(formatBytes(Int(maxCacheSize))))", category: "Cache")
+            DebugLogger.debug("🧹 Cleaning up old images...", category: "Cache")
             
             // Get all cached files sorted by last access time
             guard let files = try? fileManager.contentsOfDirectory(at: cacheDirectory, includingPropertiesForKeys: [.contentAccessDateKey, .fileSizeKey]) else {
@@ -507,7 +507,7 @@ class MenuImageCacheManager {
                 }
             }
             
-            print("✅ Cleaned up \(deletedCount) old images, freed \(formatBytes(Int(deletedSize)))")
+            DebugLogger.debug("✅ Cleaned up \(deletedCount) old images, freed \(formatBytes(Int(deletedSize)))", category: "Cache")
         }
     }
     

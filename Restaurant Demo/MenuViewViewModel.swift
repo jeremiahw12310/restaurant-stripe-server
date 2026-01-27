@@ -23,10 +23,10 @@ class MenuViewViewModel: ObservableObject {
         userVM: UserViewModel,
         menuVM: MenuViewModel
     ) {
-        print("🎯 Personalized combo tapped")
-        print("👤 User name: \(userVM.firstName.isEmpty ? "Guest" : userVM.firstName)")
-        print("✅ Has completed preferences: \(userVM.hasCompletedPreferences)")
-        print("📋 Previous recommendations count: \(previousRecommendations.count)")
+        DebugLogger.debug("🎯 Personalized combo tapped", category: "Menu")
+        DebugLogger.debug("👤 User name: \(userVM.firstName.isEmpty ? "Guest" : userVM.firstName)", category: "Menu")
+        DebugLogger.debug("✅ Has completed preferences: \(userVM.hasCompletedPreferences)", category: "Menu")
+        DebugLogger.debug("📋 Previous recommendations count: \(previousRecommendations.count)", category: "Menu")
         
         // Present interstitial video immediately
         showComboInterstitial = true
@@ -50,8 +50,8 @@ class MenuViewViewModel: ObservableObject {
             hasCompletedPreferences: userVM.hasCompletedPreferences
         )
         
-        print("🔍 Generating combo for \(userName) with preferences: \(dietaryPreferences)")
-        print("📋 Available menu items: \(menuVM.allMenuItems.count)")
+        DebugLogger.debug("🔍 Generating combo for \(userName) with preferences: \(dietaryPreferences)", category: "Menu")
+        DebugLogger.debug("📋 Available menu items: \(menuVM.allMenuItems.count)", category: "Menu")
         
         comboService.generatePersonalizedCombo(
             userName: userName,
@@ -63,16 +63,16 @@ class MenuViewViewModel: ObservableObject {
         .sink(
             receiveCompletion: { [weak self] completion in
                 if case .failure(let error) = completion {
-                    print("❌ Combo generation failed: \(error)")
+                    DebugLogger.debug("❌ Combo generation failed: \(error)", category: "Menu")
                     self?.error = error.localizedDescription
                     // Dismiss interstitial if still showing
                     self?.showComboInterstitial = false
                 }
             },
             receiveValue: { [weak self] combo in
-                print("✅ Combo generated successfully")
-                print("🍽️ Combo items: \(combo.items.map { $0.id })")
-                print("💰 Total price: $\(combo.totalPrice)")
+                DebugLogger.debug("✅ Combo generated successfully", category: "Menu")
+                DebugLogger.debug("🍽️ Combo items: \(combo.items.map { $0.id })", category: "Menu")
+                DebugLogger.debug("💰 Total price: $\(combo.totalPrice)", category: "Menu")
                 self?.personalizedCombo = combo
                 self?.isComboReady = true
                 // Signal the interstitial it may end early (subject to threshold)
@@ -116,8 +116,8 @@ class MenuViewViewModel: ObservableObject {
             previousRecommendations = Array(previousRecommendations.prefix(3))
         }
         
-        print("📝 Added combo to previous recommendations. Total: \(previousRecommendations.count)")
-        print("📋 Previous combos: \(previousRecommendations.map { $0.items.map { $0.id }.joined(separator: ", ") })")
+        DebugLogger.debug("📝 Added combo to previous recommendations. Total: \(previousRecommendations.count)", category: "Menu")
+        DebugLogger.debug("📋 Previous combos: \(previousRecommendations.map { $0.items.map { $0.id }.joined(separator: ", ") })", category: "Menu")
     }
     
     func handleOrderCombo() {

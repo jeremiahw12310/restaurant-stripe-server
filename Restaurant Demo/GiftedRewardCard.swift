@@ -694,13 +694,13 @@ struct GiftedRewardDetailView: View {
     
     private func claimGift() async {
         guard let userId = Auth.auth().currentUser?.uid else {
-            print("❌ No user ID available for claiming gift")
+            DebugLogger.debug("❌ No user ID available for claiming gift", category: "Rewards")
             return
         }
 
         let alreadyClaiming = await MainActor.run { isClaiming }
         guard !alreadyClaiming else {
-            print("⚠️ Claim already in progress; ignoring duplicate request")
+            DebugLogger.debug("⚠️ Claim already in progress; ignoring duplicate request", category: "Rewards")
             return
         }
         await MainActor.run { isClaiming = true }
@@ -809,14 +809,14 @@ struct GiftedRewardDetailView: View {
                     rewardsVM.pendingQRSuccess = successData
                 }
                 
-                print("✅ Gift claimed successfully!")
+                DebugLogger.debug("✅ Gift claimed successfully!", category: "Rewards")
             } else {
                 let errorData = try JSONSerialization.jsonObject(with: data) as? [String: Any]
                 let errorMessage = errorData?["error"] as? String ?? "Unknown error occurred"
-                print("❌ Claim failed: \(errorMessage)")
+                DebugLogger.debug("❌ Claim failed: \(errorMessage)", category: "Rewards")
             }
         } catch {
-            print("❌ Error claiming gift: \(error.localizedDescription)")
+            DebugLogger.debug("❌ Error claiming gift: \(error.localizedDescription)", category: "Rewards")
         }
     }
 }

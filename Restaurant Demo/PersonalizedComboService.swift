@@ -84,11 +84,11 @@ class PersonalizedComboService: ObservableObject {
                     .eraseToAnyPublisher()
             }
             .handleEvents(receiveOutput: { data in
-                print("📥 Received response data: \(String(data: data, encoding: .utf8) ?? "Unable to decode")")
+                DebugLogger.debug("📥 Received response data: \(String(data: data, encoding: .utf8) ?? "Unable to decode")", category: "Combo")
             })
             .decode(type: ComboResponse.self, decoder: JSONDecoder())
             .map { response in
-                print("✅ Successfully decoded ComboResponse: \(response)")
+                DebugLogger.debug("✅ Successfully decoded ComboResponse: \(response)", category: "Combo")
                 // Convert response to PersonalizedCombo by matching with actual menu items
                 let comboItems = response.combo.items.compactMap { comboItem in
                     // Try exact match first
@@ -109,7 +109,7 @@ class PersonalizedComboService: ObservableObject {
                     }
                     
                     if let fuzzyMatch = fuzzyMatch {
-                        print("🔍 Fuzzy matched '\(comboItem.id)' to '\(fuzzyMatch.id)'")
+                        DebugLogger.debug("🔍 Fuzzy matched '\(comboItem.id)' to '\(fuzzyMatch.id)'", category: "Combo")
                         return fuzzyMatch
                     }
                     
@@ -127,19 +127,19 @@ class PersonalizedComboService: ObservableObject {
                     }
                     
                     if let categoryMatch = categoryMatch {
-                        print("🔍 Category matched '\(comboItem.id)' to '\(categoryMatch.id)'")
+                        DebugLogger.debug("🔍 Category matched '\(comboItem.id)' to '\(categoryMatch.id)'", category: "Combo")
                         return categoryMatch
                     }
                     
-                    print("❌ Could not match AI item: \(comboItem.id)")
+                    DebugLogger.debug("❌ Could not match AI item: \(comboItem.id)", category: "Combo")
                     return nil
                 }
                 
                 // If we couldn't find some items, log a warning but continue
                 if comboItems.count != response.combo.items.count {
-                    print("⚠️ Warning: Could not find \(response.combo.items.count - comboItems.count) menu items from AI response")
-                    print("🔍 AI suggested items: \(response.combo.items.map { $0.id })")
-                    print("📋 Available menu items: \(menuItems.map { $0.id })")
+                    DebugLogger.debug("⚠️ Warning: Could not find \(response.combo.items.count - comboItems.count) menu items from AI response", category: "Combo")
+                    DebugLogger.debug("🔍 AI suggested items: \(response.combo.items.map { $0.id })", category: "Combo")
+                    DebugLogger.debug("📋 Available menu items: \(menuItems.map { $0.id })", category: "Combo")
                 }
                 
                 // If no items were found, provide fallback items
@@ -165,7 +165,7 @@ class PersonalizedComboService: ObservableObject {
                         if case .failure(let error) = completion {
                             self?.isLoading = false
                             self?.error = error.localizedDescription
-                            print("❌ Combo generation failed: \(error)")
+                            DebugLogger.debug("❌ Combo generation failed: \(error)", category: "Combo")
                         }
                     }
                 }

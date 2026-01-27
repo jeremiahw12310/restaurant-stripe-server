@@ -326,7 +326,7 @@ struct RewardScannerView: View {
 
 func uploadRewardImage(_ image: UIImage, completion: @escaping (Result<[String: Any], Error>) -> Void) {
     let urlString = "\(Config.backendURL)/extract-reward-code"
-    print("📤 Uploading reward scan to: \(urlString)")
+    DebugLogger.debug("📤 Uploading reward scan to: \(urlString)", category: "Admin")
     guard let url = URL(string: urlString) else {
         completion(.failure(NSError(domain: "Invalid URL", code: 0)))
         return

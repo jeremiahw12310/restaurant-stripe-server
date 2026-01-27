@@ -7,6 +7,7 @@
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:dumplinghouseapp.com</string>
+		<string>applinks:dumplinghouseapp.web.app</string>
 	</array>
 	<key>com.apple.developer.devicecheck.app-attest-opt-in</key>
 	<array>

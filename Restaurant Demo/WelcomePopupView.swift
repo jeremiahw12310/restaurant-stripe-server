@@ -229,16 +229,16 @@ struct WelcomePopupView: View {
         userVM.addWelcomePoints { success, blockedReason in
             if success {
                 if blockedReason == "phone_previously_claimed" {
-                    print("ℹ️ Welcome points blocked - phone previously claimed")
+                    DebugLogger.debug("ℹ️ Welcome points blocked - phone previously claimed", category: "App")
                 } else {
-                    print("✅ Welcome points added successfully")
+                    DebugLogger.debug("✅ Welcome points added successfully", category: "App")
                 }
                 // Trigger points animation callback
                 DispatchQueue.main.async {
                     self.onPointsAdded?()
                 }
             } else {
-                print("❌ Failed to add welcome points")
+                DebugLogger.debug("❌ Failed to add welcome points", category: "App")
             }
         }
         

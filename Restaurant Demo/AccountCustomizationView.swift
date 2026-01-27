@@ -94,16 +94,16 @@ struct AccountCustomizationView: View {
                     
                     // Immediately upload the cropped photo
                     if let croppedImage = croppedImage {
-                        print("📤 Uploading cropped photo immediately")
+                        DebugLogger.debug("📤 Uploading cropped photo immediately", category: "User")
                         userVM.uploadProfilePhoto(croppedImage) { success in
                             DispatchQueue.main.async {
                                 if success {
-                                    print("✅ Photo uploaded successfully after cropping")
+                                    DebugLogger.debug("✅ Photo uploaded successfully after cropping", category: "User")
                                     selectedImage = nil // Clear local image so we use the latest from userVM
                                     // Force refresh the profile image to ensure UI updates
                                     userVM.forceRefreshProfileImage()
                                 } else {
-                                    print("❌ Failed to upload photo after cropping")
+                                    DebugLogger.debug("❌ Failed to upload photo after cropping", category: "User")
                                 }
                             }
                         }
@@ -412,7 +412,7 @@ struct AccountCustomizationView: View {
                     // Reset current navigation state and set new one
                     authVM.shouldNavigateToCustomization = false
                     authVM.shouldNavigateToPreferences = true
-                    print("🔵 AccountCustomizationView: Skip button - Navigating to preferences")
+                    DebugLogger.debug("🔵 AccountCustomizationView: Skip button - Navigating to preferences", category: "User")
                 }) {
                     Text("Skip For Now")
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
@@ -443,11 +443,11 @@ struct AccountCustomizationView: View {
             userVM.updateAvatarInAllPosts(userId: self.uid, avatarEmoji: self.selectedEmoji, avatarColorName: colorName) { success in
                 DispatchQueue.main.async {
                     if success {
-                        print("✅ Successfully updated avatar in all community posts")
+                        DebugLogger.debug("✅ Successfully updated avatar in all community posts", category: "User")
                         
                         // User profile will be automatically updated via Firestore listeners
                     } else {
-                        print("⚠️ Failed to update some community posts with new avatar")
+                        DebugLogger.debug("⚠️ Failed to update some community posts with new avatar", category: "User")
                     }
                     // Continue regardless of community update success
                     self.handleCompletion()
@@ -464,7 +464,7 @@ struct AccountCustomizationView: View {
             // Reset current navigation state and set new one
             authVM.shouldNavigateToCustomization = false
             authVM.shouldNavigateToPreferences = true
-            print("🔵 AccountCustomizationView: Navigating to preferences")
+            DebugLogger.debug("🔵 AccountCustomizationView: Navigating to preferences", category: "User")
         } else {
             // If from within the app, just dismiss
             dismiss()

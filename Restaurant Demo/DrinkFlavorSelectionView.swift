@@ -70,7 +70,7 @@ struct DrinkFlavorSelectionView: View {
                                 }) {
                                     VStack(spacing: 12) {
                                         // Debug logging
-                                        let _ = print("🔍 Debug: Flavor '\(flavor.name)' - icon: '\(flavor.icon)' - resolvedURL: \(flavor.resolvedIconURL?.absoluteString ?? "nil")")
+                                        let _ = DebugLogger.debug("🔍 Debug: Flavor '\(flavor.name)' - icon: '\(flavor.icon)' - resolvedURL: \(flavor.resolvedIconURL?.absoluteString ?? "nil")", category: "Menu")
                                         
                                         if !flavor.icon.isEmpty {
                                             if let url = flavor.resolvedIconURL {

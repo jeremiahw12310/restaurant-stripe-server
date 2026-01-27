@@ -107,11 +107,11 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
             try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default, options: [])
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
-            print("⚠️ Audio session configuration failed: \(error)")
+            DebugLogger.debug("⚠️ Audio session configuration failed: \(error)", category: "Video")
         }
 
         guard let path = Bundle.main.path(forResource: videoName, ofType: videoType) else {
-            print("⚠️ Video file not found: \(videoName).\(videoType)")
+            DebugLogger.debug("⚠️ Video file not found: \(videoName).\(videoType)", category: "Video")
             DispatchQueue.main.async { context.coordinator.onComplete() }
             return view
         }
@@ -150,7 +150,7 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
             queue: nil
         ) { [weak coordinator] _ in
             guard let coordinator = coordinator, !coordinator.hasCompleted else { return }
-            print("🎬 Early cut notification received - finishing video immediately")
+            DebugLogger.debug("🎬 Early cut notification received - finishing video immediately", category: "Video")
             if Thread.isMainThread {
                 coordinator.finishEarly()
             } else {
@@ -174,9 +174,9 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
         guard earlyCutRequested, !context.coordinator.hasCompleted else { return }
         let minPlay = context.coordinator.earlyCutMinPlaySeconds
         if minPlay == 0 {
-            print("🎬 Early cut requested in updateUIView (wasRequested: \(wasRequested)) - finishing immediately")
-            if !wasRequested { print("✅ Newly requested - calling finishEarly()") }
-            else { print("✅ Already requested but not completed - calling finishEarly()") }
+            DebugLogger.debug("🎬 Early cut requested in updateUIView (wasRequested: \(wasRequested)) - finishing immediately", category: "Video")
+            if !wasRequested { DebugLogger.debug("✅ Newly requested - calling finishEarly()", category: "Video") }
+            else { DebugLogger.debug("✅ Already requested but not completed - calling finishEarly()", category: "Video") }
             context.coordinator.finishEarly()
         }
         // If minPlay > 0, only flags were updated; periodic observer will finish once min play elapsed
@@ -217,7 +217,7 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
                         guard !hasCompleted else { return }
                         let earlyRequested = lastEarlyCutRequested || currentEarlyCutRequested
                         if earlyRequested && earlyCutMinPlaySeconds == 0 {
-                            print("🎬 Early cut already requested before playback - finishing immediately")
+                            DebugLogger.debug("🎬 Early cut already requested before playback - finishing immediately", category: "Video")
                             finishEarly()
                             return
                         }
@@ -254,19 +254,19 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
                                 guard let self = self, !self.hasCompleted else { return }
                                 guard self.lastEarlyCutRequested || self.currentEarlyCutRequested else { return }
                                 if self.earlyCutMinPlaySeconds == 0 {
-                                    print("🎬 Early cut detected in periodic observer - finishing video")
+                                    DebugLogger.debug("🎬 Early cut detected in periodic observer - finishing video", category: "Video")
                                     self.finishEarly()
                                     return
                                 }
                                 guard let start = self.playbackStartWallTime else { return }
                                 if CACurrentMediaTime() - start >= self.earlyCutMinPlaySeconds {
-                                    print("🎬 Early cut min play elapsed - finishing video")
+                                    DebugLogger.debug("🎬 Early cut min play elapsed - finishing video", category: "Video")
                                     self.finishEarly()
                                 }
                             }
                         }
                     case .failed:
-                        print("⚠️ Interstitial video failed: \(item.error?.localizedDescription ?? "Unknown error")")
+                        DebugLogger.debug("⚠️ Interstitial video failed: \(item.error?.localizedDescription ?? "Unknown error")", category: "Video")
                         player?.pause()
                         DispatchQueue.main.async { self.onComplete() }
                     case .unknown:
@@ -328,10 +328,10 @@ private struct OneShotVideoPlayer: UIViewRepresentable {
 
         func finishEarly() {
             guard !hasCompleted else { 
-                print("⚠️ finishEarly called but already completed")
+                DebugLogger.debug("⚠️ finishEarly called but already completed", category: "Video")
                 return 
             }
-            print("✅ finishEarly - stopping video playback")
+            DebugLogger.debug("✅ finishEarly - stopping video playback", category: "Video")
             player?.pause()
             // Remove observers to prevent any callbacks
             if let observer = periodicObserver, let player = player {

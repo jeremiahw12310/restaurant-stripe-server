@@ -32,7 +32,7 @@ class PromoImageCacheManager {
         cacheDirectory = cachesURL.appendingPathComponent("PromoImageCache", isDirectory: true)
         
         if !cachingEnabled {
-            print("⚠️ PROMO IMAGE CACHING DISABLED BY KILL SWITCH")
+            DebugLogger.debug("⚠️ PROMO IMAGE CACHING DISABLED BY KILL SWITCH", category: "Cache")
             return
         }
         
@@ -40,12 +40,12 @@ class PromoImageCacheManager {
         do {
             // Create directory if it doesn't exist
             try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-            print("🗂️ PromoImageCache initialized at: \(cacheDirectory.path)")
+            DebugLogger.debug("🗂️ PromoImageCache initialized at: \(cacheDirectory.path)", category: "Cache")
             
             // Check cache version - clear if incompatible
             validateCacheVersion()
         } catch {
-            print("⚠️ CRITICAL: Promo cache initialization failed, disabling caching: \(error)")
+            DebugLogger.debug("⚠️ CRITICAL: Promo cache initialization failed, disabling caching: \(error)", category: "Cache")
             // Auto-disable caching to prevent future crashes
             UserDefaults.standard.set(false, forKey: "promoImageCachingEnabled")
             clearCache()
@@ -58,12 +58,12 @@ class PromoImageCacheManager {
         let storedVersion = UserDefaults.standard.string(forKey: cacheVersionKey)
         
         if storedVersion != currentCacheVersion {
-            print("⚠️ Promo cache version mismatch (stored: \(storedVersion ?? "none"), current: \(currentCacheVersion))")
-            print("🧹 Clearing promo cache for compatibility...")
+            DebugLogger.debug("⚠️ Promo cache version mismatch (stored: \(storedVersion ?? "none"), current: \(currentCacheVersion))", category: "Cache")
+            DebugLogger.debug("🧹 Clearing promo cache for compatibility...", category: "Cache")
             clearCache()
             UserDefaults.standard.set(currentCacheVersion, forKey: cacheVersionKey)
         } else {
-            print("✅ Promo cache version valid: \(currentCacheVersion)")
+            DebugLogger.debug("✅ Promo cache version valid: \(currentCacheVersion)", category: "Cache")
         }
     }
     
@@ -95,7 +95,7 @@ class PromoImageCacheManager {
                 }
             }
         } catch {
-            print("⚠️ Error reading cached promo image: \(error)")
+            DebugLogger.debug("⚠️ Error reading cached promo image: \(error)", category: "Cache")
         }
         
         return nil
@@ -106,7 +106,7 @@ class PromoImageCacheManager {
         guard cachingEnabled else { return true }
         
         guard let cachedMetadata = getCachedMetadata(for: url) else {
-            print("🔄 No cached metadata, needs download: \(url)")
+            DebugLogger.debug("🔄 No cached metadata, needs download: \(url)", category: "Cache")
             return true // No metadata = needs download
         }
         
@@ -115,9 +115,9 @@ class PromoImageCacheManager {
                          cachedMetadata.timestamp < currentMetadata.timestamp
         
         if needsUpdate {
-            print("🔄 Metadata changed, needs update: \(url)")
+            DebugLogger.debug("🔄 Metadata changed, needs update: \(url)", category: "Cache")
         } else {
-            print("✅ Cached image is up-to-date: \(url)")
+            DebugLogger.debug("✅ Cached image is up-to-date: \(url)", category: "Cache")
         }
         
         return needsUpdate
@@ -125,10 +125,10 @@ class PromoImageCacheManager {
     
     /// Download image from Firebase and cache it
     func downloadAndCache(url: String, metadata: ImageMetadata, completion: @escaping (UIImage?) -> Void) {
-        print("⬇️ Downloading image: \(url)")
+        DebugLogger.debug("⬇️ Downloading image: \(url)", category: "Cache")
         
         guard let imageURL = URL(string: url) else {
-            print("❌ Invalid URL: \(url)")
+            DebugLogger.debug("❌ Invalid URL: \(url)", category: "Cache")
             completion(nil)
             return
         }
@@ -138,20 +138,20 @@ class PromoImageCacheManager {
             guard let self = self else { return }
             
             if let error = error {
-                print("❌ Download failed: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Download failed: \(error.localizedDescription)", category: "Cache")
                 completion(nil)
                 return
             }
             
             guard let data = data, let originalImage = UIImage(data: data) else {
-                print("❌ Failed to decode image data")
+                DebugLogger.debug("❌ Failed to decode image data", category: "Cache")
                 completion(nil)
                 return
             }
             
             // Smart compression - PNG for transparency, JPEG for opaque
             guard let compressed = self.compressImage(originalImage) else {
-                print("❌ Failed to compress image")
+                DebugLogger.debug("❌ Failed to compress image", category: "Cache")
                 completion(originalImage) // Return original if compression fails
                 return
             }
@@ -169,8 +169,8 @@ class PromoImageCacheManager {
                 let originalSize = data.count
                 let compressedSize = compressed.data.count
                 let savings = Float(originalSize - compressedSize) / Float(originalSize) * 100
-                print("✅ Cached image: \(url)")
-                print("   Original: \(self.formatBytes(originalSize)) → Compressed: \(self.formatBytes(compressedSize)) (saved \(String(format: "%.1f", savings))%)")
+                DebugLogger.debug("✅ Cached image: \(url)", category: "Cache")
+                DebugLogger.debug("   Original: \(self.formatBytes(originalSize)) → Compressed: \(self.formatBytes(compressedSize)) (saved \(String(format: "%.1f", savings))%)", category: "Cache")
                 
                 // Create image from compressed data
                 if let cachedImage = UIImage(data: compressed.data) {
@@ -181,7 +181,7 @@ class PromoImageCacheManager {
                     completion(originalImage)
                 }
             } catch {
-                print("❌ Failed to save cached image: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Failed to save cached image: \(error.localizedDescription)", category: "Cache")
                 completion(originalImage)
             }
         }
@@ -201,7 +201,7 @@ class PromoImageCacheManager {
             return
         }
         
-        print("🔄 Preloading \(urls.count) carousel images...")
+        DebugLogger.debug("🔄 Preloading \(urls.count) carousel images...", category: "Cache")
         
         let group = DispatchGroup()
         
@@ -219,7 +219,7 @@ class PromoImageCacheManager {
         }
         
         group.notify(queue: .main) {
-            print("✅ Preloading complete!")
+            DebugLogger.debug("✅ Preloading complete!", category: "Cache")
             completion()
         }
     }
@@ -227,7 +227,7 @@ class PromoImageCacheManager {
     /// Clear memory cache only (for memory warnings)
     func clearMemoryCache() {
         memoryCache.removeAll()
-        print("🧹 Cleared promo image memory cache")
+        DebugLogger.debug("🧹 Cleared promo image memory cache", category: "Cache")
     }
     
     /// Clear all cached images
@@ -241,9 +241,9 @@ class PromoImageCacheManager {
             for file in files {
                 try? fileManager.removeItem(at: file)
             }
-            print("🗑️ Cleared all cached images")
+            DebugLogger.debug("🗑️ Cleared all cached images", category: "Cache")
         } catch {
-            print("❌ Failed to clear cache: \(error.localizedDescription)")
+            DebugLogger.debug("❌ Failed to clear cache: \(error.localizedDescription)", category: "Cache")
         }
         
         // Clear metadata
@@ -278,18 +278,18 @@ class PromoImageCacheManager {
         let heroFileURL = cacheDirectory.appendingPathComponent(heroImageFileName)
         
         guard fileManager.fileExists(atPath: heroFileURL.path) else {
-            print("📸 [Hero] No hero image cached yet")
+            DebugLogger.debug("📸 [Hero] No hero image cached yet", category: "Cache")
             return nil
         }
         
         do {
             let imageData = try Data(contentsOf: heroFileURL)
             if let image = UIImage(data: imageData) {
-                print("✅ [Hero] Loaded hero image instantly from disk")
+                DebugLogger.debug("✅ [Hero] Loaded hero image instantly from disk", category: "Cache")
                 return image
             }
         } catch {
-            print("⚠️ [Hero] Failed to load hero image: \(error.localizedDescription)")
+            DebugLogger.debug("⚠️ [Hero] Failed to load hero image: \(error.localizedDescription)", category: "Cache")
         }
         
         return nil
@@ -306,16 +306,16 @@ class PromoImageCacheManager {
         
         // Compress to JPEG for efficient storage
         guard let jpegData = image.jpegData(compressionQuality: 0.8) else {
-            print("⚠️ [Hero] Failed to compress hero image")
+            DebugLogger.debug("⚠️ [Hero] Failed to compress hero image", category: "Cache")
             return
         }
         
         do {
             try jpegData.write(to: heroFileURL)
             UserDefaults.standard.set(url, forKey: heroImageURLKey)
-            print("✅ [Hero] Saved hero image (\(formatBytes(jpegData.count))) for instant loading")
+            DebugLogger.debug("✅ [Hero] Saved hero image (\(formatBytes(jpegData.count))) for instant loading", category: "Cache")
         } catch {
-            print("⚠️ [Hero] Failed to save hero image: \(error.localizedDescription)")
+            DebugLogger.debug("⚠️ [Hero] Failed to save hero image: \(error.localizedDescription)", category: "Cache")
         }
     }
     
@@ -334,11 +334,11 @@ class PromoImageCacheManager {
             return
         }
         
-        print("⬇️ [Hero] Downloading hero image...")
+        DebugLogger.debug("⬇️ [Hero] Downloading hero image...", category: "Cache")
         
         URLSession.shared.dataTask(with: imageURL) { [weak self] data, _, error in
             guard let self = self, let data = data, let image = UIImage(data: data) else {
-                print("⚠️ [Hero] Download failed: \(error?.localizedDescription ?? "Unknown error")")
+                DebugLogger.debug("⚠️ [Hero] Download failed: \(error?.localizedDescription ?? "Unknown error")", category: "Cache")
                 DispatchQueue.main.async { completion(nil) }
                 return
             }
@@ -377,12 +377,12 @@ class PromoImageCacheManager {
         if hasTransparency(image: image) {
             // Image has transparency - save as PNG to preserve it
             guard let pngData = image.pngData() else { return nil }
-            print("   Format: PNG (has transparency)")
+            DebugLogger.debug("   Format: PNG (has transparency)", category: "Cache")
             return (pngData, "png")
         } else {
             // Image is opaque - save as JPEG for better compression
             guard let jpegData = image.jpegData(compressionQuality: compressionQuality) else { return nil }
-            print("   Format: JPEG (opaque)")
+            DebugLogger.debug("   Format: JPEG (opaque)", category: "Cache")
             return (jpegData, "jpg")
         }
     }
@@ -410,7 +410,7 @@ class PromoImageCacheManager {
         
         // Extra safety: Check if data is valid before decoding
         if data.count == 0 || data.count > 1_000_000 { // Sanity check
-            print("⚠️ Invalid metadata size, clearing: \(data.count) bytes")
+            DebugLogger.debug("⚠️ Invalid metadata size, clearing: \(data.count) bytes", category: "Cache")
             UserDefaults.standard.removeObject(forKey: metadataKey)
             return nil
         }
@@ -419,8 +419,8 @@ class PromoImageCacheManager {
             let metadataDict = try JSONDecoder().decode([String: ImageMetadata].self, from: data)
             return metadataDict[url]
         } catch {
-            print("⚠️ Corrupted carousel metadata detected, clearing cache: \(error.localizedDescription)")
-            print("🔧 Auto-disabling caching to prevent crashes")
+            DebugLogger.debug("⚠️ Corrupted carousel metadata detected, clearing cache: \(error.localizedDescription)", category: "Cache")
+            DebugLogger.debug("🔧 Auto-disabling caching to prevent crashes", category: "Cache")
             // Clear ALL cache-related keys to be safe
             UserDefaults.standard.removeObject(forKey: metadataKey)
             UserDefaults.standard.removeObject(forKey: cacheVersionKey)
@@ -437,7 +437,7 @@ class PromoImageCacheManager {
             do {
                 metadataDict = try JSONDecoder().decode([String: ImageMetadata].self, from: data)
             } catch {
-                print("⚠️ Corrupted carousel metadata during save, starting fresh: \(error.localizedDescription)")
+                DebugLogger.debug("⚠️ Corrupted carousel metadata during save, starting fresh: \(error.localizedDescription)", category: "Cache")
                 UserDefaults.standard.removeObject(forKey: metadataKey)
                 metadataDict = [:]
             }
@@ -449,7 +449,7 @@ class PromoImageCacheManager {
             let data = try JSONEncoder().encode(metadataDict)
             UserDefaults.standard.set(data, forKey: metadataKey)
         } catch {
-            print("❌ Failed to encode carousel metadata: \(error.localizedDescription)")
+            DebugLogger.debug("❌ Failed to encode carousel metadata: \(error.localizedDescription)", category: "Cache")
         }
     }
     

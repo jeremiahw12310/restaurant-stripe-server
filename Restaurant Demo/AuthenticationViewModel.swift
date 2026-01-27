@@ -159,7 +159,7 @@ class AuthenticationViewModel: ObservableObject {
                 // Store the verified phone number immediately after successful sign-in
                 // This preserves it even if SwiftUI view lifecycle resets the phoneNumber property
                 self?.verifiedPhoneNumber = capturedPhone
-                print("🔵 Stored verifiedPhoneNumber: \(capturedPhone)")
+                DebugLogger.debug("🔵 Stored verifiedPhoneNumber: \(capturedPhone)", category: "Auth")
                 
                 self?.checkIfUserExists(uid: uid)
             }
@@ -177,7 +177,7 @@ class AuthenticationViewModel: ObservableObject {
                     // If document doesn't exist (error code 5) or permission denied, treat as new user
                     let nsError = error as NSError
                     if nsError.code == 5 { // NOT_FOUND
-                        print("ℹ️ User document not found for \(uid), treating as new user")
+                        DebugLogger.debug("ℹ️ User document not found for \(uid), treating as new user", category: "Auth")
                         self.shouldNavigateToUserDetails = true
                         return
                     }
@@ -186,13 +186,13 @@ class AuthenticationViewModel: ObservableObject {
                 
                 // Check if document exists and has valid data
                 guard let snapshot = snapshot, snapshot.exists else {
-                    print("ℹ️ User document doesn't exist for \(uid), treating as new user")
+                    DebugLogger.debug("ℹ️ User document doesn't exist for \(uid), treating as new user", category: "Auth")
                     self.shouldNavigateToUserDetails = true
                     return
                 }
                 
                 guard let data = snapshot.data(), !data.isEmpty else {
-                    print("ℹ️ User document exists but is empty for \(uid), treating as new user")
+                    DebugLogger.debug("ℹ️ User document exists but is empty for \(uid), treating as new user", category: "Auth")
                     self.shouldNavigateToUserDetails = true
                     return
                 }
@@ -200,7 +200,7 @@ class AuthenticationViewModel: ObservableObject {
                 // Validate required fields exist
                 let hasRequiredFields = data["phone"] != nil && data["firstName"] != nil
                 if !hasRequiredFields {
-                    print("ℹ️ User document missing required fields for \(uid), treating as new user")
+                    DebugLogger.debug("ℹ️ User document missing required fields for \(uid), treating as new user", category: "Auth")
                     self.shouldNavigateToUserDetails = true
                     return
                 }
@@ -218,7 +218,7 @@ class AuthenticationViewModel: ObservableObject {
                             
                             if isBanned || isBannedByPhone {
                                 // Allow banned users to sign in - LaunchView will show deletion screen
-                                print("⚠️ AuthenticationViewModel: User is banned. Allowing sign-in - LaunchView will show deletion screen.")
+                                DebugLogger.debug("⚠️ AuthenticationViewModel: User is banned. Allowing sign-in - LaunchView will show deletion screen.", category: "Auth")
                                 await MainActor.run {
                                     self.errorMessage = ""
                                     // Allow authentication - LaunchView will detect ban and show deletion screen
@@ -238,7 +238,7 @@ class AuthenticationViewModel: ObservableObject {
                         // No phone number, just check isBanned field
                         if isBanned {
                             // Allow banned users to sign in - LaunchView will show deletion screen
-                            print("⚠️ AuthenticationViewModel: User is banned. Allowing sign-in - LaunchView will show deletion screen.")
+                            DebugLogger.debug("⚠️ AuthenticationViewModel: User is banned. Allowing sign-in - LaunchView will show deletion screen.", category: "Auth")
                             self.errorMessage = ""
                             // Allow authentication - LaunchView will detect ban and show deletion screen
                             self.didAuthenticate = true
@@ -278,7 +278,7 @@ class AuthenticationViewModel: ObservableObject {
     }
     
     func reset() {
-        print("🔵 reset() called")
+        DebugLogger.debug("🔵 reset() called", category: "Auth")
         phoneNumber = ""
         errorMessage = ""; accountExists = nil; isLoading = false
         userDocumentID = nil; shouldNavigateToSplash = false
@@ -294,7 +294,7 @@ class AuthenticationViewModel: ObservableObject {
     }
     
     func resetPhoneAndSMS() {
-        print("🔵 resetPhoneAndSMS() called")
+        DebugLogger.debug("🔵 resetPhoneAndSMS() called", category: "Auth")
         phoneNumber = ""
         smsCode = ""
         verificationID = nil
@@ -304,24 +304,24 @@ class AuthenticationViewModel: ObservableObject {
     }
     
     func resetAllNavigationState() {
-        print("🔵 resetAllNavigationState() called")
+        DebugLogger.debug("🔵 resetAllNavigationState() called", category: "Auth")
         // Reset all navigation states to ensure clean navigation
         shouldNavigateToUserDetails = false
         shouldNavigateToCustomization = false
         shouldNavigateToPreferences = false
         didAuthenticate = false
         verificationID = nil
-        print("✅ All navigation states reset")
+        DebugLogger.debug("✅ All navigation states reset", category: "Auth")
     }
     
     func createAccountAndSaveDetails() {
-        print("🔵 createAccountAndSaveDetails called")
+        DebugLogger.debug("🔵 createAccountAndSaveDetails called", category: "Auth")
         guard let uid = Auth.auth().currentUser?.uid else {
             errorMessage = "User not authenticated."; return
         }
         guard validateNewAccountDetails() else { return }
         isLoading = true; errorMessage = ""
-        print("🔵 About to save user details for UID: \(uid)")
+        DebugLogger.debug("🔵 About to save user details for UID: \(uid)", category: "Auth")
         saveUserDetailsToFirestore(uid: uid)
     }
     
@@ -352,16 +352,16 @@ class AuthenticationViewModel: ObservableObject {
     /// Uses Admin SDK on server to bypass security rules that would block client-side deletion.
     private func cleanupOrphanedAccountsViaBackend(phoneNumber: String, currentUID: String, completion: @escaping () -> Void) {
         guard let user = Auth.auth().currentUser else {
-            print("⚠️ No authenticated user for orphan cleanup")
+            DebugLogger.debug("⚠️ No authenticated user for orphan cleanup", category: "Auth")
             completion()
             return
         }
         
-        print("🧹 Cleaning up orphaned accounts via backend for phone: \(phoneNumber)")
+        DebugLogger.debug("🧹 Cleaning up orphaned accounts via backend for phone: \(phoneNumber)", category: "Auth")
         
         user.getIDToken { token, error in
             if let error = error {
-                print("⚠️ Failed to get token for orphan cleanup: \(error.localizedDescription)")
+                DebugLogger.debug("⚠️ Failed to get token for orphan cleanup: \(error.localizedDescription)", category: "Auth")
                 // Don't block account creation on token errors
                 completion()
                 return
@@ -369,7 +369,7 @@ class AuthenticationViewModel: ObservableObject {
             
             guard let token = token,
                   let url = URL(string: "\(Config.backendURL)/users/cleanup-orphan-by-phone") else {
-                print("⚠️ Invalid token or URL for orphan cleanup")
+                DebugLogger.debug("⚠️ Invalid token or URL for orphan cleanup", category: "Auth")
                 completion()
                 return
             }
@@ -387,7 +387,7 @@ class AuthenticationViewModel: ObservableObject {
             
             URLSession.shared.dataTask(with: request) { data, response, error in
                 if let error = error {
-                    print("⚠️ Orphan cleanup request failed: \(error.localizedDescription)")
+                    DebugLogger.debug("⚠️ Orphan cleanup request failed: \(error.localizedDescription)", category: "Auth")
                     // Don't block account creation
                     DispatchQueue.main.async { completion() }
                     return
@@ -399,12 +399,12 @@ class AuthenticationViewModel: ObservableObject {
                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let deletedCount = json["deletedCount"] as? Int {
                     if deletedCount > 0 {
-                        print("✅ Backend cleaned up \(deletedCount) orphaned account(s)")
+                        DebugLogger.debug("✅ Backend cleaned up \(deletedCount) orphaned account(s)", category: "Auth")
                     } else {
-                        print("✅ No orphaned accounts found")
+                        DebugLogger.debug("✅ No orphaned accounts found", category: "Auth")
                     }
                 } else {
-                    print("⚠️ Orphan cleanup response unexpected, continuing anyway")
+                    DebugLogger.debug("⚠️ Orphan cleanup response unexpected, continuing anyway", category: "Auth")
                 }
                 
                 DispatchQueue.main.async { completion() }
@@ -413,7 +413,7 @@ class AuthenticationViewModel: ObservableObject {
     }
     
     private func saveUserDetailsToFirestore(uid: String) {
-        print("🔵 saveUserDetailsToFirestore called")
+        DebugLogger.debug("🔵 saveUserDetailsToFirestore called", category: "Auth")
         
         // Use verifiedPhoneNumber (captured at sign-in) as primary source
         // Fall back to Firebase Auth, then formattedPhoneNumber as last resort
@@ -432,11 +432,11 @@ class AuthenticationViewModel: ObservableObject {
         // Normalize phone number for consistent storage and comparison
         phoneToSave = normalizePhoneNumber(phoneToSave)
         
-        print("🔵 Phone to save (normalized): \(phoneToSave), verifiedPhoneNumber: \(verifiedPhoneNumber), formattedPhoneNumber: \(formattedPhoneNumber)")
+        DebugLogger.debug("🔵 Phone to save (normalized): \(phoneToSave), verifiedPhoneNumber: \(verifiedPhoneNumber), formattedPhoneNumber: \(formattedPhoneNumber)", category: "Auth")
         
         // Validate phone number - warn if it looks incomplete
         if phoneToSave == "+1" || phoneToSave.count < 12 {
-            print("⚠️ Warning: Phone number appears incomplete: \(phoneToSave)")
+            DebugLogger.debug("⚠️ Warning: Phone number appears incomplete: \(phoneToSave)", category: "Auth")
         }
         
         // Clean up any orphaned accounts with the same phone number via backend
@@ -465,19 +465,19 @@ class AuthenticationViewModel: ObservableObject {
             "accountCreatedDate": FieldValue.serverTimestamp(),
             "createdAt": FieldValue.serverTimestamp() // Keep both for backward compatibility
         ]
-        print("🔵 AuthenticationViewModel: Creating user with isNewUser: true")
+        DebugLogger.debug("🔵 AuthenticationViewModel: Creating user with isNewUser: true", category: "Auth")
         
-        print("🔵 Saving user data: \(userData)")
+        DebugLogger.debug("🔵 Saving user data: \(userData)", category: "Auth")
         
         db.collection("users").document(uid).setData(userData) { [weak self] error in
             DispatchQueue.main.async {
-                print("🔵 Firestore save completed")
+                DebugLogger.debug("🔵 Firestore save completed", category: "Auth")
                 self?.isLoading = false
                 if let error = error {
-                    print("🔴 Firestore error: \(error.localizedDescription)")
+                    DebugLogger.debug("🔴 Firestore error: \(error.localizedDescription)", category: "Auth")
                     self?.errorMessage = "Auth account created, but failed to save details: \(error.localizedDescription)"
                 } else {
-                    print("✅ Firestore save successful")
+                    DebugLogger.debug("✅ Firestore save successful", category: "Auth")
                     // Pre-load referral code for instant access when user opens Referral screen
                     self?.preloadReferralCode()
 
@@ -503,19 +503,19 @@ class AuthenticationViewModel: ObservableObject {
 
     private func advanceToCustomization() {
         // Navigate to dietary preferences screen after account creation
-        print("✅ Proceeding to dietary preferences")
+        DebugLogger.debug("✅ Proceeding to dietary preferences", category: "Auth")
         // Reset other navigation states to ensure clean navigation
         self.shouldNavigateToUserDetails = false
         self.shouldNavigateToCustomization = false
         self.didAuthenticate = false
         self.shouldNavigateToPreferences = true
-        print("✅ shouldNavigateToPreferences is now: \(self.shouldNavigateToPreferences)")
+        DebugLogger.debug("✅ shouldNavigateToPreferences is now: \(self.shouldNavigateToPreferences)", category: "Auth")
     }
 
     private func acceptReferralAtSignup(uid: String, code: String, completion: @escaping () -> Void) {
         guard let user = Auth.auth().currentUser else { completion(); return }
         user.getIDToken { token, err in
-            if let err = err { print("❌ Signup referral token error: \(err.localizedDescription)"); completion(); return }
+            if let err = err { DebugLogger.debug("❌ Signup referral token error: \(err.localizedDescription)", category: "Auth"); completion(); return }
             guard let token = token, let url = URL(string: "\(Config.backendURL)/referrals/accept") else { completion(); return }
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
@@ -534,9 +534,9 @@ class AuthenticationViewModel: ObservableObject {
                     var payload: [String: String] = [:]
                     if let rid = referrerId { payload["referrerUserId"] = rid }
                     UserDefaults.standard.set(payload, forKey: "referral_pending_\(uid)")
-                    print("✅ Signup referral accepted; session flag set")
+                    DebugLogger.debug("✅ Signup referral accepted; session flag set", category: "Auth")
                 } else {
-                    print("ℹ️ Signup referral accept not successful or not applicable")
+                    DebugLogger.debug("ℹ️ Signup referral accept not successful or not applicable", category: "Auth")
                 }
                 DispatchQueue.main.async { completion() }
             }.resume()
@@ -552,23 +552,23 @@ class AuthenticationViewModel: ObservableObject {
     
     // Debug method to manually trigger customization navigation
     func forceNavigateToCustomization() {
-        print("🔵 forceNavigateToCustomization called")
+        DebugLogger.debug("🔵 forceNavigateToCustomization called", category: "Auth")
         // Reset other navigation states to ensure clean navigation
         shouldNavigateToUserDetails = false
         shouldNavigateToPreferences = false
         didAuthenticate = false
         shouldNavigateToCustomization = true
-        print("✅ shouldNavigateToCustomization set to: \(shouldNavigateToCustomization)")
+        DebugLogger.debug("✅ shouldNavigateToCustomization set to: \(shouldNavigateToCustomization)", category: "Auth")
     }
     
     // Debug method to print current navigation state
     func printNavigationState() {
-        print("🔵 Current Navigation State:")
-        print("  - shouldNavigateToUserDetails: \(shouldNavigateToUserDetails)")
-        print("  - shouldNavigateToCustomization: \(shouldNavigateToCustomization)")
-        print("  - shouldNavigateToPreferences: \(shouldNavigateToPreferences)")
-        print("  - didAuthenticate: \(didAuthenticate)")
-        print("  - verificationID: \(verificationID?.prefix(10) ?? "nil")")
+        DebugLogger.debug("🔵 Current Navigation State:", category: "Auth")
+        DebugLogger.debug("  - shouldNavigateToUserDetails: \(shouldNavigateToUserDetails)", category: "Auth")
+        DebugLogger.debug("  - shouldNavigateToCustomization: \(shouldNavigateToCustomization)", category: "Auth")
+        DebugLogger.debug("  - shouldNavigateToPreferences: \(shouldNavigateToPreferences)", category: "Auth")
+        DebugLogger.debug("  - didAuthenticate: \(didAuthenticate)", category: "Auth")
+        DebugLogger.debug("  - verificationID: \(verificationID?.prefix(10) ?? "nil")", category: "Auth")
     }
     
     // MARK: - Referral Code Preload
@@ -578,11 +578,11 @@ class AuthenticationViewModel: ObservableObject {
         guard let user = Auth.auth().currentUser else { return }
         let uid = user.uid
         
-        print("🔄 Pre-loading referral code for instant access...")
+        DebugLogger.debug("🔄 Pre-loading referral code for instant access...", category: "Auth")
         
         user.getIDToken { token, err in
             guard let token = token, err == nil else {
-                print("⚠️ Failed to get token for referral preload")
+                DebugLogger.debug("⚠️ Failed to get token for referral preload", category: "Auth")
                 return
             }
             
@@ -601,13 +601,13 @@ class AuthenticationViewModel: ObservableObject {
                       let code = json["code"] as? String,
                       let shareUrl = (json["webUrl"] as? String) ?? (json["shareUrl"] as? String),
                       !code.isEmpty else {
-                    print("⚠️ Failed to preload referral code")
+                    DebugLogger.debug("⚠️ Failed to preload referral code", category: "Auth")
                     return
                 }
                 
                 // Cache the referral code using the same cache system as ReferralView
                 ReferralCache.save(code: code, shareUrl: shareUrl, userId: uid)
-                print("✅ Referral code preloaded and cached for instant loading")
+                DebugLogger.debug("✅ Referral code preloaded and cached for instant loading", category: "Auth")
             }.resume()
         }
     }

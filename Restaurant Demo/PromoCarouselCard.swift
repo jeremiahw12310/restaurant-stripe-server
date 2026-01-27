@@ -110,9 +110,9 @@ class PromoCarouselViewModel: ObservableObject {
         if let cached = cacheManager.loadHeroImage() {
             self.heroImage = cached
             self.heroImageReady = true
-            print("✅ [Carousel] Hero image ready for instant display")
+            DebugLogger.debug("✅ [Carousel] Hero image ready for instant display", category: "Promo")
         } else {
-            print("📸 [Carousel] No persisted hero image yet - will show placeholder")
+            DebugLogger.debug("📸 [Carousel] No persisted hero image yet - will show placeholder", category: "Promo")
         }
     }
 
@@ -147,7 +147,7 @@ class PromoCarouselViewModel: ObservableObject {
     private func loadCachedImages() {
         // We no longer maintain a separate in-memory dictionary; KFImage will hit its own cache.
         cachedImages.removeAll()
-        print("📸 [Carousel] Using Kingfisher cache only (no custom image cache).")
+        DebugLogger.debug("📸 [Carousel] Using Kingfisher cache only (no custom image cache).", category: "Promo")
     }
     
     /// Prefetch all slide images using Kingfisher so they are warm in disk cache.
@@ -155,7 +155,7 @@ class PromoCarouselViewModel: ObservableObject {
     private func prefetchAllImages() {
         let urls = slides.compactMap { URL(string: $0.imageURL) }
         guard !urls.isEmpty else {
-            print("🔄 [Carousel] No slide URLs to prefetch.")
+            DebugLogger.debug("🔄 [Carousel] No slide URLs to prefetch.", category: "Promo")
             // If no slides, mark as ready anyway
             DispatchQueue.main.async {
                 self.allImagesReady = true
@@ -163,10 +163,10 @@ class PromoCarouselViewModel: ObservableObject {
             return
         }
         
-        print("🔄 [Carousel] Prefetching \(urls.count) promo images with Kingfisher...")
+        DebugLogger.debug("🔄 [Carousel] Prefetching \(urls.count) promo images with Kingfisher...", category: "Promo")
         let prefetcher = ImagePrefetcher(urls: urls) { [weak self] skipped, failed, completed in
             guard let self = self else { return }
-            print("✅ [Carousel] Prefetch complete. Loaded: \(completed.count), failed: \(failed.count), skipped: \(skipped.count)")
+            DebugLogger.debug("✅ [Carousel] Prefetch complete. Loaded: \(completed.count), failed: \(failed.count), skipped: \(skipped.count)", category: "Promo")
             
             DispatchQueue.main.async {
                 // Mark all images as ready - slideshow can now start
@@ -186,12 +186,12 @@ class PromoCarouselViewModel: ObservableObject {
         
         // Check if we need to update the hero image
         if cacheManager.heroImageNeedsUpdate(currentURL: firstURL) {
-            print("🔄 [Hero] First slide URL changed, updating hero image...")
+            DebugLogger.debug("🔄 [Hero] First slide URL changed, updating hero image...", category: "Promo")
             cacheManager.downloadAndSaveHeroImage(url: firstURL) { [weak self] image in
                 if let image = image {
                     self?.heroImage = image
                     self?.heroImageReady = true
-                    print("✅ [Hero] Hero image updated for next launch")
+                    DebugLogger.debug("✅ [Hero] Hero image updated for next launch", category: "Promo")
                 }
             }
         } else if !heroImageReady {
@@ -674,7 +674,7 @@ struct PromoCarouselCard: View {
                                         .cacheMemoryOnly(false)
                                         .fade(duration: 0.2)
                                         .onSuccess { result in
-                                            print("✅ Kingfisher loaded: \(slide.imageURL)")
+                                            DebugLogger.debug("✅ Kingfisher loaded: \(slide.imageURL)", category: "Promo")
                                         }
                                         .placeholder {
                                             // Styled placeholder instead of spinner
@@ -733,7 +733,7 @@ struct PromoCarouselCard: View {
         .onChange(of: viewModel.allImagesReady) { _, ready in
             // START slideshow only when all images are prefetched
             if ready && isActive {
-                print("✅ [Carousel] All images ready - starting slideshow")
+                DebugLogger.debug("✅ [Carousel] All images ready - starting slideshow", category: "Promo")
                 scheduleNextSlide()
             }
         }

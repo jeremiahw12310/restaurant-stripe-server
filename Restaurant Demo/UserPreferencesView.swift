@@ -392,8 +392,8 @@ struct UserPreferencesView: View {
     }
     
     private func showWelcomeAndLogin() {
-        print("🔵 UserPreferencesView: showWelcomeAndLogin() called")
-        print("🔵 UserPreferencesView: userVM.isNewUser = \(userVM.isNewUser)")
+        DebugLogger.debug("🔵 UserPreferencesView: showWelcomeAndLogin() called", category: "User")
+        DebugLogger.debug("🔵 UserPreferencesView: userVM.isNewUser = \(userVM.isNewUser)", category: "User")
         
         // Note: Welcome display is now handled by HomeView's integrated welcome state.
         // HomeView will detect if user is new and show the welcome celebration immediately.
@@ -405,7 +405,7 @@ struct UserPreferencesView: View {
         authVM.shouldNavigateToPreferences = false
         authVM.shouldNavigateToUserDetails = false
         authVM.didAuthenticate = true
-        print("🔵 UserPreferencesView: Completing authentication flow - HomeView will handle welcome")
+        DebugLogger.debug("🔵 UserPreferencesView: Completing authentication flow - HomeView will handle welcome", category: "User")
 
         // Return to Home immediately after saving preferences
         // HomeView will detect new user state and show integrated welcome

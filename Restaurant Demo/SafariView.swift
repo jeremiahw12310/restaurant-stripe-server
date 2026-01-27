@@ -36,13 +36,13 @@ struct SafariView: UIViewControllerRepresentable {
         }
         
         func safariViewControllerDidFinish(_ controller: SFSafariViewController) {
-            print("[SafariView] safariViewControllerDidFinish called")
-            print("[SafariView] Calling onDismiss callback")
+            DebugLogger.debug("[SafariView] safariViewControllerDidFinish called", category: "App")
+            DebugLogger.debug("[SafariView] Calling onDismiss callback", category: "App")
             parent.onDismiss()
         }
         
         func safariViewController(_ controller: SFSafariViewController, didCompleteInitialLoad didLoadSuccessfully: Bool) {
-            print("[SafariView] Initial load completed: \(didLoadSuccessfully)")
+            DebugLogger.debug("[SafariView] Initial load completed: \(didLoadSuccessfully)", category: "App")
         }
     }
 }
@@ -77,7 +77,7 @@ struct SimplifiedSafariView: UIViewControllerRepresentable {
         }
         
         func safariViewControllerDidFinish(_ controller: SFSafariViewController) {
-            print("[SimplifiedSafariView] safariViewControllerDidFinish called")
+            DebugLogger.debug("[SimplifiedSafariView] safariViewControllerDidFinish called", category: "App")
             parent.onDismiss()
         }
     }

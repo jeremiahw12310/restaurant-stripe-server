@@ -10,6 +10,7 @@ struct UnifiedGreetingPointsCard: View {
     let onScan: () -> Void
     let onDirections: () -> Void
     let onRefer: () -> Void
+    let onAdminOffice: (() -> Void)?
 
     private var firstName: String { userVM.firstName.isEmpty ? "Friend" : userVM.firstName }
 
@@ -176,6 +177,10 @@ struct UnifiedGreetingPointsCard: View {
             // Bottom actions (scrollable + larger + reordered)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
+                    // Admin Office first (only for admins)
+                    if userVM.isAdmin, let onAdminOffice = onAdminOffice {
+                        smallActionButton(title: "Admin Office", icon: "building.2.fill", color: .purple, action: onAdminOffice)
+                    }
                     // Order first (red)
                     smallActionButton(title: "Order", icon: "bag.fill", color: Theme.energyRed, action: onOrder)
                     // Scan next
@@ -186,7 +191,7 @@ struct UnifiedGreetingPointsCard: View {
                     smallActionButton(title: "Redeem", icon: "gift.fill", color: Theme.energyGreen, action: onRedeem)
                     // Refer a Friend
                     smallActionButton(title: "Refer a Friend", icon: "person.badge.plus", color: Theme.energyBlue, action: {
-                        print("🔗 Refer button tapped (UnifiedGreetingPointsCard)")
+                        DebugLogger.debug("🔗 Refer button tapped (UnifiedGreetingPointsCard)", category: "UI")
                         onRefer()
                         NotificationCenter.default.post(name: Notification.Name("presentReferral"), object: nil)
                     })
@@ -326,7 +331,8 @@ struct UnifiedGreetingPointsCard_Previews: PreviewProvider {
             onRedeem: {},
             onScan: {},
             onDirections: {},
-            onRefer: {}
+            onRefer: {},
+            onAdminOffice: nil
         )
         .environmentObject(UserViewModel())
         .preferredColorScheme(.dark)

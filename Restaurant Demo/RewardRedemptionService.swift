@@ -32,9 +32,9 @@ class RewardRedemptionService: ObservableObject {
             urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
             
             if let tierId, !tierId.isEmpty {
-                print("🎁 Fetching eligible items for tier \(tierId)")
+                DebugLogger.debug("🎁 Fetching eligible items for tier \(tierId)", category: "Rewards")
             } else {
-                print("🎁 Fetching eligible items for \(pointsRequired) point tier")
+                DebugLogger.debug("🎁 Fetching eligible items for \(pointsRequired) point tier", category: "Rewards")
             }
             
             let (data, response) = try await URLSession.shared.data(for: urlRequest)
@@ -43,23 +43,23 @@ class RewardRedemptionService: ObservableObject {
                 throw NetworkError.invalidResponse
             }
             
-            print("📥 Response status: \(httpResponse.statusCode)")
+            DebugLogger.debug("📥 Response status: \(httpResponse.statusCode)", category: "Rewards")
             
             if httpResponse.statusCode == 200 {
                 let tierResponse = try JSONDecoder().decode(RewardTierItemsResponse.self, from: data)
                 let itemCount = tierResponse.eligibleItems.count
                 
                 if let tierId = tierId, !tierId.isEmpty {
-                    print("✅ Fetched \(itemCount) eligible items for tier \(tierId)")
+                    DebugLogger.debug("✅ Fetched \(itemCount) eligible items for tier \(tierId)", category: "Rewards")
                 } else {
-                    print("✅ Fetched \(itemCount) eligible items for \(pointsRequired) point tier")
+                    DebugLogger.debug("✅ Fetched \(itemCount) eligible items for \(pointsRequired) point tier", category: "Rewards")
                 }
                 
                 if itemCount == 0 {
                     if let tierId = tierId, !tierId.isEmpty {
-                        print("⚠️ WARNING: Tier '\(tierId)' returned 0 items. This tier may not be configured in Firestore 'rewardTierItems' collection.")
+                        DebugLogger.debug("⚠️ WARNING: Tier '\(tierId)' returned 0 items. This tier may not be configured in Firestore 'rewardTierItems' collection.", category: "Rewards")
                     } else {
-                        print("⚠️ WARNING: \(pointsRequired) point tier returned 0 items. This tier may not be configured in Firestore 'rewardTierItems' collection.")
+                        DebugLogger.debug("⚠️ WARNING: \(pointsRequired) point tier returned 0 items. This tier may not be configured in Firestore 'rewardTierItems' collection.", category: "Rewards")
                     }
                 }
                 
@@ -69,16 +69,16 @@ class RewardRedemptionService: ObservableObject {
                 let errorMessage = errorData?["error"] as? String ?? "Unknown error occurred"
                 
                 if let tierId = tierId, !tierId.isEmpty {
-                    print("❌ Error fetching tier \(tierId): \(errorMessage)")
+                    DebugLogger.debug("❌ Error fetching tier \(tierId): \(errorMessage)", category: "Rewards")
                 } else {
-                    print("❌ Error fetching \(pointsRequired) point tier: \(errorMessage)")
+                    DebugLogger.debug("❌ Error fetching \(pointsRequired) point tier: \(errorMessage)", category: "Rewards")
                 }
                 
                 throw NetworkError.serverError(errorMessage)
             }
             
         } catch {
-            print("❌ Error fetching eligible items: \(error.localizedDescription)")
+            DebugLogger.debug("❌ Error fetching eligible items: \(error.localizedDescription)", category: "Rewards")
             return .failure(error)
         }
     }
@@ -143,24 +143,24 @@ class RewardRedemptionService: ObservableObject {
             let jsonData = try JSONEncoder().encode(request)
             urlRequest.httpBody = jsonData
             
-            print("🎁 Redeeming reward: \(rewardTitle) for \(pointsRequired) points")
+            DebugLogger.debug("🎁 Redeeming reward: \(rewardTitle) for \(pointsRequired) points", category: "Rewards")
             if let selectedName = selectedItemName {
-                print("🍽️ Selected item: \(selectedName)")
+                DebugLogger.debug("🍽️ Selected item: \(selectedName)", category: "Rewards")
             }
             if let toppingName = selectedToppingName {
-                print("🧋 Selected topping: \(toppingName)")
+                DebugLogger.debug("🧋 Selected topping: \(toppingName)", category: "Rewards")
             }
             if let itemName2 = selectedItemName2 {
-                print("🥟 Second item: \(itemName2)")
+                DebugLogger.debug("🥟 Second item: \(itemName2)", category: "Rewards")
             }
             if let method = cookingMethod {
-                print("🔥 Cooking method: \(method)")
+                DebugLogger.debug("🔥 Cooking method: \(method)", category: "Rewards")
             }
             if let type = drinkType {
-                print("🥤 Drink type: \(type)")
+                DebugLogger.debug("🥤 Drink type: \(type)", category: "Rewards")
             }
-            print("📡 API URL: \(url)")
-            print("📦 Request data: \(String(data: jsonData, encoding: .utf8) ?? "")")
+            DebugLogger.debug("📡 API URL: \(url)", category: "Rewards")
+            DebugLogger.debug("📦 Request data: \(String(data: jsonData, encoding: .utf8) ?? "")", category: "Rewards")
             
             let (data, response) = try await URLSession.shared.data(for: urlRequest)
             
@@ -168,8 +168,8 @@ class RewardRedemptionService: ObservableObject {
                 throw NetworkError.invalidResponse
             }
             
-            print("📥 Response status: \(httpResponse.statusCode)")
-            print("📥 Response data: \(String(data: data, encoding: .utf8) ?? "")")
+            DebugLogger.debug("📥 Response status: \(httpResponse.statusCode)", category: "Rewards")
+            DebugLogger.debug("📥 Response data: \(String(data: data, encoding: .utf8) ?? "")", category: "Rewards")
             
             if httpResponse.statusCode == 200 {
                 let redemptionResponse = try JSONDecoder().decode(RewardRedemptionResponse.self, from: data)
@@ -178,23 +178,23 @@ class RewardRedemptionService: ObservableObject {
                     isLoading = false
                 }
                 
-                print("✅ Reward redeemed successfully!")
-                print("🔢 Redemption code: \(redemptionResponse.redemptionCode)")
-                print("💰 New balance: \(redemptionResponse.newPointsBalance)")
+                DebugLogger.debug("✅ Reward redeemed successfully!", category: "Rewards")
+                DebugLogger.debug("🔢 Redemption code: \(redemptionResponse.redemptionCode)", category: "Rewards")
+                DebugLogger.debug("💰 New balance: \(redemptionResponse.newPointsBalance)", category: "Rewards")
                 if let selectedName = redemptionResponse.selectedItemName {
-                    print("🍽️ Selected item: \(selectedName)")
+                    DebugLogger.debug("🍽️ Selected item: \(selectedName)", category: "Rewards")
                 }
                 if let toppingName = redemptionResponse.selectedToppingName {
-                    print("🧋 Selected topping: \(toppingName)")
+                    DebugLogger.debug("🧋 Selected topping: \(toppingName)", category: "Rewards")
                 }
                 if let itemName2 = redemptionResponse.selectedItemName2 {
-                    print("🥟 Second item: \(itemName2)")
+                    DebugLogger.debug("🥟 Second item: \(itemName2)", category: "Rewards")
                 }
                 if let method = redemptionResponse.cookingMethod {
-                    print("🔥 Cooking method: \(method)")
+                    DebugLogger.debug("🔥 Cooking method: \(method)", category: "Rewards")
                 }
                 if let type = redemptionResponse.drinkType {
-                    print("🥤 Drink type: \(type)")
+                    DebugLogger.debug("🥤 Drink type: \(type)", category: "Rewards")
                 }
                 
                 return .success(redemptionResponse)
@@ -209,7 +209,7 @@ class RewardRedemptionService: ObservableObject {
                     self.errorMessage = errorMessage
                 }
                 
-                print("❌ Redemption failed: \(errorMessage)")
+                DebugLogger.debug("❌ Redemption failed: \(errorMessage)", category: "Rewards")
                 throw NetworkError.serverError(errorMessage)
             }
             
@@ -219,7 +219,7 @@ class RewardRedemptionService: ObservableObject {
                 self.errorMessage = error.localizedDescription
             }
             
-            print("❌ Redemption error: \(error.localizedDescription)")
+            DebugLogger.debug("❌ Redemption error: \(error.localizedDescription)", category: "Rewards")
             return .failure(error)
         }
     }
@@ -237,11 +237,11 @@ class RewardRedemptionService: ObservableObject {
                 RedeemedReward(document: document)
             }
             
-            print("📋 Fetched \(redeemedRewards.count) redeemed rewards for user \(userId)")
+            DebugLogger.debug("📋 Fetched \(redeemedRewards.count) redeemed rewards for user \(userId)", category: "Rewards")
             return .success(redeemedRewards)
             
         } catch {
-            print("❌ Error fetching redeemed rewards: \(error.localizedDescription)")
+            DebugLogger.debug("❌ Error fetching redeemed rewards: \(error.localizedDescription)", category: "Rewards")
             return .failure(error)
         }
     }

@@ -251,7 +251,7 @@ struct RewardHalfAndHalfSelectionView: View {
         
         let tierId = reward.rewardTierId ?? "none"
         let tierInfo = "Reward: '\(reward.title)', TierId: '\(tierId)', Points: \(reward.pointsRequired)"
-        print("🥟 Loading eligible dumplings for half-and-half - \(tierInfo)")
+        DebugLogger.debug("🥟 Loading eligible dumplings for half-and-half - \(tierInfo)", category: "Rewards")
         
         let result = await redemptionService.fetchEligibleItems(
             pointsRequired: reward.pointsRequired,
@@ -262,15 +262,15 @@ struct RewardHalfAndHalfSelectionView: View {
             switch result {
             case .success(let items):
                 eligibleItems = items
-                print("✅ Loaded \(items.count) dumpling items for half-and-half - \(tierInfo)")
+                DebugLogger.debug("✅ Loaded \(items.count) dumpling items for half-and-half - \(tierInfo)", category: "Rewards")
                 
                 if eligibleItems.isEmpty {
-                    print("⚠️ Warning: Backend returned empty items array for tier. This tier may not be configured in Firestore 'rewardTierItems' collection.")
+                    DebugLogger.debug("⚠️ Warning: Backend returned empty items array for tier. This tier may not be configured in Firestore 'rewardTierItems' collection.", category: "Rewards")
                 }
                 
                 isLoading = false
             case .failure(let error):
-                print("❌ Failed to load dumplings for half-and-half - \(tierInfo): \(error.localizedDescription)")
+                DebugLogger.debug("❌ Failed to load dumplings for half-and-half - \(tierInfo): \(error.localizedDescription)", category: "Rewards")
                 errorMessage = error.localizedDescription
                 isLoading = false
             }

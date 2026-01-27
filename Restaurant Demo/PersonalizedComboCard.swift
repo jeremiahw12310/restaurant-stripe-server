@@ -77,7 +77,7 @@ struct PersonalizedComboCard: View {
 
 #Preview {
     PersonalizedComboCard {
-        print("Personalized combo tapped")
+        DebugLogger.debug("Personalized combo tapped", category: "Combo")
     }
     .background(Color.black)
 } 

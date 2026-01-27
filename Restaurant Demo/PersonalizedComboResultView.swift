@@ -238,27 +238,27 @@ struct ComboItemCard: View {
                       categoryLower.contains("drink") ||
                       categoryLower.contains("coke")
         
-        print("🔍 Item: \(item.id) | category: '\(item.category)' | isDrinkCategory: \(isDrink)")
+        DebugLogger.debug("🔍 Item: \(item.id) | category: '\(item.category)' | isDrinkCategory: \(isDrink)", category: "Combo")
         return isDrink
     }
     
     // Check if this item is from a category with lemonade/soda banner enabled
     private var isLemonadeSodaCategory: Bool {
         guard !item.category.isEmpty else {
-            print("🔍 Item '\(item.id)' has empty category")
+            DebugLogger.debug("🔍 Item '\(item.id)' has empty category", category: "Combo")
             return false
         }
         
-        print("🔍 Checking item '\(item.id)' with category '\(item.category)'")
-        print("🔍 Available categories: \(menuViewModel.menuCategories.map { "\($0.id) (lemonadeSodaEnabled: \($0.lemonadeSodaEnabled))" })")
+        DebugLogger.debug("🔍 Checking item '\(item.id)' with category '\(item.category)'", category: "Combo")
+        DebugLogger.debug("🔍 Available categories: \(menuViewModel.menuCategories.map { "\($0.id) (lemonadeSodaEnabled: \($0.lemonadeSodaEnabled))" })", category: "Combo")
         
         // Find the category in menuViewModel and check if lemonadeSodaEnabled is true
         if let category = menuViewModel.menuCategories.first(where: { $0.id == item.category }) {
-            print("🔍 Found matching category '\(category.id)' with lemonadeSodaEnabled: \(category.lemonadeSodaEnabled)")
+            DebugLogger.debug("🔍 Found matching category '\(category.id)' with lemonadeSodaEnabled: \(category.lemonadeSodaEnabled)", category: "Combo")
             return category.lemonadeSodaEnabled
         }
         
-        print("🔍 No matching category found for '\(item.category)'")
+        DebugLogger.debug("🔍 No matching category found for '\(item.category)'", category: "Combo")
         return false
     }
     
@@ -468,7 +468,7 @@ struct EnhancedMenuItemCard: View {
     
     PersonalizedComboResultView(
         combo: sampleCombo,
-        onOrder: { print("Order tapped") },
-        onBack: { print("Back tapped") }
+        onOrder: { DebugLogger.debug("Order tapped", category: "Combo") },
+        onBack: { DebugLogger.debug("Back tapped", category: "Combo") }
     )
 } 

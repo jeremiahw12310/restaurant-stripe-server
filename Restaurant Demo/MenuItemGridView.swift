@@ -24,7 +24,7 @@ struct MenuItemGridView: View {
         LazyVGrid(columns: columns, spacing: 10) {
             ForEach(items) { item in
                 // DEBUG: Log all items and their availability status
-                let _ = print("🔍 MenuItemGridView - Item: \(item.id), isAvailable: \(item.isAvailable), disableItemSelection: \(disableItemSelection)")
+                let _ = DebugLogger.debug("🔍 MenuItemGridView - Item: \(item.id), isAvailable: \(item.isAvailable), disableItemSelection: \(disableItemSelection)", category: "Menu")
                 
                 // PERMANENT FIX: Show all items regardless of availability
                 ZStack(alignment: .topTrailing) {
@@ -35,7 +35,7 @@ struct MenuItemGridView: View {
                     } else {
                         // Normal mode: render card with button interaction
                         Button(action: {
-                            print("🎯 Tapped item card: \(item.id)")
+                            DebugLogger.debug("🎯 Tapped item card: \(item.id)", category: "Menu")
                             
                             // Handle press animation
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
@@ -47,7 +47,7 @@ struct MenuItemGridView: View {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
                                     pressedItemId = nil
                                 }
-                                print("🎯 Setting selectedItem to: \(item.id)")
+                                DebugLogger.debug("🎯 Setting selectedItem to: \(item.id)", category: "Menu")
                                 selectedItem = item
                             }
                         }) {
@@ -94,7 +94,7 @@ struct MenuItemGridView: View {
             EditItemSheet(menuVM: menuVM, categoryId: categoryId, item: item)
         }
         .onAppear {
-            print("MenuItemGridView items: \(items.map { $0.id })")
+            DebugLogger.debug("MenuItemGridView items: \(items.map { $0.id })", category: "Menu")
         }
     }
 } 

@@ -412,7 +412,7 @@ struct NotificationSettingsView: View {
                 self.isLoading = false
                 
                 if let error = error {
-                    print("❌ NotificationSettingsView: Error loading preferences: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ NotificationSettingsView: Error loading preferences: \(error.localizedDescription)", category: "Notifications")
                     self.errorMessage = "Failed to load preferences"
                     self.showError = true
                     return
@@ -438,7 +438,7 @@ struct NotificationSettingsView: View {
                 self.isSaving = false
                 
                 if let error = error {
-                    print("❌ NotificationSettingsView: Error saving preference: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ NotificationSettingsView: Error saving preference: \(error.localizedDescription)", category: "Notifications")
                     self.errorMessage = "Failed to save preference"
                     self.showError = true
                     // Revert toggle on error
@@ -454,13 +454,13 @@ struct NotificationSettingsView: View {
     
     private func openIOSSettings() {
         guard let settingsUrl = URL(string: UIApplication.openSettingsURLString) else {
-            print("❌ NotificationSettingsView: Failed to create settings URL")
+            DebugLogger.debug("❌ NotificationSettingsView: Failed to create settings URL", category: "Notifications")
             return
         }
         
         UIApplication.shared.open(settingsUrl, options: [:]) { success in
             if !success {
-                print("❌ NotificationSettingsView: Failed to open settings URL")
+                DebugLogger.debug("❌ NotificationSettingsView: Failed to open settings URL", category: "Notifications")
             }
         }
     }

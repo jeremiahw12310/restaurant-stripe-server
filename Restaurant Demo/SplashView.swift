@@ -112,7 +112,7 @@ struct SplashView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
             // Reset navigation state when app comes to foreground (user swipes back)
-            print("🔵 SplashView: App will enter foreground, resetting navigation state")
+            DebugLogger.debug("🔵 SplashView: App will enter foreground, resetting navigation state", category: "App")
         }
     }
 }

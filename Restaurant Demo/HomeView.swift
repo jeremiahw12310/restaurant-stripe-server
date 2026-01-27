@@ -234,9 +234,10 @@ struct HomeView: View {
                             onScan: { showReceiptScanner = true },
                             onDirections: { showMapsAlert = true },
                             onRefer: {
-                                print("🔗 HomeView: onRefer closure invoked")
+                                DebugLogger.debug("🔗 HomeView: onRefer closure invoked", category: "Home")
                                 showReferral = true
-                            }
+                            },
+                            onAdminOffice: { showAdminOffice = true }
                         )
                         .environmentObject(userVM)
                         
@@ -487,17 +488,17 @@ struct HomeView: View {
         let referralHandling = alerts
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("incomingReferralCode"))) { output in
                 if let code = output.userInfo?["code"] as? String, !code.isEmpty {
-                    print("📩 HomeView: incomingReferralCode -> \(code)")
+                    DebugLogger.debug("📩 HomeView: incomingReferralCode -> \(code)", category: "Home")
                     deepLinkReferralCode = code
                     showReferral = true
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("presentReferral"))) { _ in
-                print("📩 HomeView: presentReferral notification received")
+                DebugLogger.debug("📩 HomeView: presentReferral notification received", category: "Home")
                 showReferral = true
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("referralAwardGranted"))) { note in
-                print("🎉 HomeView: referralAwardGranted -> \(note.userInfo?["bonus"] ?? 0)")
+                DebugLogger.debug("🎉 HomeView: referralAwardGranted -> \(note.userInfo?["bonus"] ?? 0)", category: "Home")
                 showReferralAwardAlert = true
             }
             // Referral sheet (moved out of alert scope)
@@ -585,6 +586,13 @@ struct HomeView: View {
                 .environmentObject(userVM)
                 .environmentObject(sharedRewardsVM)
                 .environmentObject(sharedMenuVM)
+        }
+        .fullScreenCover(item: $sharedRewardsVM.pendingQRSuccess) { successData in
+            RewardCardScreen(
+                userName: userVM.firstName.isEmpty ? "Your" : userVM.firstName,
+                successData: successData,
+                onDismiss: { sharedRewardsVM.pendingQRSuccess = nil }
+            )
         }
 
         .alert("Choose Navigation App", isPresented: $showMapsAlert) {
@@ -1107,7 +1115,7 @@ struct HomeView: View {
             
             Button(action: {
                 // Handle reward claim
-                print("Claiming reward: \(title)")
+                DebugLogger.debug("Claiming reward: \(title)", category: "Home")
             }) {
                 Text(isEligible ? "Claim" : "Locked")
                     .font(.system(size: 14, weight: .semibold, design: .rounded))
@@ -1263,7 +1271,7 @@ struct HomeView: View {
         // New user OR user with 0 points who hasn't received welcome points yet
         let shouldShowWelcome = userVM.isNewUser || (userVM.points == 0 && !userVM.hasReceivedWelcomePoints && !userVM.isLoading)
         
-        print("🎉 HomeView: checkAndShowIntegratedWelcome - isNewUser: \(userVM.isNewUser), points: \(userVM.points), hasReceivedWelcomePoints: \(userVM.hasReceivedWelcomePoints), shouldShowWelcome: \(shouldShowWelcome)")
+        DebugLogger.debug("🎉 HomeView: checkAndShowIntegratedWelcome - isNewUser: \(userVM.isNewUser), points: \(userVM.points), hasReceivedWelcomePoints: \(userVM.hasReceivedWelcomePoints), shouldShowWelcome: \(shouldShowWelcome)", category: "Home")
         
         if shouldShowWelcome && !welcomeAnimationComplete {
             // Show integrated welcome first
@@ -1351,10 +1359,10 @@ struct HomeView: View {
                 if blockedReason == "phone_previously_claimed" {
                     showWelcomeBlockedAlert = true
                 } else {
-                    print("✅ Welcome points added successfully")
+                    DebugLogger.debug("✅ Welcome points added successfully", category: "Home")
                 }
             } else {
-                print("❌ Failed to add welcome points")
+                DebugLogger.debug("❌ Failed to add welcome points", category: "Home")
             }
         }
         
@@ -1369,9 +1377,9 @@ struct HomeView: View {
                 "hasReceivedWelcomePoints": true
             ]) { error in
                 if let error = error {
-                    print("❌ Error updating user status: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ Error updating user status: \(error.localizedDescription)", category: "Home")
                 } else {
-                    print("✅ Updated user status after welcome")
+                    DebugLogger.debug("✅ Updated user status after welcome", category: "Home")
                 }
             }
         }
@@ -1449,14 +1457,14 @@ struct HomeView: View {
         
         // Animate hero sliding in
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
-            print("🎯 Starting hero slide animation")
+            DebugLogger.debug("🎯 Starting hero slide animation", category: "Home")
             withAnimation(.spring(response: 0.8, dampingFraction: 0.7)) {
                 heroOffset = 0
             }
             
             // Show hero message after hero slides in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                print("💬 Showing hero message")
+                DebugLogger.debug("💬 Showing hero message", category: "Home")
                 withAnimation(.spring(response: 0.6, dampingFraction: 0.6)) {
                     showHeroMessage = true
                 }

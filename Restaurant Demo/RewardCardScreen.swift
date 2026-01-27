@@ -460,7 +460,7 @@ struct RewardCardScreen: View {
             .limit(to: 1)
             .addSnapshotListener { snapshot, error in
                 if let error = error {
-                    print("❌ Reward listener error: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ Reward listener error: \(error.localizedDescription)", category: "Rewards")
                     return
                 }
                 guard let doc = snapshot?.documents.first else { return }

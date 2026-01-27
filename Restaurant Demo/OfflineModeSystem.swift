@@ -126,7 +126,7 @@ class OfflineModeManager: ObservableObject {
                key.contains("userProfiles_") ||
                key.contains("menuItems_") {
                 userDefaults.removeObject(forKey: key)
-                print("🧹 Cleared UserDefaults key: \(key)")
+                DebugLogger.debug("🧹 Cleared UserDefaults key: \(key)", category: "Offline")
             }
         }
         
@@ -134,7 +134,7 @@ class OfflineModeManager: ObservableObject {
         pendingActions.removeAll()
         savePendingActions()
         
-        print("✅ All UserDefaults data cleared to prevent storage bloat")
+        DebugLogger.debug("✅ All UserDefaults data cleared to prevent storage bloat", category: "Offline")
     }
     
     // FIXED: Add size limit to pending actions to prevent storage bloat
@@ -143,13 +143,13 @@ class OfflineModeManager: ObservableObject {
         if pendingActions.count > 50 {
             // Keep only the most recent 50 actions
             pendingActions = Array(pendingActions.suffix(50))
-            print("⚠️ Limited pending actions to 50 to prevent storage bloat")
+            DebugLogger.debug("⚠️ Limited pending actions to 50 to prevent storage bloat", category: "Offline")
         }
         
         if let data = try? JSONEncoder().encode(pendingActions) {
             // Check if data is too large (over 1MB)
             if data.count > 1024 * 1024 {
-                print("⚠️ Pending actions data too large (\(data.count) bytes), clearing old actions")
+                DebugLogger.debug("⚠️ Pending actions data too large (\(data.count) bytes), clearing old actions", category: "Offline")
                 // Keep only the most recent 10 actions
                 pendingActions = Array(pendingActions.suffix(10))
                 if let newData = try? JSONEncoder().encode(pendingActions) {
@@ -225,7 +225,7 @@ class OfflineCacheManager {
         case .videos:
             // FIXED: Don't store video data in UserDefaults - it causes storage bloat
             // Videos should be streamed from Firebase Storage, not cached locally
-            print("⚠️ Video caching disabled to prevent storage bloat")
+            DebugLogger.debug("⚠️ Video caching disabled to prevent storage bloat", category: "Offline")
             break
         default:
             if let encodableData = try? JSONSerialization.data(withJSONObject: data) {
@@ -263,7 +263,7 @@ class OfflineCacheManager {
         for key in keys {
             if key.contains("videos_") {
                 userDefaults.removeObject(forKey: key)
-                print("🧹 Cleared video data from UserDefaults: \(key)")
+                DebugLogger.debug("🧹 Cleared video data from UserDefaults: \(key)", category: "Offline")
             }
         }
     }

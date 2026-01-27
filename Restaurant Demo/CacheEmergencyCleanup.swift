@@ -6,7 +6,7 @@ class CacheEmergencyCleanup {
     
     /// Call this in your App's init() BEFORE anything else
     static func performEmergencyCleanup() {
-        print("🚑 Emergency Cache Cleanup: Running safety check...")
+        DebugLogger.debug("🚑 Emergency Cache Cleanup: Running safety check...", category: "Cache")
         
         // CRITICAL: Don't even try to decode - just check if the data exists and clear it
         // Decoding corrupted data can throw Objective-C exceptions that crash before we can catch them
@@ -15,12 +15,12 @@ class CacheEmergencyCleanup {
         let hasPromoData = UserDefaults.standard.data(forKey: "promoImageMetadata") != nil
         
         if hasMenuData || hasPromoData {
-            print("⚠️ Found existing cache metadata - clearing to prevent potential corruption")
-            print("🧹 CLEARING ALL CACHE DATA AS SAFETY PRECAUTION")
+            DebugLogger.debug("⚠️ Found existing cache metadata - clearing to prevent potential corruption", category: "Cache")
+            DebugLogger.debug("🧹 CLEARING ALL CACHE DATA AS SAFETY PRECAUTION", category: "Cache")
             clearAllCacheData()
-            print("✅ Cache cleared - app will rebuild cache safely")
+            DebugLogger.debug("✅ Cache cleared - app will rebuild cache safely", category: "Cache")
         } else {
-            print("✅ No existing cache data found - fresh start")
+            DebugLogger.debug("✅ No existing cache data found - fresh start", category: "Cache")
         }
     }
     
@@ -41,8 +41,8 @@ class CacheEmergencyCleanup {
         
         UserDefaults.standard.synchronize()
         
-        print("✅ All cache data cleared - app will work normally")
-        print("ℹ️  Images will re-download and cache will rebuild")
+        DebugLogger.debug("✅ All cache data cleared - app will work normally", category: "Cache")
+        DebugLogger.debug("ℹ️  Images will re-download and cache will rebuild", category: "Cache")
     }
 }
 

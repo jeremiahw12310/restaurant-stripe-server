@@ -200,6 +200,12 @@ class AdminUserDetailViewModel: ObservableObject {
                 for doc in docs {
                     let data = doc.data()
                     let referredUserId = data["referredUserId"] as? String ?? ""
+                    
+                    // Skip if referredUserId is empty to prevent Firestore crash
+                    guard !referredUserId.isEmpty else {
+                        continue
+                    }
+                    
                     let statusRaw = (data["status"] as? String) ?? "pending"
                     let status = statusRaw == "awarded" ? "Awarded" : "Pending"
                     let referralId = doc.documentID
@@ -243,6 +249,13 @@ class AdminUserDetailViewModel: ObservableObject {
 
                 let data = doc.data()
                 let referrerUserId = data["referrerUserId"] as? String ?? ""
+                
+                // Skip if referrerUserId is empty to prevent Firestore crash
+                guard !referrerUserId.isEmpty else {
+                    group.leave()
+                    return
+                }
+                
                 let statusRaw = (data["status"] as? String) ?? "pending"
                 let status = statusRaw == "awarded" ? "Awarded" : "Pending"
                 let referralId = doc.documentID
@@ -271,7 +284,7 @@ class AdminUserDetailViewModel: ObservableObject {
     // MARK: - Admin Editing
 
     func saveAdminEdits(completion: @escaping (Bool, String?) -> Void) {
-        print("🟡 AdminUserDetailViewModel.saveAdminEdits called for userId=\(userId)")
+        DebugLogger.debug("🟡 AdminUserDetailViewModel.saveAdminEdits called for userId=\(userId)", category: "Admin")
         // Validate points input
         guard let pointsInt = Int(editablePoints), pointsInt >= 0 else {
             let message = "Points must be a valid non-negative number"
@@ -324,13 +337,13 @@ class AdminUserDetailViewModel: ObservableObject {
                 ]
                 request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-                print("📤 Sending admin user update request to: \(url.absoluteString)")
-                print("📦 Request body: userId=\(userId), points=\(pointsInt), isAdmin=\(isAdminFlag), isVerified=\(isVerifiedFlag)")
+                DebugLogger.debug("📤 Sending admin user update request to: \(url.absoluteString)", category: "Admin")
+                DebugLogger.debug("📦 Request body: userId=\(userId), points=\(pointsInt), isAdmin=\(isAdminFlag), isVerified=\(isVerifiedFlag)", category: "Admin")
                 
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse else {
                     let message = "Unexpected response from server (not HTTP)"
-                    print("❌ \(message)")
+                    DebugLogger.debug("❌ \(message)", category: "Admin")
                     await MainActor.run {
                         self.isLoading = false
                         self.errorMessage = message
@@ -339,12 +352,12 @@ class AdminUserDetailViewModel: ObservableObject {
                     return
                 }
 
-                print("📥 Response status: \(http.statusCode)")
-                print("📥 Response headers: \(http.allHeaderFields)")
+                DebugLogger.debug("📥 Response status: \(http.statusCode)", category: "Admin")
+                DebugLogger.debug("📥 Response headers: \(http.allHeaderFields)", category: "Admin")
 
                 guard (200..<300).contains(http.statusCode) else {
                     let bodyText = String(data: data, encoding: .utf8) ?? ""
-                    print("❌ Server error response: \(bodyText)")
+                    DebugLogger.debug("❌ Server error response: \(bodyText)", category: "Admin")
                     
                     // Try to parse error message from JSON response
                     var errorMessage = "Failed to update user"
@@ -439,10 +452,10 @@ class AdminUserDetailViewModel: ObservableObject {
                     default:
                         message = "Network error: \(urlError.localizedDescription)"
                     }
-                    print("❌ Network error: \(urlError.code.rawValue) - \(urlError.localizedDescription)")
+                    DebugLogger.debug("❌ Network error: \(urlError.code.rawValue) - \(urlError.localizedDescription)", category: "Admin")
                 } else {
                     message = "Failed to update user: \(error.localizedDescription)"
-                    print("❌ Error updating user: \(error)")
+                    DebugLogger.debug("❌ Error updating user: \(error)", category: "Admin")
                 }
                 
                 await MainActor.run {
@@ -457,20 +470,20 @@ class AdminUserDetailViewModel: ObservableObject {
     /// Triggers the backend referral award-check for the target user.
     /// Called after admin adjusts points to ensure referral bonuses are awarded if threshold is met.
     private func triggerReferralCheckForUser() {
-        print("📤 triggerReferralCheckForUser() called for userId: \(userId)")
+        DebugLogger.debug("📤 triggerReferralCheckForUser() called for userId: \(userId)", category: "Admin")
         
         guard let url = URL(string: "\(Config.backendURL)/referrals/award-check") else {
-            print("❌ Invalid backend URL for referral check")
+            DebugLogger.debug("❌ Invalid backend URL for referral check", category: "Admin")
             return
         }
 
-        print("📤 Calling: \(url.absoluteString)")
+        DebugLogger.debug("📤 Calling: \(url.absoluteString)", category: "Admin")
 
         // Get admin's auth token to make the authenticated request
         Auth.auth().currentUser?.getIDToken { [weak self] token, error in
             guard let self = self, let token = token else {
                 if let error = error {
-                    print("❌ Failed to get admin token for referral check: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ Failed to get admin token for referral check: \(error.localizedDescription)", category: "Admin")
                     DispatchQueue.main.async {
                         self?.referralAwardCheckDebug = "Referral check failed: \(error.localizedDescription)"
                     }
@@ -478,7 +491,7 @@ class AdminUserDetailViewModel: ObservableObject {
                 return
             }
 
-            print("📤 Got auth token, making request...")
+            DebugLogger.debug("📤 Got auth token, making request...", category: "Admin")
 
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
@@ -491,7 +504,7 @@ class AdminUserDetailViewModel: ObservableObject {
 
             URLSession.shared.dataTask(with: request) { data, response, error in
                 if let error = error {
-                    print("❌ Referral check request failed: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ Referral check request failed: \(error.localizedDescription)", category: "Admin")
                     DispatchQueue.main.async {
                         self.referralAwardCheckDebug = "Referral check error: \(error.localizedDescription)"
                     }
@@ -499,40 +512,40 @@ class AdminUserDetailViewModel: ObservableObject {
                 }
 
                 guard let http = response as? HTTPURLResponse else {
-                    print("❌ No HTTP response received")
+                    DebugLogger.debug("❌ No HTTP response received", category: "Admin")
                     DispatchQueue.main.async {
                         self.referralAwardCheckDebug = "Referral check: no HTTP response"
                     }
                     return
                 }
 
-                print("📥 Referral check HTTP status: \(http.statusCode)")
+                DebugLogger.debug("📥 Referral check HTTP status: \(http.statusCode)", category: "Admin")
 
                 if let data = data,
                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    print("📥 Referral check response: \(json)")
+                    DebugLogger.debug("📥 Referral check response: \(json)", category: "Admin")
                     DispatchQueue.main.async {
                         self.referralAwardCheckDebug = "Referral check HTTP \(http.statusCode): \(json)"
                     }
                     
                     if let status = json["status"] as? String {
                         if status == "awarded" {
-                            print("🎉 Referral bonus awarded for user \(self.userId)!")
+                            DebugLogger.debug("🎉 Referral bonus awarded for user \(self.userId)!", category: "Admin")
                             // Reload referral info to reflect the new status
                             DispatchQueue.main.async {
                                 self.loadReferralInfo { _ in }
                             }
                         } else if status == "not_eligible" {
                             let reason = json["reason"] as? String ?? "unknown"
-                            print("ℹ️ Referral not eligible: \(reason)")
+                            DebugLogger.debug("ℹ️ Referral not eligible: \(reason)", category: "Admin")
                         } else {
-                            print("ℹ️ Referral check result: \(status)")
+                            DebugLogger.debug("ℹ️ Referral check result: \(status)", category: "Admin")
                         }
                     }
                 } else {
-                    print("⚠️ Could not parse response, HTTP \(http.statusCode)")
+                    DebugLogger.debug("⚠️ Could not parse response, HTTP \(http.statusCode)", category: "Admin")
                     if let data = data, let raw = String(data: data, encoding: .utf8) {
-                        print("⚠️ Raw response: \(raw)")
+                        DebugLogger.debug("⚠️ Raw response: \(raw)", category: "Admin")
                         DispatchQueue.main.async {
                             self.referralAwardCheckDebug = "Referral check HTTP \(http.statusCode) raw: \(raw)"
                         }

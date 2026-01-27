@@ -112,7 +112,7 @@ struct DumplingPopAnimation: View {
     DumplingPopAnimation(
         isShowing: .constant(true),
         onAnimationComplete: {
-            print("Animation complete!")
+            DebugLogger.debug("Animation complete!", category: "UI")
         },
         startPosition: CGPoint(x: 200, y: 300)
     )

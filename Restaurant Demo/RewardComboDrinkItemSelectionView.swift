@@ -296,7 +296,7 @@ struct RewardComboDrinkItemSelectionView: View {
         }
         
         let tierInfo = "Category: '\(drinkCategory)', TierId: '\(tierId)'"
-        print("🧋 Loading drink items for Full Combo - \(tierInfo)")
+        DebugLogger.debug("🧋 Loading drink items for Full Combo - \(tierInfo)", category: "Rewards")
         
         let result = await redemptionService.fetchEligibleItems(
             pointsRequired: 450, // All drink tiers use 450 points
@@ -307,15 +307,15 @@ struct RewardComboDrinkItemSelectionView: View {
             switch result {
             case .success(let items):
                 eligibleItems = items
-                print("✅ Loaded \(items.count) drink items for Full Combo - \(tierInfo)")
+                DebugLogger.debug("✅ Loaded \(items.count) drink items for Full Combo - \(tierInfo)", category: "Rewards")
                 
                 if eligibleItems.isEmpty {
-                    print("⚠️ Warning: Backend returned empty items array for tier. This tier may not be configured in Firestore 'rewardTierItems' collection.")
+                    DebugLogger.debug("⚠️ Warning: Backend returned empty items array for tier. This tier may not be configured in Firestore 'rewardTierItems' collection.", category: "Rewards")
                 }
                 
                 isLoading = false
             case .failure(let error):
-                print("❌ Failed to load drink items for Full Combo - \(tierInfo): \(error.localizedDescription)")
+                DebugLogger.debug("❌ Failed to load drink items for Full Combo - \(tierInfo): \(error.localizedDescription)", category: "Rewards")
                 errorMessage = error.localizedDescription
                 eligibleItems = []
                 isLoading = false

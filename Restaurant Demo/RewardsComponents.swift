@@ -546,24 +546,24 @@ struct RewardDetailView: View {
                     // Dismiss confirmation and show appropriate selection
                     showConfirmationDialog = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        print("🔍 Reward redemption flow - Title: '\(reward.title)', RequiresDumplingSelection: \(requiresDumplingSelection), IsFullCombo: \(isFullComboReward), EligibleCategoryId: \(reward.eligibleCategoryId ?? "nil"), RewardTierId: \(reward.rewardTierId ?? "nil")")
+                        DebugLogger.debug("🔍 Reward redemption flow - Title: '\(reward.title)', RequiresDumplingSelection: \(requiresDumplingSelection), IsFullCombo: \(isFullComboReward), EligibleCategoryId: \(reward.eligibleCategoryId ?? "nil"), RewardTierId: \(reward.rewardTierId ?? "nil")", category: "Rewards")
                         if isFullComboReward {
                             // Full Combo: Start with dumpling selection (12-piece tier)
-                            print("✅ Full Combo - Showing dumpling selection")
+                            DebugLogger.debug("✅ Full Combo - Showing dumpling selection", category: "Rewards")
                             showDumplingSelection = true
                         } else if requiresDumplingSelection {
                             // Show dumpling selection first (for 12-Piece Dumplings)
                             // User can choose single dumpling OR half-and-half
-                            print("✅ Showing dumpling selection")
+                            DebugLogger.debug("✅ Showing dumpling selection", category: "Rewards")
                             showDumplingSelection = true
                         } else if reward.eligibleCategoryId != nil || reward.rewardTierId != nil {
                             // Show item selection for rewards with eligible categories OR tier IDs
                             // Most rewards have rewardTierId, so they should show item selection
-                            print("✅ Showing item selection (has eligibleCategoryId or rewardTierId)")
+                            DebugLogger.debug("✅ Showing item selection (has eligibleCategoryId or rewardTierId)", category: "Rewards")
                             showItemSelection = true
                         } else {
                             // Direct redemption only for rewards without any selection criteria
-                            print("⚠️ No selection needed, proceeding directly to redemption")
+                            DebugLogger.debug("⚠️ No selection needed, proceeding directly to redemption", category: "Rewards")
                             Task {
                                 await redeemReward(selectedItem: nil)
                             }
@@ -585,7 +585,7 @@ struct RewardDetailView: View {
                     
                     // If user skipped selection (nil), proceed with generic reward redemption
                     if item == nil {
-                        print("⚠️ User skipped item selection, proceeding with generic reward: \(reward.title)")
+                        DebugLogger.debug("⚠️ User skipped item selection, proceeding with generic reward: \(reward.title)", category: "Rewards")
                         Task {
                             await redeemReward(selectedItem: nil)
                         }
@@ -901,7 +901,7 @@ struct RewardDetailView: View {
         }
         .onChange(of: redemptionService.errorMessage) { _, errorMessage in
             if let error = errorMessage {
-                print("❌ Redemption error: \(error)")
+                DebugLogger.debug("❌ Redemption error: \(error)", category: "Rewards")
             }
         }
     }
@@ -916,13 +916,13 @@ struct RewardDetailView: View {
         selectedDrinkItem: RewardEligibleItem? = nil
     ) async {
         guard let userId = Auth.auth().currentUser?.uid else {
-            print("❌ No user ID available for redemption")
+            DebugLogger.debug("❌ No user ID available for redemption", category: "Rewards")
             return
         }
 
         let alreadyRedeeming = await MainActor.run { isRedeeming }
         guard !alreadyRedeeming else {
-            print("⚠️ Redeem already in progress; ignoring duplicate request")
+            DebugLogger.debug("⚠️ Redeem already in progress; ignoring duplicate request", category: "Rewards")
             return
         }
         await MainActor.run { isRedeeming = true }
@@ -1048,24 +1048,24 @@ struct RewardDetailView: View {
                     rewardsVM.pendingQRSuccess = successData
                 }
                 
-                print("✅ Reward redeemed successfully!")
-                print("🔢 Code: \(response.redemptionCode)")
-                print("💰 New balance: \(response.newPointsBalance)")
+                DebugLogger.debug("✅ Reward redeemed successfully!", category: "Rewards")
+                DebugLogger.debug("🔢 Code: \(response.redemptionCode)", category: "Rewards")
+                DebugLogger.debug("💰 New balance: \(response.newPointsBalance)", category: "Rewards")
                 if let selectedName = response.selectedItemName {
-                    print("🍽️ Selected item: \(selectedName)")
+                    DebugLogger.debug("🍽️ Selected item: \(selectedName)", category: "Rewards")
                 }
                 if let toppingName = response.selectedToppingName {
-                    print("🧋 Selected topping: \(toppingName)")
+                    DebugLogger.debug("🧋 Selected topping: \(toppingName)", category: "Rewards")
                 }
                 if let itemName2 = response.selectedItemName2 {
-                    print("🥟 Second item: \(itemName2)")
+                    DebugLogger.debug("🥟 Second item: \(itemName2)", category: "Rewards")
                 }
                 if let method = response.cookingMethod {
-                    print("🔥 Cooking method: \(method)")
+                    DebugLogger.debug("🔥 Cooking method: \(method)", category: "Rewards")
                 }
                 
             case .failure(let error):
-                print("❌ Redemption failed: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Redemption failed: \(error.localizedDescription)", category: "Rewards")
             }
         }
     }

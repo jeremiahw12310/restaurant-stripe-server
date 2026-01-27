@@ -126,7 +126,7 @@ class PointsHistoryViewModel: ObservableObject {
                     
                     if let error = error {
                         self?.errorMessage = "Error loading transactions: \(error.localizedDescription)"
-                        print("❌ Error loading points transactions: \(error.localizedDescription)")
+                        DebugLogger.debug("❌ Error loading points transactions: \(error.localizedDescription)", category: "Points")
                         return
                     }
                     
@@ -143,7 +143,7 @@ class PointsHistoryViewModel: ObservableObject {
                     // Sort transactions by timestamp in descending order (most recent first)
                     let sortedTransactions = newTransactions.sorted { $0.timestamp > $1.timestamp }
                     self?.transactions = sortedTransactions
-                    print("✅ Loaded \(newTransactions.count) points transactions")
+                    DebugLogger.debug("✅ Loaded \(newTransactions.count) points transactions", category: "Points")
                 }
             }
     }

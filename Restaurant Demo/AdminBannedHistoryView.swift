@@ -152,7 +152,7 @@ class AdminBannedHistoryViewModel: ObservableObject {
                 await loadHistory()
             }
         } catch {
-            print("Cleanup error: \(error.localizedDescription)")
+            DebugLogger.debug("Cleanup error: \(error.localizedDescription)", category: "Admin")
         }
     }
     

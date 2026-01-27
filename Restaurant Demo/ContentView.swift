@@ -156,7 +156,7 @@ struct ContentView: View {
     
     private func trackUserInteraction(for tab: Int) {
         // Analytics tracking for tab interactions
-        print("User switched to tab: \(tab)")
+        DebugLogger.debug("User switched to tab: \(tab)", category: "App")
     }
     
     // MARK: - Referral Code Preload
@@ -168,15 +168,15 @@ struct ContentView: View {
         
         // Check if already cached to avoid unnecessary network calls
         if let _ = ReferralCache.load(userId: uid) {
-            print("✅ Referral code already cached, skipping preload")
+            DebugLogger.debug("✅ Referral code already cached, skipping preload", category: "App")
             return
         }
         
-        print("🔄 Pre-loading referral code for instant access...")
+        DebugLogger.debug("🔄 Pre-loading referral code for instant access...", category: "App")
         
         user.getIDToken { token, err in
             guard let token = token, err == nil else {
-                print("⚠️ Failed to get token for referral preload")
+                DebugLogger.debug("⚠️ Failed to get token for referral preload", category: "App")
                 return
             }
             
@@ -195,13 +195,13 @@ struct ContentView: View {
                       let code = json["code"] as? String,
                       let shareUrl = (json["webUrl"] as? String) ?? (json["shareUrl"] as? String),
                       !code.isEmpty else {
-                    print("⚠️ Failed to preload referral code")
+                    DebugLogger.debug("⚠️ Failed to preload referral code", category: "App")
                     return
                 }
                 
                 // Cache the referral code using the same cache system as ReferralView
                 ReferralCache.save(code: code, shareUrl: shareUrl, userId: uid)
-                print("✅ Referral code preloaded and cached for instant loading")
+                DebugLogger.debug("✅ Referral code preloaded and cached for instant loading", category: "App")
             }.resume()
         }
     }
@@ -279,7 +279,7 @@ fileprivate struct ReferralCache {
         let keys = UserDefaults.standard.dictionaryRepresentation().keys
         for key in keys where key.hasPrefix("referral_cache_") && !key.hasPrefix(cacheKeyPrefix) {
             UserDefaults.standard.removeObject(forKey: key)
-            print("🗑️ Cleared legacy referral cache: \(key)")
+            DebugLogger.debug("🗑️ Cleared legacy referral cache: \(key)", category: "App")
         }
     }
 }

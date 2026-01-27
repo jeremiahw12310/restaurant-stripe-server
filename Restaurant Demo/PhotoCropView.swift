@@ -123,12 +123,12 @@ struct PhotoCropView: View {
     
     private func saveCroppedImage() {
         guard let originalImage = selectedImage else {
-            print("❌ No image to crop")
+            DebugLogger.debug("❌ No image to crop", category: "User")
             dismiss()
             return
         }
         
-        print("✂️ Cropping image with scale: \(scale), offset: \(offset)")
+        DebugLogger.debug("✂️ Cropping image with scale: \(scale), offset: \(offset)", category: "User")
         
         // Create a cropped version of the image
         let croppedImage = cropImage(originalImage)

@@ -220,28 +220,32 @@ struct AdminOverviewView: View {
                     title: "Total Users",
                     value: "\(stats.totalUsers)",
                     icon: "person.fill",
-                    color: .blue
+                    color: .blue,
+                    action: { showUsersSection = true }
                 )
                 
                 AdminStatCard(
                     title: "New Today",
                     value: "\(stats.newUsersToday)",
                     icon: "person.badge.plus",
-                    color: .green
+                    color: .green,
+                    action: { showUsersSection = true }
                 )
                 
                 AdminStatCard(
                     title: "New This Week",
                     value: "\(stats.newUsersThisWeek)",
                     icon: "calendar",
-                    color: .purple
+                    color: .purple,
+                    action: { showUsersSection = true }
                 )
                 
                 AdminStatCard(
                     title: "Points Given",
                     value: formatNumber(stats.totalPointsDistributed),
                     icon: "star.fill",
-                    color: .orange
+                    color: .orange,
+                    action: { showUsersSection = true }
                 )
             }
             
@@ -256,21 +260,24 @@ struct AdminOverviewView: View {
                     title: "Total Scanned",
                     value: "\(stats.totalReceipts)",
                     icon: "doc.text.fill",
-                    color: .green
+                    color: .green,
+                    action: { showReceiptsSection = true }
                 )
                 
                 AdminStatCard(
                     title: "Scanned Today",
                     value: "\(stats.receiptsToday)",
                     icon: "clock.fill",
-                    color: .teal
+                    color: .teal,
+                    action: { showReceiptsSection = true }
                 )
                 
                 AdminStatCard(
                     title: "This Week",
                     value: "\(stats.receiptsThisWeek)",
                     icon: "calendar.badge.clock",
-                    color: .mint
+                    color: .mint,
+                    action: { showReceiptsSection = true }
                 )
             }
             
@@ -285,14 +292,16 @@ struct AdminOverviewView: View {
                     title: "Redeemed This Month",
                     value: "\(stats.totalRewardsRedeemed)",
                     icon: "gift.fill",
-                    color: .purple
+                    color: .purple,
+                    action: { showRewardHistory = true }
                 )
                 
                 AdminStatCard(
                     title: "Redeemed Today",
                     value: "\(stats.rewardsRedeemedToday)",
                     icon: "sparkles",
-                    color: .pink
+                    color: .pink,
+                    action: { showRewardHistory = true }
                 )
             }
         }
@@ -438,33 +447,65 @@ struct AdminStatCard: View {
     let value: String
     let icon: String
     let color: Color
+    let action: (() -> Void)?
+    
+    init(title: String, value: String, icon: String, color: Color, action: (() -> Void)? = nil) {
+        self.title = title
+        self.value = value
+        self.icon = icon
+        self.color = color
+        self.action = action
+    }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(color)
+        Button(action: {
+            action?()
+        }) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Image(systemName: icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(color)
+                    
+                    Spacer()
+                    
+                    if action != nil {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.secondary.opacity(0.6))
+                    }
+                }
                 
-                Spacer()
+                Text(value)
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .foregroundColor(.primary)
+                
+                Text(title)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
             }
-            
-            Text(value)
-                .font(.system(size: 24, weight: .bold, design: .rounded))
-                .foregroundColor(.primary)
-            
-            Text(title)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .lineLimit(1)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.white)
+                    .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
+            )
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white)
-                .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
-        )
+        .buttonStyle(StatCardButtonStyle())
+        .disabled(action == nil)
+    }
+}
+
+// MARK: - Custom Button Style for Stat Cards
+
+struct StatCardButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+            .opacity(configuration.isPressed ? 0.8 : 1.0)
+            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
     }
 }
 

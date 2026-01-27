@@ -22,12 +22,12 @@ struct CategoryDetailView: View {
     /// Disable item selection if explicitly set to view-only OR if this is a toppings category
     private var shouldDisableItemSelection: Bool {
         let isToppings = isViewOnly || category.isToppingCategory || category.id.lowercased().contains("topping")
-        print("🔒 CategoryDetailView - category: \(category.id), isViewOnly: \(isViewOnly), isToppingCategory: \(category.isToppingCategory), shouldDisable: \(isToppings)")
+        DebugLogger.debug("🔒 CategoryDetailView - category: \(category.id), isViewOnly: \(isViewOnly), isToppingCategory: \(category.isToppingCategory), shouldDisable: \(isToppings)", category: "Menu")
         return isToppings
     }
 
     var body: some View {
-        let _ = print("📂 CategoryDetailView BODY - category: \(category.id), isDrinks: \(category.isDrinks), isToppingCategory: \(category.isToppingCategory), shouldDisable: \(shouldDisableItemSelection)")
+        let _ = DebugLogger.debug("📂 CategoryDetailView BODY - category: \(category.id), isDrinks: \(category.isDrinks), isToppingCategory: \(category.isToppingCategory), shouldDisable: \(shouldDisableItemSelection)", category: "Menu")
         ZStack {
             Color.black.ignoresSafeArea()
             // Dumpling rain only for Dumplings category (hidden while loading)
@@ -117,6 +117,7 @@ struct CategoryDetailView: View {
                                     .foregroundColor(.blue)
                                     .font(.system(size: 16, weight: .bold))
                                     
+                                    #if DEBUG
                                     Button("Debug Image URLs") {
                                         menuVM.debugAllImageURLs()
                                     }
@@ -134,6 +135,7 @@ struct CategoryDetailView: View {
                                     }
                                     .foregroundColor(.green)
                                     .font(.system(size: 14, weight: .medium))
+                                    #endif
                                 }
                                 .padding(.bottom, 10)
                             }
@@ -151,7 +153,7 @@ struct CategoryDetailView: View {
                     .padding(.top, 0)
                 }
                 .refreshable {
-                    print("🔄 Pull-to-refresh triggered for category: \(category.id)")
+                    DebugLogger.debug("🔄 Pull-to-refresh triggered for category: \(category.id)", category: "Menu")
                     menuVM.refreshMenu()
                 }
             }

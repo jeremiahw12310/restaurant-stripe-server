@@ -838,7 +838,7 @@ class AddItemToTierViewModel: ObservableObject {
     func loadMenuItems(forceRefresh: Bool = false) {
         // Return in-memory cache immediately if available and not forcing refresh
         if !forceRefresh, let cached = Self.cachedItems, let order = Self.cachedCategoryOrder {
-            print("📦 Using in-memory cached menu items (\(cached.values.reduce(0) { $0 + $1.count }) items)")
+            DebugLogger.debug("📦 Using in-memory cached menu items (\(cached.values.reduce(0) { $0 + $1.count }) items)", category: "Rewards")
             self.itemsByCategory = cached
             self.categoryOrder = order
             self.isLoading = false
@@ -862,7 +862,7 @@ class AddItemToTierViewModel: ObservableObject {
                     if let cachedCategories, !cachedCategories.isEmpty {
                         self.applyMenuCategories(cachedCategories)
                         self.isLoading = false
-                        print("📦 Loaded menu items from disk cache (\(self.allItems.count) items)")
+                        DebugLogger.debug("📦 Loaded menu items from disk cache (\(self.allItems.count) items)", category: "Rewards")
                     }
                 }
                 return
@@ -871,7 +871,7 @@ class AddItemToTierViewModel: ObservableObject {
                     guard let self = self else { return }
                     if let cachedCategories, !cachedCategories.isEmpty {
                         self.applyMenuCategories(cachedCategories)
-                        print("📦 Showing stale cache while refreshing (\(self.allItems.count) items)")
+                        DebugLogger.debug("📦 Showing stale cache while refreshing (\(self.allItems.count) items)", category: "Rewards")
                     }
                 }
             }
@@ -887,7 +887,7 @@ class AddItemToTierViewModel: ObservableObject {
             // Get all categories
             let categoriesSnapshot = try await db.collection("menu").getDocuments()
             let categoryDocs = categoriesSnapshot.documents
-            print("📂 Found \(categoryDocs.count) categories")
+            DebugLogger.debug("📂 Found \(categoryDocs.count) categories", category: "Rewards")
             
             var tempItemsByCategory: [String: [RewardMenuItem]] = [:]
             var categoriesForCache: [MenuCategory] = []
@@ -976,7 +976,7 @@ class AddItemToTierViewModel: ObservableObject {
                         if !items.isEmpty {
                             tempItemsByCategory[categoryId] = items
                             categoriesForCache.append(categoryCache)
-                            print("  📋 Category '\(categoryId)': \(items.count) items")
+                            DebugLogger.debug("  📋 Category '\(categoryId)': \(items.count) items", category: "Rewards")
                         }
                     }
                 }
@@ -995,10 +995,10 @@ class AddItemToTierViewModel: ObservableObject {
             self.isLoading = false
             
             let totalItems = tempItemsByCategory.values.reduce(0) { $0 + $1.count }
-            print("✅ Loaded \(totalItems) items across \(tempCategoryOrder.count) categories")
+            DebugLogger.debug("✅ Loaded \(totalItems) items across \(tempCategoryOrder.count) categories", category: "Rewards")
             
         } catch {
-            print("❌ Error loading menu items: \(error.localizedDescription)")
+            DebugLogger.debug("❌ Error loading menu items: \(error.localizedDescription)", category: "Rewards")
             self.errorMessage = error.localizedDescription
             self.isLoading = false
         }

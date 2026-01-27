@@ -108,7 +108,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         return false
     }
 
-    // Handle Universal Links: https://dumplinghouseapp.com/refer?code=XXXX
+    // Handle Universal Links: https://dumplinghouseapp.com/refer?code=XXXX or https://dumplinghouseapp.web.app/refer?code=XXXX
     func application(_ application: UIApplication,
                      continue userActivity: NSUserActivity,
                      restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void) -> Bool {
@@ -117,7 +117,8 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
             return false
         }
 
-        guard let host = url.host?.lowercased(), host.contains("dumplinghouseapp.com") else {
+        guard let host = url.host?.lowercased(),
+              host.contains("dumplinghouseapp.com") || host.contains("dumplinghouseapp.web.app") else {
             return false
         }
 

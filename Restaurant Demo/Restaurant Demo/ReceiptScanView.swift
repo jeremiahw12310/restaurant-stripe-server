@@ -22,7 +22,8 @@ struct ReceiptScanView: View {
     @State private var receiptTotal: Double = 0.0
     @State private var pointsEarned: Int = 0
     @State private var errorMessage = ""
-    @State private var showPermissionAlert = false
+    @State private var showCameraPermissionScreen = false
+    @State private var cameraPermissionDenied = false
     @State private var scannedText = ""
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.accessibilityReduceMotion) var reduceMotion
@@ -106,20 +107,23 @@ struct ReceiptScanView: View {
                 shouldSwitchToHome = false
             }
         }
-        .alert("Camera Access Required", isPresented: $showPermissionAlert) {
-            Button("Settings") {
-                if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(settingsUrl)
-                }
-            }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Please enable camera access in Settings to scan receipts and earn points.")
+        .sheet(isPresented: $showCameraPermissionScreen) {
+            CameraPrePermissionView(
+                isPermissionDenied: cameraPermissionDenied,
+                onRequestAccess: { requestCameraAccess() },
+                onOpenSettings: { openAppSettings() },
+                onDismiss: { showCameraPermissionScreen = false }
+            )
         }
         .sheet(isPresented: $showCamera) {
             CameraViewWithOverlay(image: $scannedImage) { image in
                 showCamera = false
                 if let image = image {
+                    // Guard: don't process if already processing
+                    guard !isProcessing else {
+                        DebugLogger.debug("⚠️ Image capture ignored - already processing", category: "ReceiptScan")
+                        return
+                    }
                     showLoadingOverlay = true
                     processReceiptImage(image)
                 }
@@ -271,6 +275,7 @@ struct ReceiptScanView: View {
                     }
                     .padding(.horizontal, 24)
 
+                    #if DEBUG
                     // Admin debug toggle: save preprocessed images to Photos to verify cropping
                     VStack(alignment: .leading, spacing: 6) {
                         Toggle(isOn: $savePreprocessedReceiptToPhotosDebug) {
@@ -290,6 +295,7 @@ struct ReceiptScanView: View {
                         }
                     }
                     .padding(.horizontal, 24)
+                    #endif
                 }
 
                 Spacer()
@@ -521,7 +527,7 @@ struct ReceiptScanView: View {
         NotificationCenter.default.post(name: .switchToHomeTab, object: nil)
     }
     
-    private func processReceiptImage(_ image: UIImage) {
+    private func processReceiptImage(_ image: UIImage, onTotalsGateFail: (() -> Void)? = nil) {
         isProcessing = true
         errorMessage = ""
         scannedText = ""
@@ -566,10 +572,20 @@ struct ReceiptScanView: View {
                         self.interstitialTimeoutWorkItem?.cancel()
                         self.interstitialTimeoutWorkItem = nil
                         self.isProcessing = false
-                        self.errorMessage = "Make sure all receipt text is visible and try again."
-                        self.pendingErrorOutcome = .totalsNotVisible
-                        self.interstitialEarlyCutRequested = true
-                        NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
+                        self.showLoadingOverlay = false
+                        if let onTotalsGateFail {
+                            self.interstitialEarlyCutRequested = true
+                            NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
+                            // Small delay to ensure state is reset before reopening camera
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                onTotalsGateFail()
+                            }
+                        } else {
+                            self.errorMessage = "Make sure all receipt text is visible and try again."
+                            self.pendingErrorOutcome = .totalsNotVisible
+                            self.interstitialEarlyCutRequested = true
+                            NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
+                        }
                     }
                     return
                 }
@@ -630,7 +646,7 @@ struct ReceiptScanView: View {
                         // Stop interstitial immediately (bypasses SwiftUI binding delay)
                         NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
 
-                        print("✅ Server awarded receipt points: \(self.pointsEarned), Total: \(self.receiptTotal)")
+                        DebugLogger.debug("✅ Server awarded receipt points: \(self.pointsEarned), Total: \(self.receiptTotal)", category: "ReceiptScan")
                     } else {
                         self.errorMessage = "Unexpected server response. Please try again."
                         let errorOutcome: ReceiptScanOutcome = .server
@@ -683,7 +699,7 @@ struct ReceiptScanView: View {
             
             // Check if there's a pending error outcome (validation failed during interstitial)
             if let errorOutcome = self.pendingErrorOutcome {
-                print("⚠️ Interstitial finished - showing error outcome that occurred during processing")
+                DebugLogger.debug("⚠️ Interstitial finished - showing error outcome that occurred during processing", category: "ReceiptScan")
                 self.pendingErrorOutcome = nil
                 self.presentOutcome(errorOutcome)
                 return
@@ -691,7 +707,7 @@ struct ReceiptScanView: View {
             
             // 🛡️ CRITICAL: Only show success if validation actually passed
             guard self.receiptPassedValidation else {
-                print("⚠️ Interstitial finished but validation didn't pass - no error outcome stored, showing server error")
+                DebugLogger.debug("⚠️ Interstitial finished but validation didn't pass - no error outcome stored, showing server error", category: "ReceiptScan")
                 // Fallback: if somehow we don't have an error outcome, show server error
                 self.presentOutcome(.server)
                 return
@@ -728,7 +744,7 @@ struct ReceiptScanView: View {
         .sink(
             receiveCompletion: { completion in
                 if case .failure(let error) = completion {
-                    print("❌ Combo generation (receipt) failed: \(error)")
+                    DebugLogger.debug("❌ Combo generation (receipt) failed: \(error)", category: "ReceiptScan")
                     self.comboState = .failed
                 }
             },
@@ -1010,21 +1026,47 @@ struct ReceiptScanView: View {
         scannedText = ""
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
+            // Guard: don't open camera if still processing
+            guard !isProcessing else {
+                DebugLogger.debug("⚠️ Camera open blocked - still processing", category: "ReceiptScan")
+                return
+            }
             showCamera = true
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .video) { granted in
-                DispatchQueue.main.async {
-                    if granted {
-                        showCamera = true
-                    } else {
-                        showPermissionAlert = true
+            presentCameraPermissionScreen(isDenied: false)
+        case .denied, .restricted:
+            presentCameraPermissionScreen(isDenied: true)
+        @unknown default:
+            presentCameraPermissionScreen(isDenied: true)
+        }
+    }
+
+    private func presentCameraPermissionScreen(isDenied: Bool) {
+        cameraPermissionDenied = isDenied
+        showCameraPermissionScreen = true
+    }
+
+    private func requestCameraAccess() {
+        AVCaptureDevice.requestAccess(for: .video) { granted in
+            DispatchQueue.main.async {
+                if granted {
+                    self.showCameraPermissionScreen = false
+                    // Guard: don't open camera if still processing
+                    guard !self.isProcessing else {
+                        DebugLogger.debug("⚠️ Camera open blocked - still processing", category: "ReceiptScan")
+                        return
                     }
+                    self.showCamera = true
+                } else {
+                    self.cameraPermissionDenied = true
                 }
             }
-        case .denied, .restricted:
-            showPermissionAlert = true
-        @unknown default:
-            showPermissionAlert = true
+        }
+    }
+
+    private func openAppSettings() {
+        if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(settingsUrl)
         }
     }
     
@@ -1507,7 +1549,7 @@ struct CameraViewWithOverlay: View {
         }
         .onReceive(cameraController.$errorMessage) { errorMessage in
             if let errorMessage = errorMessage {
-                print("📸 Camera error: \(errorMessage)")
+                DebugLogger.debug("📸 Camera error: \(errorMessage)", category: "ReceiptScan")
             }
         }
     }
@@ -1654,6 +1696,14 @@ class CameraController: NSObject, ObservableObject {
     private let quadHoldGraceSeconds: CFTimeInterval = 0.85
     private let lockDelaySeconds: CFTimeInterval = 0.20 // was 0.35
     private var lockedQuad: DetectedQuad? = nil
+    private var statusCandidateText: String? = nil
+    private var statusCandidateSince: CFTimeInterval = 0
+    private let statusHysteresisSeconds: CFTimeInterval = 0.8
+    
+    // Stuck detection
+    private var trackedQuadStartTime: CFTimeInterval = 0
+    private var trackedQuadBestStability: Int = 0
+    private let stuckDetectionTimeout: CFTimeInterval = 3.5
 
     // Auto torch (flashlight) during scanning
     private var lastTorchEvalAt: CFTimeInterval = 0
@@ -1664,6 +1714,15 @@ class CameraController: NSObject, ObservableObject {
     private let torchMinToggleInterval: CFTimeInterval = 0.9
     private let lowLightOnThreshold: Double = 0.20  // 0..1 (lower = darker)
     private let lowLightOffThreshold: Double = 0.28 // hysteresis
+
+    // Pre-capture totals OCR hint (throttled, low-res check)
+    private var lastFastTotalsCheckAt: CFTimeInterval = 0
+    private var lastTotalsCheckAt: CFTimeInterval = 0
+    private var totalsHintCandidate: Bool = false
+    private var totalsHintPassed: Bool = false
+    private let fastTotalsCheckInterval: CFTimeInterval = 0.22 // fast hint (~4.5 fps)
+    private let totalsCheckInterval: CFTimeInterval = 0.30 // full hint (~3.3 fps)
+    private let ocrQueue = DispatchQueue(label: "camera.ocr.totals.queue", qos: .utility)
 
     private enum LiveScanPhase {
         case searching
@@ -1731,6 +1790,22 @@ class CameraController: NSObject, ObservableObject {
             self.errorMessage = nil
         }
         
+        // Reset auto-scan state for clean start
+        phase = .searching
+        stabilityScore = 0
+        hasTriggeredAutoCapture = false
+        totalsHintCandidate = false
+        totalsHintPassed = false
+        lastFastTotalsCheckAt = 0
+        lastTotalsCheckAt = 0
+        trackedQuadRaw = nil
+        smoothedQuad = nil
+        lockedQuad = nil
+        statusCandidateText = nil
+        statusCandidateSince = 0
+        trackedQuadStartTime = 0
+        trackedQuadBestStability = 0
+        
         // Stop any existing session
         if captureSession.isRunning {
             setTorch(on: false)
@@ -1779,7 +1854,7 @@ class CameraController: NSObject, ObservableObject {
                 captureSession.addOutput(videoOutput)
                 videoOutput.setSampleBufferDelegate(self, queue: videoQueue)
             } else {
-                print("⚠️ Cannot add video output; live auto-scan disabled")
+                DebugLogger.debug("⚠️ Cannot add video output; live auto-scan disabled", category: "ReceiptScan")
             }
 
             // Try to keep output orientation portrait for preview; Vision uses explicit orientation below.
@@ -1792,20 +1867,42 @@ class CameraController: NSObject, ObservableObject {
                 self?.captureSession.startRunning()
                 DispatchQueue.main.async {
                     self?.isSetup = true
-                    print("📸 Camera setup completed successfully")
+                    DebugLogger.debug("📸 Camera setup completed successfully", category: "ReceiptScan")
                 }
             }
         } catch {
             DispatchQueue.main.async {
                 self.errorMessage = "Camera setup error: \(error.localizedDescription)"
             }
-            print("📸 Camera setup error: \(error)")
+            DebugLogger.debug("📸 Camera setup error: \(error)", category: "ReceiptScan")
+        }
+    }
+
+    private func applyStatusText(_ text: String, force: Bool = false) {
+        if force {
+            liveScanStatusText = text
+            statusCandidateText = nil
+            return
+        }
+        if text == liveScanStatusText {
+            statusCandidateText = nil
+            return
+        }
+        let now = CACurrentMediaTime()
+        if statusCandidateText != text {
+            statusCandidateText = text
+            statusCandidateSince = now
+            return
+        }
+        if now - statusCandidateSince >= statusHysteresisSeconds {
+            liveScanStatusText = text
+            statusCandidateText = nil
         }
     }
     
     func capturePhoto(completion: @escaping (UIImage?) -> Void) {
         guard captureSession.isRunning else {
-            print("📸 Camera session not running")
+            DebugLogger.debug("📸 Camera session not running", category: "ReceiptScan")
             completion(nil)
             return
         }
@@ -1850,7 +1947,7 @@ class CameraController: NSObject, ObservableObject {
 
             lastTorchChangeAt = now
         } catch {
-            print("⚠️ Torch config failed: \(error.localizedDescription)")
+            DebugLogger.debug("⚠️ Torch config failed: \(error.localizedDescription)", category: "ReceiptScan")
         }
     }
 }
@@ -1858,7 +1955,7 @@ class CameraController: NSObject, ObservableObject {
 extension CameraController: AVCapturePhotoCaptureDelegate {
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
         if let error = error {
-            print("Photo capture error: \(error)")
+            DebugLogger.debug("Photo capture error: \(error)", category: "ReceiptScan")
             completionHandler?(nil)
             return
         }
@@ -1874,6 +1971,104 @@ extension CameraController: AVCapturePhotoCaptureDelegate {
 }
 
 // MARK: - Live auto-scan (video frames → Vision)
+
+extension CameraController {
+    /// Ultra-fast, low-fidelity hint that totals text is likely present.
+    /// Used to unlock the heavier totals check sooner.
+    private func checkFastTotalsHintOnLiveFrame(_ pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, completion: @escaping (Bool) -> Void) {
+        ocrQueue.async { [weak self] in
+            guard let self else {
+                completion(false)
+                return
+            }
+
+            let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+            let context = CIContext()
+            let scale: CGFloat = 0.38 // more aggressive downscale for speed
+            let transform = CGAffineTransform(scaleX: scale, y: scale)
+            let scaledImage = ciImage.transformed(by: transform)
+
+            // Focus on the bottom slice to reduce OCR work.
+            let height = scaledImage.extent.height
+            let cropRect = CGRect(x: 0, y: 0, width: scaledImage.extent.width, height: height * 0.45)
+            guard let cgImage = context.createCGImage(scaledImage, from: cropRect) else {
+                completion(false)
+                return
+            }
+
+            let uiImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: imageOrientation(from: orientation))
+            let hasTotalsHint = fastTotalsHintFromImage(uiImage)
+            completion(hasTotalsHint)
+        }
+    }
+
+    /// Fast, throttled OCR check on live frame to detect totals section before auto-capture.
+    /// Uses downscaled image and bottom region only for speed.
+    private func checkTotalsHintOnLiveFrame(_ pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, completion: @escaping (Bool) -> Void) {
+        ocrQueue.async { [weak self] in
+            guard let self else {
+                completion(false)
+                return
+            }
+            
+            // Convert pixel buffer to CGImage (downscaled for speed)
+            let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+            let context = CIContext()
+            let scale: CGFloat = 0.5 // Downscale to 50% for speed
+            let transform = CGAffineTransform(scaleX: scale, y: scale)
+            let scaledImage = ciImage.transformed(by: transform)
+            
+            guard let cgImage = context.createCGImage(scaledImage, from: scaledImage.extent) else {
+                completion(false)
+                return
+            }
+            
+            // Create UIImage with proper orientation
+            let uiImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: imageOrientation(from: orientation))
+            
+            // Check totals using existing logic (bottom 65% region)
+            let hasTotals = receiptHasSubtotalTaxTotalSync(uiImage)
+            completion(hasTotals)
+        }
+    }
+    
+    /// Convert Vision orientation to UIImage orientation
+    private func imageOrientation(from visionOrientation: CGImagePropertyOrientation) -> UIImage.Orientation {
+        switch visionOrientation {
+        case .up: return .up
+        case .down: return .down
+        case .left: return .left
+        case .right: return .right
+        case .upMirrored: return .upMirrored
+        case .downMirrored: return .downMirrored
+        case .leftMirrored: return .leftMirrored
+        case .rightMirrored: return .rightMirrored
+        @unknown default: return .up
+        }
+    }
+
+    /// Very fast keyword-only OCR hint (no amounts required).
+    private func fastTotalsHintFromImage(_ image: UIImage) -> Bool {
+        guard let cgImage = image.cgImage else { return false }
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .fast
+        request.usesLanguageCorrection = false
+        request.minimumTextHeight = 0.02
+        request.regionOfInterest = CGRect(x: 0.0, y: 0.0, width: 1.0, height: 0.55)
+
+        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
+        do {
+            try handler.perform([request])
+        } catch {
+            return false
+        }
+
+        let strings = request.results?.compactMap { $0.topCandidates(1).first?.string } ?? []
+        let text = strings.joined(separator: " ").lowercased()
+        return text.contains("total") || text.contains("subtotal") || text.contains("sub total") || text.contains("tax")
+    }
+}
 
 extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
@@ -1941,7 +2136,7 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
             } catch {
                 DispatchQueue.main.async {
                     self.detectedReceiptQuad = nil
-                    self.liveScanStatusText = "Finding receipt…"
+                    self.applyStatusText("Finding receipt…", force: true)
                 }
                 return
             }
@@ -1955,24 +2150,32 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                     self.stabilityScore = max(0, self.stabilityScore - 2)
                     DispatchQueue.main.async {
                         if self.hasTriggeredAutoCapture {
-                            self.liveScanStatusText = "Capturing…"
+                            self.applyStatusText("Capturing…", force: true)
                         } else if self.phase == .tracking || self.phase == .locked {
-                            self.liveScanStatusText = "Hold steady…"
+                            self.applyStatusText("Hold steady…")
                         } else {
-                            self.liveScanStatusText = "Finding receipt…"
+                            self.applyStatusText("Finding receipt…", force: true)
                         }
                     }
                 } else {
                     // True loss: reset.
                     self.phase = .searching
                     self.lockedQuad = nil
+                    self.totalsHintCandidate = false
+                    self.totalsHintPassed = false
+                    self.lastFastTotalsCheckAt = 0
+                    self.lastTotalsCheckAt = 0
+                    self.lastFastTotalsCheckAt = 0
+                    self.lastTotalsCheckAt = 0
                     DispatchQueue.main.async {
                         self.detectedReceiptQuad = nil
-                        self.liveScanStatusText = "Finding receipt…"
+                        self.applyStatusText("Finding receipt…", force: true)
                     }
                     self.trackedQuadRaw = nil
                     self.smoothedQuad = nil
                     self.stabilityScore = 0
+                    self.trackedQuadStartTime = 0
+                    self.trackedQuadBestStability = 0
                 }
                 return
             }
@@ -2048,18 +2251,22 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                 if withinGrace {
                     self.stabilityScore = max(0, self.stabilityScore - 2)
                     DispatchQueue.main.async {
-                        self.liveScanStatusText = "Hold steady…"
+                        self.applyStatusText("Hold steady…")
                     }
                 } else {
                     self.phase = .searching
                     self.lockedQuad = nil
+                    self.totalsHintCandidate = false
+                    self.totalsHintPassed = false
                     DispatchQueue.main.async {
                         self.detectedReceiptQuad = nil
-                        self.liveScanStatusText = "Finding receipt…"
+                        self.applyStatusText("Finding receipt…", force: true)
                     }
                     self.trackedQuadRaw = nil
                     self.smoothedQuad = nil
                     self.stabilityScore = 0
+                    self.trackedQuadStartTime = 0
+                    self.trackedQuadBestStability = 0
                 }
                 return
             }
@@ -2095,19 +2302,55 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
             let ambiguous = candidates.count >= 2 && scoreGap / max(1e-6, candidates[0].quad.score) < 0.15 // was 0.10 - less sensitive to close scores
 
             var chosenRaw: DetectedQuad = top.quad
-            if let tracked = self.trackedQuadRaw {
+            let now = CACurrentMediaTime()
+            
+            // Check if we're stuck on the current tracked quad
+            let isStuck = self.trackedQuadRaw != nil &&
+                (now - self.trackedQuadStartTime) > self.stuckDetectionTimeout &&
+                self.stabilityScore < (self.trackedQuadBestStability + 3)
+            
+            if isStuck {
+                // Reset tracking to allow fresh detection
+                self.trackedQuadRaw = nil
+                self.smoothedQuad = nil
+                self.trackedQuadStartTime = 0
+                self.trackedQuadBestStability = 0
+                chosenRaw = top.quad
+            } else if let tracked = self.trackedQuadRaw {
                 // Find the closest candidate to the tracked quad.
                 let closest = candidates.min(by: { avgCornerDelta($0.quad, tracked) < avgCornerDelta($1.quad, tracked) })?.quad
                 if let closest {
                     let delta = avgCornerDelta(closest, tracked)
                     let bestScore = candidates[0].quad.score
                     let trackedScore = tracked.score
+                    
+                    // Get geometry for comparison
+                    let (bestLongSide, bestAspect) = trueQuadDimensions(candidates[0].quad)
+                    let (trackedLongSide, trackedAspect) = trueQuadDimensions(tracked)
+                    let bestArea = candidates[0].area
+                    let trackedArea = Double(tracked.boundingBox.width * tracked.boundingBox.height)
+                    
+                    // Geometry-based switching: prefer larger area and better aspect ratio
+                    let hasBetterGeometry = bestArea > trackedArea * 1.15 && 
+                                          bestAspect < trackedAspect * 1.1 && 
+                                          bestLongSide > trackedLongSide * 1.05
+                    
+                    // Stability-based switching: if stability isn't improving, be more lenient
+                    let stabilityNotImproving = (now - self.trackedQuadStartTime) > 2.0 &&
+                                               self.stabilityScore <= self.trackedQuadBestStability
+                    let stabilityBasedSwitch = stabilityNotImproving && bestScore > trackedScore * 1.10
 
                     // Prefer staying on the same physical receipt (geometric proximity).
                     if delta < 0.060 {
                         chosenRaw = closest
-                    } else if bestScore > trackedScore * 1.20 && !ambiguous { // was 1.35 - more responsive switching
-                        // Only switch if clearly better and not ambiguous.
+                    } else if bestScore > trackedScore * 1.15 && !ambiguous { // Reduced from 1.20
+                        // Switch if clearly better and not ambiguous.
+                        chosenRaw = candidates[0].quad
+                    } else if hasBetterGeometry && !ambiguous {
+                        // Switch if geometry is significantly better (larger, better aspect)
+                        chosenRaw = candidates[0].quad
+                    } else if stabilityBasedSwitch && !ambiguous {
+                        // Switch if stability isn't improving and new candidate is better
                         chosenRaw = candidates[0].quad
                     } else {
                         // Keep tracked to prevent jumping.
@@ -2116,10 +2359,21 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                 } else {
                     chosenRaw = tracked
                 }
+            } else {
+                // No tracked quad - prefer best candidate with good geometry
+                chosenRaw = top.quad
             }
 
+            // Update tracking state when quad changes
+            let previousTracked = self.trackedQuadRaw
             self.trackedQuadRaw = chosenRaw
             self.lastCandidateAt = CACurrentMediaTime()
+            
+            // If we switched to a new quad, reset tracking timers
+            if previousTracked == nil || avgCornerDelta(chosenRaw, previousTracked!) > 0.10 {
+                self.trackedQuadStartTime = now
+                self.trackedQuadBestStability = self.stabilityScore
+            }
 
             // Smooth the quad to remove jitter (EMA with adaptive alpha).
             func lerp(_ a: CGPoint, _ b: CGPoint, _ t: CGFloat) -> CGPoint {
@@ -2158,6 +2412,11 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
             self.lastGoodQuadAt = CACurrentMediaTime()
             if self.phase == .searching {
                 self.phase = .tracking
+                // Reset totals hint when starting to track
+                self.totalsHintCandidate = false
+                self.totalsHintPassed = false
+                self.lastFastTotalsCheckAt = 0
+                self.lastTotalsCheckAt = 0
             }
 
             // Lock behavior: once locked, stop updating the quad (freeze highlight) and commit to capture.
@@ -2165,7 +2424,7 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                 if let locked = self.lockedQuad {
                     DispatchQueue.main.async {
                         self.detectedReceiptQuad = locked
-                        self.liveScanStatusText = "Capturing…"
+                        self.applyStatusText("Capturing…", force: true)
                     }
                 }
                 return
@@ -2180,28 +2439,69 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
             // - stable + unambiguous: ramp up quickly
             // - ambiguous: still gain but slower
             // - unstable: decay slowly
+            let previousStability = self.stabilityScore
             if motionStable && !ambiguous {
-                self.stabilityScore = min(30, self.stabilityScore + 4) // was +3
+                self.stabilityScore = min(30, self.stabilityScore + 5) // faster ramp when steady
             } else if motionStable && ambiguous {
-                self.stabilityScore = min(30, self.stabilityScore + 2) // allow gains even when ambiguous
+                self.stabilityScore = min(30, self.stabilityScore + 3) // allow gains even when ambiguous
             } else if ambiguous {
                 self.stabilityScore = max(0, self.stabilityScore - 1)
             } else {
-                self.stabilityScore = max(0, self.stabilityScore - 2)
+                self.stabilityScore = max(0, self.stabilityScore - 1)
+            }
+            
+            // Update best stability if we improved
+            if self.stabilityScore > previousStability && self.stabilityScore > self.trackedQuadBestStability {
+                self.trackedQuadBestStability = self.stabilityScore
             }
 
-            DispatchQueue.main.async {
-                self.detectedReceiptQuad = publishQuad
-                if self.hasTriggeredAutoCapture {
-                    self.liveScanStatusText = "Capturing…"
-                } else if self.stabilityScore >= 18 {
-                    self.liveScanStatusText = "Hold steady…"
-                } else {
-                    self.liveScanStatusText = "Finding receipt…"
+            // Fast totals hint first, then full hint (throttled)
+            if self.stabilityScore >= 12 && !self.totalsHintCandidate && !self.hasTriggeredAutoCapture {
+                if (now - self.lastFastTotalsCheckAt) >= self.fastTotalsCheckInterval {
+                    self.lastFastTotalsCheckAt = now
+                    self.checkFastTotalsHintOnLiveFrame(pixelBuffer, orientation: orientation) { [weak self] hasTotalsHint in
+                        guard let self else { return }
+                        DispatchQueue.main.async {
+                            self.totalsHintCandidate = hasTotalsHint
+                            if !hasTotalsHint {
+                                self.totalsHintPassed = false
+                            }
+                        }
+                    }
                 }
             }
 
-            // Trigger auto-capture once stable enough and reasonably "receipt-like" in the frame.
+            let shouldCheckTotals = self.totalsHintCandidate &&
+                self.stabilityScore >= 15 &&
+                (now - self.lastTotalsCheckAt) >= self.totalsCheckInterval
+
+            if shouldCheckTotals && !self.hasTriggeredAutoCapture {
+                self.lastTotalsCheckAt = now
+                self.checkTotalsHintOnLiveFrame(pixelBuffer, orientation: orientation) { [weak self] hasTotals in
+                    guard let self else { return }
+                    DispatchQueue.main.async {
+                        self.totalsHintPassed = hasTotals
+                    }
+                }
+            }
+            
+            DispatchQueue.main.async {
+                self.detectedReceiptQuad = publishQuad
+                if self.hasTriggeredAutoCapture {
+                    self.applyStatusText("Capturing…", force: true)
+                } else if self.stabilityScore >= 18 {
+                    // Guide user if totals are missing
+                    if self.totalsHintPassed || self.totalsHintCandidate {
+                        self.applyStatusText("Hold steady…")
+                    } else {
+                        self.applyStatusText("Move receipt down to include totals")
+                    }
+                } else {
+                    self.applyStatusText("Finding receipt…", force: true)
+                }
+            }
+
+            // Trigger auto-capture once stable enough and receipt-like.
             if self.stabilityScore >= 18 && !self.hasTriggeredAutoCapture { // was 24
                 // Use true quad geometry (rotation-invariant) for gating tilted receipts.
                 let (trueLongSide, trueAspect) = trueQuadDimensions(publishQuad)
@@ -2212,7 +2512,7 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                     self.hasTriggeredAutoCapture = true
                     DispatchQueue.main.async {
                         self.detectedReceiptQuad = publishQuad
-                        self.liveScanStatusText = "Capturing…"
+                        self.applyStatusText("Capturing…", force: true)
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + self.lockDelaySeconds) {
                         // If something external cancelled auto scan, respect it.
@@ -2262,35 +2562,35 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
 
 func uploadReceiptImage(_ image: UIImage, completion: @escaping (Result<[String: Any], Error>) -> Void) {
     let urlString = "\(Config.backendURL)/submit-receipt"
-    print("📤 Uploading receipt to: \(urlString)")
+    DebugLogger.debug("📤 Uploading receipt to: \(urlString)", category: "ReceiptScan")
     
     guard let url = URL(string: urlString) else {
-        print("❌ Invalid URL: \(urlString)")
+        DebugLogger.debug("❌ Invalid URL: \(urlString)", category: "ReceiptScan")
         completion(.failure(NSError(domain: "Invalid URL", code: 0)))
         return
     }
     
     guard let imageData = image.jpegData(compressionQuality: 0.8) else {
-        print("❌ Failed to convert image to JPEG data")
+        DebugLogger.debug("❌ Failed to convert image to JPEG data", category: "ReceiptScan")
         completion(.failure(NSError(domain: "Image conversion failed", code: 0)))
         return
     }
     
     guard let currentUser = Auth.auth().currentUser else {
-        print("❌ No authenticated user found when uploading receipt")
+        DebugLogger.debug("❌ No authenticated user found when uploading receipt", category: "ReceiptScan")
         completion(.failure(NSError(domain: "Auth", code: 401, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])))
         return
     }
     
     currentUser.getIDToken { token, error in
         if let error = error {
-            print("❌ Failed to get ID token: \(error.localizedDescription)")
+            DebugLogger.debug("❌ Failed to get ID token: \(error.localizedDescription)", category: "ReceiptScan")
             completion(.failure(error))
             return
         }
         
         guard let token = token else {
-            print("❌ ID token is nil")
+            DebugLogger.debug("❌ ID token is nil", category: "ReceiptScan")
             completion(.failure(NSError(domain: "Auth", code: 401, userInfo: [NSLocalizedDescriptionKey: "Unable to get auth token"])))
             return
         }
@@ -2319,7 +2619,7 @@ func uploadReceiptImage(_ image: UIImage, completion: @escaping (Result<[String:
         // Set the content length
         request.setValue("\(body.count)", forHTTPHeaderField: "Content-Length")
         
-        print("📤 Request body size: \(body.count) bytes")
+        DebugLogger.debug("📤 Request body size: \(body.count) bytes", category: "ReceiptScan")
         
         // Use a session with better connectivity behavior
         let config = URLSessionConfiguration.default
@@ -2329,7 +2629,7 @@ func uploadReceiptImage(_ image: UIImage, completion: @escaping (Result<[String:
         let session = URLSession(configuration: config)
         session.uploadTask(with: request, from: body) { data, response, error in
             if let error = error {
-                print("❌ Network error: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Network error: \(error.localizedDescription)", category: "ReceiptScan")
                 DispatchQueue.main.async { completion(.failure(error)) }
                 return
             }
@@ -2337,18 +2637,18 @@ func uploadReceiptImage(_ image: UIImage, completion: @escaping (Result<[String:
             var statusCode: Int = -1
             if let httpResponse = response as? HTTPURLResponse {
                 statusCode = httpResponse.statusCode
-                print("📡 HTTP Status: \(statusCode)")
+                DebugLogger.debug("📡 HTTP Status: \(statusCode)", category: "ReceiptScan")
             }
             
             guard let data = data else {
-                print("❌ No response data received")
+                DebugLogger.debug("❌ No response data received", category: "ReceiptScan")
                 DispatchQueue.main.async { completion(.failure(NSError(domain: "No data", code: 0))) }
                 return
             }
             
             // Print response for debugging
             if let responseString = String(data: data, encoding: .utf8) {
-                print("📥 Response: \(responseString)")
+                DebugLogger.debug("📥 Response: \(responseString)", category: "ReceiptScan")
             }
             
             // If non-2xx, attempt to surface a server error as JSON for better UX mapping
@@ -2358,12 +2658,12 @@ func uploadReceiptImage(_ image: UIImage, completion: @escaping (Result<[String:
                     if enriched["error"] == nil {
                         enriched["error"] = "Server error \(statusCode)"
                     }
-                    print("⚠️ Non-2xx with JSON body, surfacing as error: \(enriched)")
+                    DebugLogger.debug("⚠️ Non-2xx with JSON body, surfacing as error: \(enriched)", category: "ReceiptScan")
                     DispatchQueue.main.async { completion(.success(enriched)) }
                     return
                 } else {
                     let message = "Server error \(statusCode)"
-                    print("⚠️ Non-2xx without JSON body, surfacing generic error: \(message)")
+                    DebugLogger.debug("⚠️ Non-2xx without JSON body, surfacing generic error: \(message)", category: "ReceiptScan")
                     DispatchQueue.main.async { completion(.success(["error": message])) }
                     return
                 }
@@ -2371,14 +2671,14 @@ func uploadReceiptImage(_ image: UIImage, completion: @escaping (Result<[String:
 
             do {
                 if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    print("✅ Successfully parsed JSON response")
+                    DebugLogger.debug("✅ Successfully parsed JSON response", category: "ReceiptScan")
                     DispatchQueue.main.async { completion(.success(json)) }
                 } else {
-                    print("❌ Failed to parse JSON response")
+                    DebugLogger.debug("❌ Failed to parse JSON response", category: "ReceiptScan")
                     DispatchQueue.main.async { completion(.failure(NSError(domain: "Invalid JSON", code: 0))) }
                 }
             } catch {
-                print("❌ JSON parsing error: \(error.localizedDescription)")
+                DebugLogger.debug("❌ JSON parsing error: \(error.localizedDescription)", category: "ReceiptScan")
                 DispatchQueue.main.async { completion(.failure(error)) }
             }
         }.resume()
@@ -2445,9 +2745,9 @@ private func preprocessReceiptImageForUpload(_ image: UIImage, debugSaveToPhotos
             // This is still guarded by the Subtotal/Tax/Total OCR gate upstream (fail closed).
             let heuristic = heuristicTextCropReceipt(downscaled, debugLog: debugSaveToPhotos)
             if heuristic != nil {
-                print("🧾 Receipt preprocessing fallback: using heuristic text crop (no rectangle detected)")
+                DebugLogger.debug("🧾 Receipt preprocessing fallback: using heuristic text crop (no rectangle detected)", category: "ReceiptScan")
             } else {
-                print("🧾 Receipt preprocessing skipped (no rectangle detected) - using original image")
+                DebugLogger.debug("🧾 Receipt preprocessing skipped (no rectangle detected) - using original image", category: "ReceiptScan")
             }
             if debugSaveToPhotos {
                 saveToPhotoLibrary(downscaled, label: "receipt-debug-original")
@@ -2458,7 +2758,7 @@ private func preprocessReceiptImageForUpload(_ image: UIImage, debugSaveToPhotos
             DispatchQueue.main.async { completion(heuristic ?? downscaled) }
             return
         }
-        print("🧾 Receipt preprocessing succeeded - using cropped/perspective-corrected image")
+        DebugLogger.debug("🧾 Receipt preprocessing succeeded - using cropped/perspective-corrected image", category: "ReceiptScan")
         if debugSaveToPhotos {
             saveToPhotoLibrary(processed, label: "receipt-debug-processed")
         }
@@ -2481,7 +2781,7 @@ private func heuristicTextCropReceipt(_ image: UIImage, debugLog: Bool) -> UIIma
         try handler.perform([request])
     } catch {
         if debugLog {
-            print("🧾 Heuristic text crop OCR error: \(error)")
+            DebugLogger.debug("🧾 Heuristic text crop OCR error: \(error)", category: "ReceiptScan")
         }
         return nil
     }
@@ -2528,7 +2828,7 @@ private func heuristicTextCropReceipt(_ image: UIImage, debugLog: Bool) -> UIIma
     guard let croppedCG = cgImage.cropping(to: rect) else { return nil }
 
     if debugLog {
-        print("🧾 Heuristic text crop: cropRect=\(rect) from (\(cgImage.width)x\(cgImage.height))")
+        DebugLogger.debug("🧾 Heuristic text crop: cropRect=\(rect) from (\(cgImage.width)x\(cgImage.height))", category: "ReceiptScan")
     }
     return UIImage(cgImage: croppedCG, scale: 1.0, orientation: .up)
 }
@@ -2581,7 +2881,7 @@ private func detectAndCorrectReceipt(in image: UIImage, debugLog: Bool) -> UIIma
     do {
         try handler.perform([request])
     } catch {
-        print("🧾 Rectangle detection error: \(error)")
+        DebugLogger.debug("🧾 Rectangle detection error: \(error)", category: "ReceiptScan")
         return nil
     }
 
@@ -2638,7 +2938,7 @@ private func detectAndCorrectReceipt(in image: UIImage, debugLog: Bool) -> UIIma
 
     if tooSquare || (areaTooSmall && !looksLikeLongReceipt) {
         if debugLog {
-            print("🧾 Receipt preprocessing guard: rejecting best rectangle (area=\(String(format: "%.3f", area)), aspect=\(String(format: "%.3f", aspect)), longSide=\(String(format: "%.3f", longSide)), conf=\(String(format: "%.2f", rect.confidence)))")
+            DebugLogger.debug("🧾 Receipt preprocessing guard: rejecting best rectangle (area=\(String(format: "%.3f", area)), aspect=\(String(format: "%.3f", aspect)), longSide=\(String(format: "%.3f", longSide)), conf=\(String(format: "%.2f", rect.confidence)))", category: "ReceiptScan")
         }
         return nil
     }
@@ -2660,7 +2960,7 @@ private func detectAndCorrectReceipt(in image: UIImage, debugLog: Bool) -> UIIma
     var bottomRight = denorm(rect.bottomRight)
 
     // Inflate the quad so we don't clip header/totals due to tight detection.
-    // Add bottom padding as well to reduce the chance of cropping out Subtotal/Tax/Total.
+    // Add extra bottom padding to ensure Subtotal/Tax/Total section is never cropped.
     (topLeft, topRight, bottomLeft, bottomRight) = inflateQuadWithVerticalPadding(
         topLeft: topLeft,
         topRight: topRight,
@@ -2668,7 +2968,7 @@ private func detectAndCorrectReceipt(in image: UIImage, debugLog: Bool) -> UIIma
         bottomRight: bottomRight,
         scale: 1.08,
         extraTopPaddingFraction: 0.10,
-        extraBottomPaddingFraction: 0.14,
+        extraBottomPaddingFraction: 0.26, // Increased to protect totals section
         bounds: extent
     )
 
@@ -2811,7 +3111,7 @@ private func requestPhotoLibraryAddPermissionIfNeeded() {
         case .notDetermined:
             PHPhotoLibrary.requestAuthorization(for: .addOnly) { _ in }
         default:
-            print("📷 Photo library add-only permission not granted; debug saves may fail.")
+            DebugLogger.debug("📷 Photo library add-only permission not granted; debug saves may fail.", category: "ReceiptScan")
         }
     } else {
         let status = PHPhotoLibrary.authorizationStatus()
@@ -2821,7 +3121,7 @@ private func requestPhotoLibraryAddPermissionIfNeeded() {
         case .notDetermined:
             PHPhotoLibrary.requestAuthorization { _ in }
         default:
-            print("📷 Photo library permission not granted; debug saves may fail.")
+            DebugLogger.debug("📷 Photo library permission not granted; debug saves may fail.", category: "ReceiptScan")
         }
     }
 }
@@ -2830,7 +3130,7 @@ private func saveToPhotoLibrary(_ image: UIImage, label: String) {
     // Use UIImageWriteToSavedPhotosAlbum for simplicity; the label is logged only.
     DispatchQueue.main.async {
         UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
-        print("📷 Saved \(label) image to Photos (\(Int(image.size.width))x\(Int(image.size.height)))")
+        DebugLogger.debug("📷 Saved \(label) image to Photos (\(Int(image.size.width))x\(Int(image.size.height)))", category: "ReceiptScan")
     }
 }
 

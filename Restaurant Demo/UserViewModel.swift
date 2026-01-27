@@ -80,7 +80,7 @@ class UserViewModel: ObservableObject {
     
     deinit {
         // Performance: Log deinit for memory leak tracking
-        print("🧹 UserViewModel deinit - cleaning up listeners")
+        DebugLogger.debug("🧹 UserViewModel deinit - cleaning up listeners", category: "User")
         stopUserListener()
     }
     
@@ -95,10 +95,10 @@ class UserViewModel: ObservableObject {
         // DEBUG (temporary): Log which Firebase Auth user is active on-device.
         // Remove after diagnosing duplicate/test-user behavior.
         if let user = Auth.auth().currentUser {
-            print("🔎 AUTH uid:", user.uid)
-            print("🔎 AUTH phone:", user.phoneNumber ?? "nil")
+            DebugLogger.debug("🔎 AUTH uid: \(user.uid)", category: "User")
+            DebugLogger.debug("🔎 AUTH phone: \(user.phoneNumber ?? "nil")", category: "User")
         } else {
-            print("🔎 AUTH user is nil")
+            DebugLogger.debug("🔎 AUTH user is nil", category: "User")
         }
         
         // Avoid stacking duplicate snapshot listeners (a common source of UI churn/stutter).
@@ -115,7 +115,7 @@ class UserViewModel: ObservableObject {
             // Using a snapshot listener will update the UI in real-time if the data changes.
             guard let self = self else { return }
             if let error = error {
-                print("Error loading user data: \(error.localizedDescription)")
+                DebugLogger.debug("Error loading user data: \(error.localizedDescription)", category: "User")
                 DispatchQueue.main.async { self.isLoading = false }
                 return
             }
@@ -125,10 +125,10 @@ class UserViewModel: ObservableObject {
             // EXCEPT: if we're intentionally deleting the account, don't interrupt the deletion flow.
             if let snapshot = snapshot, snapshot.exists == false {
                 if self.isDeletingAccount {
-                    print("ℹ️ UserViewModel: User doc missing during intentional deletion - this is expected, not forcing logout.")
+                    DebugLogger.debug("ℹ️ UserViewModel: User doc missing during intentional deletion - this is expected, not forcing logout.", category: "User")
                     return
                 }
-                print("❌ UserViewModel: users/\(uid) doc missing. Forcing logout to avoid half-signed-in state.")
+                DebugLogger.debug("❌ UserViewModel: users/\(uid) doc missing. Forcing logout to avoid half-signed-in state.", category: "User")
                 DispatchQueue.main.async {
                     self.isLoading = false
                     UserDefaults.standard.set(false, forKey: "isLoggedIn")
@@ -138,7 +138,7 @@ class UserViewModel: ObservableObject {
             }
 
             guard let data = snapshot?.data(), !data.isEmpty else {
-                print("No user data found.")
+                DebugLogger.debug("No user data found.", category: "User")
                 DispatchQueue.main.async { self.isLoading = false }
                 return
             }
@@ -162,7 +162,7 @@ class UserViewModel: ObservableObject {
                 let isBanned = data["isBanned"] as? Bool ?? false
                 self.isBanned = isBanned
                 if isBanned {
-                    print("⚠️ UserViewModel: User is banned. LaunchView will show deletion screen.")
+                    DebugLogger.debug("⚠️ UserViewModel: User is banned. LaunchView will show deletion screen.", category: "User")
                 }
                 
                 // Load account creation date
@@ -189,7 +189,7 @@ class UserViewModel: ObservableObject {
                 if let photoURL = self.profilePhotoURL, !photoURL.isEmpty {
                     if self.lastLoadedProfilePhotoURL != photoURL || self.profileImage == nil {
                         self.lastLoadedProfilePhotoURL = photoURL
-                        print("🖼️ Loading profile image from URL: \(photoURL)")
+                        DebugLogger.debug("🖼️ Loading profile image from URL: \(photoURL)", category: "User")
                         self.loadProfileImage(from: photoURL)
                     }
                 } else {
@@ -229,7 +229,7 @@ class UserViewModel: ObservableObject {
     /// The UI toggle binds to `oldReceiptTestingEnabled` and calls this to persist changes.
     func updateOldReceiptTestingEnabled(_ enabled: Bool) {
         guard let uid = Auth.auth().currentUser?.uid else {
-            print("❌ Cannot update oldReceiptTestingEnabled - no authenticated user")
+            DebugLogger.debug("❌ Cannot update oldReceiptTestingEnabled - no authenticated user", category: "User")
             return
         }
         let db = Firestore.firestore()
@@ -237,9 +237,9 @@ class UserViewModel: ObservableObject {
             "oldReceiptTestingEnabled": enabled
         ]) { error in
             if let error = error {
-                print("❌ Failed to update oldReceiptTestingEnabled: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Failed to update oldReceiptTestingEnabled: \(error.localizedDescription)", category: "User")
             } else {
-                print("✅ oldReceiptTestingEnabled updated to \(enabled) for user \(uid)")
+                DebugLogger.debug("✅ oldReceiptTestingEnabled updated to \(enabled) for user \(uid)", category: "User")
             }
         }
     }
@@ -322,12 +322,12 @@ class UserViewModel: ObservableObject {
                         }
                     }, completion: { result, error in
                         if let error = error {
-                            print("❌ Failed to write referral award seen marker: \(error.localizedDescription)")
+                            DebugLogger.debug("❌ Failed to write referral award seen marker: \(error.localizedDescription)", category: "User")
                             return
                         }
                         // Only post notification if transaction returned true (new, not already seen)
                         guard let shouldPost = result as? Bool, shouldPost else {
-                            print("ℹ️ Referral award already seen, skipping popup")
+                            DebugLogger.debug("ℹ️ Referral award already seen, skipping popup", category: "User")
                             return
                         }
                         DispatchQueue.main.async {
@@ -344,23 +344,23 @@ class UserViewModel: ObservableObject {
     
     func uploadProfilePhoto(_ image: UIImage, completion: @escaping (Bool) -> Void) {
         guard let uid = Auth.auth().currentUser?.uid else {
-            print("❌ No user ID for photo upload")
+            DebugLogger.debug("❌ No user ID for photo upload", category: "User")
             completion(false)
             return
         }
         
-        print("📤 Starting photo upload for user: \(uid)")
+        DebugLogger.debug("📤 Starting photo upload for user: \(uid)", category: "User")
         isUploadingPhoto = true
         
         // Compress image
         guard let imageData = image.jpegData(compressionQuality: 0.8) else {
-            print("❌ Failed to compress image")
+            DebugLogger.debug("❌ Failed to compress image", category: "User")
             isUploadingPhoto = false
             completion(false)
             return
         }
         
-        print("📦 Image compressed, size: \(imageData.count) bytes")
+        DebugLogger.debug("📦 Image compressed, size: \(imageData.count) bytes", category: "User")
         
         let storage = Storage.storage()
         let storageRef = storage.reference()
@@ -372,39 +372,39 @@ class UserViewModel: ObservableObject {
         photoRef.putData(imageData, metadata: metadata) { metadata, error in
             DispatchQueue.main.async {
                 if let error = error {
-                    print("❌ Error uploading photo: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ Error uploading photo: \(error.localizedDescription)", category: "User")
                     self.isUploadingPhoto = false
                     completion(false)
                     return
                 }
                 
-                print("📤 Photo uploaded to Storage successfully")
+                DebugLogger.debug("📤 Photo uploaded to Storage successfully", category: "User")
                 
                 // Get download URL
                 photoRef.downloadURL { url, error in
                     DispatchQueue.main.async {
                         if let error = error {
-                            print("❌ Error getting download URL: \(error.localizedDescription)")
+                            DebugLogger.debug("❌ Error getting download URL: \(error.localizedDescription)", category: "User")
                             self.isUploadingPhoto = false
                             completion(false)
                             return
                         }
                         
                         if let downloadURL = url {
-                            print("🔗 Got download URL: \(downloadURL.absoluteString)")
+                            DebugLogger.debug("🔗 Got download URL: \(downloadURL.absoluteString)", category: "User")
                             // Save URL to Firestore
                             self.saveProfilePhotoURL(downloadURL.absoluteString) { success in
                                 self.isUploadingPhoto = false
                                 if success {
-                                    print("✅ Profile photo URL saved to Firestore")
+                                    DebugLogger.debug("✅ Profile photo URL saved to Firestore", category: "User")
                                     self.profilePhotoURL = downloadURL.absoluteString
                                     self.profileImage = image
-                                    print("🖼️ Profile image updated locally: \(self.profileImage != nil)")
+                                    DebugLogger.debug("🖼️ Profile image updated locally: \(self.profileImage != nil)", category: "User")
                                 }
                                 completion(success)
                             }
                         } else {
-                            print("❌ Failed to get download URL")
+                            DebugLogger.debug("❌ Failed to get download URL", category: "User")
                             self.isUploadingPhoto = false
                             completion(false)
                         }
@@ -426,15 +426,15 @@ class UserViewModel: ObservableObject {
         ]) { error in
             DispatchQueue.main.async {
                 if let error = error {
-                    print("Error saving photo URL: \(error.localizedDescription)")
+                    DebugLogger.debug("Error saving photo URL: \(error.localizedDescription)", category: "User")
                     completion(false)
                 } else {
                     // Update all existing posts and replies to include the new profile photo URL
                     self.updateProfilePhotoInAllPosts(userId: uid, profilePhotoURL: url) { success in
                         if success {
-                            print("✅ Successfully updated profile photo in all community posts")
+                            DebugLogger.debug("✅ Successfully updated profile photo in all community posts", category: "User")
                         } else {
-                            print("⚠️ Failed to update some community posts with new profile photo")
+                            DebugLogger.debug("⚠️ Failed to update some community posts with new profile photo", category: "User")
                         }
                         completion(true) // Continue regardless of community update success
                     }
@@ -445,25 +445,25 @@ class UserViewModel: ObservableObject {
     
     private func loadProfileImage(from urlString: String) {
         guard let url = URL(string: urlString) else { 
-            print("❌ Invalid URL: \(urlString)")
+            DebugLogger.debug("❌ Invalid URL: \(urlString)", category: "User")
             return 
         }
         
-        print("🖼️ Loading image from URL: \(url)")
+        DebugLogger.debug("🖼️ Loading image from URL: \(url)", category: "User")
         
         URLSession.shared.dataTask(with: url) { data, response, error in
             DispatchQueue.main.async {
                 if let error = error {
-                    print("❌ Error loading image: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ Error loading image: \(error.localizedDescription)", category: "User")
                     return
                 }
                 
                 if let data = data, let image = UIImage(data: data) {
-                    print("✅ Image loaded successfully, size: \(data.count) bytes")
+                    DebugLogger.debug("✅ Image loaded successfully, size: \(data.count) bytes", category: "User")
                     self.profileImage = image
-                    print("🖼️ Profile image set: \(self.profileImage != nil)")
+                    DebugLogger.debug("🖼️ Profile image set: \(self.profileImage != nil)", category: "User")
                 } else {
-                    print("❌ Failed to create image from data")
+                    DebugLogger.debug("❌ Failed to create image from data", category: "User")
                 }
             }
         }.resume()
@@ -484,7 +484,7 @@ class UserViewModel: ObservableObject {
             photoRef.delete { error in
                 DispatchQueue.main.async {
                     if let error = error {
-                        print("Error deleting photo: \(error.localizedDescription)")
+                        DebugLogger.debug("Error deleting photo: \(error.localizedDescription)", category: "User")
                     }
                     
                     // Remove from Firestore
@@ -494,7 +494,7 @@ class UserViewModel: ObservableObject {
                     ]) { error in
                         DispatchQueue.main.async {
                             if let error = error {
-                                print("Error removing photo URL: \(error.localizedDescription)")
+                                DebugLogger.debug("Error removing photo URL: \(error.localizedDescription)", category: "User")
                                 completion(false)
                             } else {
                                 self.profilePhotoURL = nil
@@ -503,9 +503,9 @@ class UserViewModel: ObservableObject {
                                 // Clear profile photo URL from all existing posts and replies
                                 self.clearProfilePhotoFromAllPosts(userId: uid) { success in
                                     if success {
-                                        print("✅ Successfully cleared profile photo from all community posts")
+                                        DebugLogger.debug("✅ Successfully cleared profile photo from all community posts", category: "User")
                                     } else {
-                                        print("⚠️ Failed to clear some community posts")
+                                        DebugLogger.debug("⚠️ Failed to clear some community posts", category: "User")
                                     }
                                     completion(true) // Continue regardless of community update success
                                 }
@@ -522,7 +522,7 @@ class UserViewModel: ObservableObject {
     // MARK: - Force Refresh Methods
     
     func forceRefreshProfileImage() {
-        print("🔄 Force refreshing profile image")
+        DebugLogger.debug("🔄 Force refreshing profile image", category: "User")
         if let photoURL = profilePhotoURL {
             loadProfileImage(from: photoURL)
         } else {
@@ -531,7 +531,7 @@ class UserViewModel: ObservableObject {
     }
     
     func clearProfileImageCache() {
-        print("🗑️ Clearing profile image cache")
+        DebugLogger.debug("🗑️ Clearing profile image cache", category: "User")
         profileImage = nil
     }
     
@@ -544,13 +544,13 @@ class UserViewModel: ObservableObject {
         // Update all posts by this user
         db.collection("posts").whereField("userId", isEqualTo: userId).getDocuments { snapshot, error in
             if let error = error {
-                print("❌ Error fetching user posts: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Error fetching user posts: \(error.localizedDescription)", category: "User")
                 completion(false)
                 return
             }
             
             guard let documents = snapshot?.documents else {
-                print("✅ No posts found for user")
+                DebugLogger.debug("✅ No posts found for user", category: "User")
                 completion(true)
                 return
             }
@@ -575,10 +575,10 @@ class UserViewModel: ObservableObject {
                     batch.commit { error in
                         DispatchQueue.main.async {
                             if let error = error {
-                                print("❌ Error updating posts: \(error.localizedDescription)")
+                                DebugLogger.debug("❌ Error updating posts: \(error.localizedDescription)", category: "User")
                                 completion(false)
                             } else {
-                                print("✅ Successfully updated \(documents.count) posts for user")
+                                DebugLogger.debug("✅ Successfully updated \(documents.count) posts for user", category: "User")
                                 completion(true)
                             }
                         }
@@ -595,13 +595,13 @@ class UserViewModel: ObservableObject {
         let db = Firestore.firestore()
         db.collection("posts").getDocuments { snapshot, error in
             if let error = error {
-                print("❌ Error fetching posts for reply updates: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Error fetching posts for reply updates: \(error.localizedDescription)", category: "User")
                 completion(false)
                 return
             }
             
             guard let postDocuments = snapshot?.documents else {
-                print("✅ No posts found for reply updates")
+                DebugLogger.debug("✅ No posts found for reply updates", category: "User")
                 completion(true)
                 return
             }
@@ -617,7 +617,7 @@ class UserViewModel: ObservableObject {
                     defer { group.leave() }
                     
                     if let replyError = replyError {
-                        print("❌ Error fetching replies for post \(postDoc.documentID): \(replyError.localizedDescription)")
+                        DebugLogger.debug("❌ Error fetching replies for post \(postDoc.documentID): \(replyError.localizedDescription)", category: "User")
                         hasErrors = true
                         return
                     }
@@ -639,10 +639,10 @@ class UserViewModel: ObservableObject {
                     
                     replyBatch.commit { batchError in
                         if let batchError = batchError {
-                            print("❌ Error updating replies for post \(postDoc.documentID): \(batchError.localizedDescription)")
+                            DebugLogger.debug("❌ Error updating replies for post \(postDoc.documentID): \(batchError.localizedDescription)", category: "User")
                             hasErrors = true
                         } else if !replyDocuments.isEmpty {
-                            print("✅ Updated \(replyDocuments.count) replies for post \(postDoc.documentID)")
+                            DebugLogger.debug("✅ Updated \(replyDocuments.count) replies for post \(postDoc.documentID)", category: "User")
                         }
                     }
                 }
@@ -661,13 +661,13 @@ class UserViewModel: ObservableObject {
         // Update all posts by this user
         db.collection("posts").whereField("userId", isEqualTo: userId).getDocuments { snapshot, error in
             if let error = error {
-                print("❌ Error fetching user posts: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Error fetching user posts: \(error.localizedDescription)", category: "User")
                 completion(false)
                 return
             }
             
             guard let documents = snapshot?.documents else {
-                print("✅ No posts found for user")
+                DebugLogger.debug("✅ No posts found for user", category: "User")
                 completion(true)
                 return
             }
@@ -692,10 +692,10 @@ class UserViewModel: ObservableObject {
                     batch.commit { error in
                         DispatchQueue.main.async {
                             if let error = error {
-                                print("❌ Error updating posts: \(error.localizedDescription)")
+                                DebugLogger.debug("❌ Error updating posts: \(error.localizedDescription)", category: "User")
                                 completion(false)
                             } else {
-                                print("✅ Successfully cleared profile photo from \(documents.count) posts for user")
+                                DebugLogger.debug("✅ Successfully cleared profile photo from \(documents.count) posts for user", category: "User")
                                 completion(true)
                             }
                         }
@@ -712,13 +712,13 @@ class UserViewModel: ObservableObject {
         let db = Firestore.firestore()
         db.collection("posts").getDocuments { snapshot, error in
             if let error = error {
-                print("❌ Error fetching posts for reply updates: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Error fetching posts for reply updates: \(error.localizedDescription)", category: "User")
                 completion(false)
                 return
             }
             
             guard let postDocuments = snapshot?.documents else {
-                print("✅ No posts found for reply updates")
+                DebugLogger.debug("✅ No posts found for reply updates", category: "User")
                 completion(true)
                 return
             }
@@ -734,7 +734,7 @@ class UserViewModel: ObservableObject {
                     defer { group.leave() }
                     
                     if let replyError = replyError {
-                        print("❌ Error fetching replies for post \(postDoc.documentID): \(replyError.localizedDescription)")
+                        DebugLogger.debug("❌ Error fetching replies for post \(postDoc.documentID): \(replyError.localizedDescription)", category: "User")
                         hasErrors = true
                         return
                     }
@@ -756,10 +756,10 @@ class UserViewModel: ObservableObject {
                     
                     replyBatch.commit { batchError in
                         if let batchError = batchError {
-                            print("❌ Error updating replies for post \(postDoc.documentID): \(batchError.localizedDescription)")
+                            DebugLogger.debug("❌ Error updating replies for post \(postDoc.documentID): \(batchError.localizedDescription)", category: "User")
                             hasErrors = true
                         } else if !replyDocuments.isEmpty {
-                            print("✅ Cleared profile photo from \(replyDocuments.count) replies for post \(postDoc.documentID)")
+                            DebugLogger.debug("✅ Cleared profile photo from \(replyDocuments.count) replies for post \(postDoc.documentID)", category: "User")
                         }
                     }
                 }
@@ -780,13 +780,13 @@ class UserViewModel: ObservableObject {
         // Update all posts by this user
         db.collection("posts").whereField("userId", isEqualTo: userId).getDocuments { snapshot, error in
             if let error = error {
-                print("❌ Error fetching user posts: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Error fetching user posts: \(error.localizedDescription)", category: "User")
                 completion(false)
                 return
             }
             
             guard let documents = snapshot?.documents else {
-                print("✅ No posts found for user")
+                DebugLogger.debug("✅ No posts found for user", category: "User")
                 completion(true)
                 return
             }
@@ -809,10 +809,10 @@ class UserViewModel: ObservableObject {
                     batch.commit { error in
                         DispatchQueue.main.async {
                             if let error = error {
-                                print("❌ Error updating posts: \(error.localizedDescription)")
+                                DebugLogger.debug("❌ Error updating posts: \(error.localizedDescription)", category: "User")
                                 completion(false)
                             } else {
-                                print("✅ Successfully updated \(documents.count) posts with new avatar")
+                                DebugLogger.debug("✅ Successfully updated \(documents.count) posts with new avatar", category: "User")
                                 completion(true)
                             }
                         }
@@ -829,13 +829,13 @@ class UserViewModel: ObservableObject {
         let db = Firestore.firestore()
         db.collection("posts").getDocuments { snapshot, error in
             if let error = error {
-                print("❌ Error fetching posts for reply updates: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Error fetching posts for reply updates: \(error.localizedDescription)", category: "User")
                 completion(false)
                 return
             }
             
             guard let postDocuments = snapshot?.documents else {
-                print("✅ No posts found for reply updates")
+                DebugLogger.debug("✅ No posts found for reply updates", category: "User")
                 completion(true)
                 return
             }
@@ -851,7 +851,7 @@ class UserViewModel: ObservableObject {
                     defer { group.leave() }
                     
                     if let replyError = replyError {
-                        print("❌ Error fetching replies for post \(postDoc.documentID): \(replyError.localizedDescription)")
+                        DebugLogger.debug("❌ Error fetching replies for post \(postDoc.documentID): \(replyError.localizedDescription)", category: "User")
                         hasErrors = true
                         return
                     }
@@ -872,10 +872,10 @@ class UserViewModel: ObservableObject {
                     
                     replyBatch.commit { batchError in
                         if let batchError = batchError {
-                            print("❌ Error updating replies for post \(postDoc.documentID): \(batchError.localizedDescription)")
+                            DebugLogger.debug("❌ Error updating replies for post \(postDoc.documentID): \(batchError.localizedDescription)", category: "User")
                             hasErrors = true
                         } else if !replyDocuments.isEmpty {
-                            print("✅ Updated \(replyDocuments.count) replies for post \(postDoc.documentID)")
+                            DebugLogger.debug("✅ Updated \(replyDocuments.count) replies for post \(postDoc.documentID)", category: "User")
                         }
                     }
                 }
@@ -910,10 +910,10 @@ class UserViewModel: ObservableObject {
         db.collection("users").document(uid).updateData(preferencesData) { error in
             DispatchQueue.main.async {
                 if let error = error {
-                    print("❌ Error saving user preferences: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ Error saving user preferences: \(error.localizedDescription)", category: "User")
                     completion(false)
                 } else {
-                    print("✅ User preferences saved successfully")
+                    DebugLogger.debug("✅ User preferences saved successfully", category: "User")
                     self.hasCompletedPreferences = true
                     completion(true)
                 }
@@ -925,7 +925,7 @@ class UserViewModel: ObservableObject {
     ///   The user document no longer exists, so FCM removal would fail with permission errors.
     func signOut(skipFCMRemoval: Bool = false) {
         // FIXED: Clear all cached data when signing out to prevent storage bloat
-        print("🧹 Clearing all cached data for account switch...")
+        DebugLogger.debug("🧹 Clearing all cached data for account switch...", category: "User")
         
         // Remove FCM token from Firestore before signing out (skip if user/doc already deleted)
         if !skipFCMRemoval {
@@ -978,7 +978,7 @@ class UserViewModel: ObservableObject {
         // Finally, sign out from Firebase Auth
         try? Auth.auth().signOut()
         
-        print("✅ All cached data cleared for account switch")
+        DebugLogger.debug("✅ All cached data cleared for account switch", category: "User")
     }
     
     // FIXED: Add method to clear all UserDefaults data
@@ -1003,7 +1003,7 @@ class UserViewModel: ObservableObject {
         }
         
         if clearedCount > 0 {
-            print("🧹 Cleared \(clearedCount) UserDefaults entries during sign out")
+            DebugLogger.debug("🧹 Cleared \(clearedCount) UserDefaults entries during sign out", category: "User")
         }
     }
     
@@ -1013,14 +1013,14 @@ class UserViewModel: ObservableObject {
     /// blockedReason is non-nil when request succeeded but points were withheld (e.g. phone previously claimed).
     func addWelcomePoints(completion: @escaping (Bool, String?) -> Void) {
         guard let user = Auth.auth().currentUser else {
-            print("❌ No authenticated user found")
+            DebugLogger.debug("❌ No authenticated user found", category: "User")
             completion(false, nil)
             return
         }
         
         user.getIDToken { token, error in
             if let error = error {
-                print("❌ Failed to get ID token for welcome claim: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Failed to get ID token for welcome claim: \(error.localizedDescription)", category: "User")
                 DispatchQueue.main.async { completion(false, nil) }
                 return
             }
@@ -1037,14 +1037,14 @@ class UserViewModel: ObservableObject {
             
             URLSession.shared.dataTask(with: req) { data, resp, err in
                 if let err = err {
-                    print("❌ Welcome claim network error: \(err.localizedDescription)")
+                    DebugLogger.debug("❌ Welcome claim network error: \(err.localizedDescription)", category: "User")
                     DispatchQueue.main.async { completion(false, nil) }
                     return
                 }
                 
                 if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                     let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-                    print("❌ Welcome claim failed (\(http.statusCode)): \(body)")
+                    DebugLogger.debug("❌ Welcome claim failed (\(http.statusCode)): \(body)", category: "User")
                     DispatchQueue.main.async { completion(false, nil) }
                     return
                 }
@@ -1056,13 +1056,13 @@ class UserViewModel: ObservableObject {
                     if let newLifetime = json["newLifetimePoints"] as? Int { DispatchQueue.main.async { self.lifetimePoints = newLifetime } }
                     if let already = json["alreadyClaimed"] as? Bool, already == true {
                         if let reason = json["reason"] as? String, reason == "phone_previously_claimed" {
-                            print("ℹ️ Welcome points blocked - phone number previously claimed on another account")
+                            DebugLogger.debug("ℹ️ Welcome points blocked - phone number previously claimed on another account", category: "User")
                             blockedReason = "phone_previously_claimed"
                         } else {
-                            print("ℹ️ Welcome points already claimed on this account")
+                            DebugLogger.debug("ℹ️ Welcome points already claimed on this account", category: "User")
                         }
                     } else {
-                        print("✅ Welcome points claimed server-side")
+                        DebugLogger.debug("✅ Welcome points claimed server-side", category: "User")
                     }
                 }
                 
@@ -1091,22 +1091,22 @@ class UserViewModel: ObservableObject {
     /// Call `finalizeAccountDeletion(withSMSCode:)` after the user enters the code.
     func startAccountDeletionReauthentication(completion: @escaping (Bool) -> Void) {
         guard let user = Auth.auth().currentUser else {
-            print("❌ No authenticated user found")
+            DebugLogger.debug("❌ No authenticated user found", category: "User")
             // Force UI back to Get Started if auth state is missing
             UserDefaults.standard.set(false, forKey: "isLoggedIn")
             completion(false)
             return
         }
         guard let phoneNumber = user.phoneNumber, !phoneNumber.isEmpty else {
-            print("❌ Current user does not have a phone number attached; cannot start phone re-auth")
+            DebugLogger.debug("❌ Current user does not have a phone number attached; cannot start phone re-auth", category: "User")
             completion(false)
             return
         }
-        print("📲 Sending re-auth SMS for account deletion to: \(phoneNumber)")
+        DebugLogger.debug("📲 Sending re-auth SMS for account deletion to: \(phoneNumber)", category: "User")
         PhoneAuthProvider.provider().verifyPhoneNumber(phoneNumber, uiDelegate: nil) { [weak self] verificationID, error in
             DispatchQueue.main.async {
                 if let error = error {
-                    print("❌ Error sending verification SMS: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ Error sending verification SMS: \(error.localizedDescription)", category: "User")
                     self?.pendingDeletionVerificationID = nil
                     self?.isAwaitingDeletionSMSCode = false
                     completion(false)
@@ -1114,7 +1114,7 @@ class UserViewModel: ObservableObject {
                 }
                 self?.pendingDeletionVerificationID = verificationID
                 self?.isAwaitingDeletionSMSCode = true
-                print("✅ Verification ID received for deletion re-auth")
+                DebugLogger.debug("✅ Verification ID received for deletion re-auth", category: "User")
                 completion(true)
             }
         }
@@ -1125,7 +1125,7 @@ class UserViewModel: ObservableObject {
     /// the server uses Admin SDK to delete Auth users directly.
     func finalizeAccountDeletion(withSMSCode smsCode: String, completion: @escaping (Bool) -> Void) {
         guard let user = Auth.auth().currentUser else {
-            print("❌ No authenticated user found")
+            DebugLogger.debug("❌ No authenticated user found", category: "User")
             // Force UI back to Get Started if auth state is missing
             UserDefaults.standard.set(false, forKey: "isLoggedIn")
             isDeletingAccount = false
@@ -1133,16 +1133,16 @@ class UserViewModel: ObservableObject {
             return
         }
         guard let verificationID = pendingDeletionVerificationID, !verificationID.isEmpty else {
-            print("❌ No pending verification ID. Call startAccountDeletionReauthentication() first.")
+            DebugLogger.debug("❌ No pending verification ID. Call startAccountDeletionReauthentication() first.", category: "User")
             isDeletingAccount = false
             completion(false)
             return
         }
         let credential = PhoneAuthProvider.provider().credential(withVerificationID: verificationID, verificationCode: smsCode)
-        print("🔐 Reauthenticating user for account deletion…")
+        DebugLogger.debug("🔐 Reauthenticating user for account deletion…", category: "User")
         user.reauthenticate(with: credential) { [weak self] _, error in
             if let error = error {
-                print("❌ Re-authentication failed: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Re-authentication failed: \(error.localizedDescription)", category: "User")
                 DispatchQueue.main.async {
                     self?.isDeletingAccount = false
                     self?.pendingDeletionVerificationID = nil
@@ -1151,7 +1151,7 @@ class UserViewModel: ObservableObject {
                 }
                 return
             }
-            print("✅ Re-authenticated. Calling backend to delete account...")
+            DebugLogger.debug("✅ Re-authenticated. Calling backend to delete account...", category: "User")
             
             // After re-auth, call the same backend endpoint
             self?.pendingDeletionVerificationID = nil
@@ -1162,7 +1162,7 @@ class UserViewModel: ObservableObject {
 
     func deleteAccount(completion: @escaping (Bool) -> Void) {
         guard let user = Auth.auth().currentUser else {
-            print("❌ No authenticated user found")
+            DebugLogger.debug("❌ No authenticated user found", category: "User")
             // Force UI back to Get Started if auth state is missing
             UserDefaults.standard.set(false, forKey: "isLoggedIn")
             completion(false)
@@ -1170,21 +1170,21 @@ class UserViewModel: ObservableObject {
         }
         // Clear UserDefaults flag for this user before deletion
         UserDefaults.standard.removeObject(forKey: "hasSeenWelcome_\(user.uid)")
-        print("🧹 Cleared welcome popup flag for user: \(user.uid)")
+        DebugLogger.debug("🧹 Cleared welcome popup flag for user: \(user.uid)", category: "User")
 
         // Mark that we're intentionally deleting to prevent listener interference
         isDeletingAccount = true
         
         // Stop all listeners BEFORE deletion to prevent errors
         stopUserListener()
-        print("🛑 Stopped user listeners before deletion")
+        DebugLogger.debug("🛑 Stopped user listeners before deletion", category: "User")
 
         // Call backend endpoint to handle all deletion (Firestore + Auth) via Admin SDK
         // This bypasses App Check and permission issues entirely
-        print("🗑️ Calling backend /user/delete-account endpoint...")
+        DebugLogger.debug("🗑️ Calling backend /user/delete-account endpoint...", category: "User")
         user.getIDToken { [weak self] token, error in
             if let error = error {
-                print("❌ Failed to get ID token: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Failed to get ID token: \(error.localizedDescription)", category: "User")
                 DispatchQueue.main.async {
                     self?.isDeletingAccount = false
                     completion(false)
@@ -1194,7 +1194,7 @@ class UserViewModel: ObservableObject {
             
             guard let token = token,
                   let url = URL(string: "\(Config.backendURL)/user/delete-account") else {
-                print("❌ Invalid token or URL")
+                DebugLogger.debug("❌ Invalid token or URL", category: "User")
                 DispatchQueue.main.async {
                     self?.isDeletingAccount = false
                     completion(false)
@@ -1210,14 +1210,14 @@ class UserViewModel: ObservableObject {
             URLSession.shared.dataTask(with: request) { data, response, error in
                 DispatchQueue.main.async {
                     if let error = error {
-                        print("❌ Delete account request failed: \(error.localizedDescription)")
+                        DebugLogger.debug("❌ Delete account request failed: \(error.localizedDescription)", category: "User")
                         self?.isDeletingAccount = false
                         completion(false)
                         return
                     }
                     
                     guard let httpResponse = response as? HTTPURLResponse else {
-                        print("❌ Invalid response from delete account endpoint")
+                        DebugLogger.debug("❌ Invalid response from delete account endpoint", category: "User")
                         self?.isDeletingAccount = false
                         completion(false)
                         return
@@ -1225,7 +1225,7 @@ class UserViewModel: ObservableObject {
                     
                     if httpResponse.statusCode == 200 {
                         // Server successfully deleted everything including Auth user
-                        print("✅ Backend deleted account successfully")
+                        DebugLogger.debug("✅ Backend deleted account successfully", category: "User")
                         self?.isDeletingAccount = false
                         // Sign out locally; skip FCM removal (user doc no longer exists)
                         self?.signOut(skipFCMRemoval: true)
@@ -1238,7 +1238,7 @@ class UserViewModel: ObservableObject {
                            let msg = json["error"] as? String {
                             errorMsg = msg
                         }
-                        print("❌ Delete account failed: \(errorMsg)")
+                        DebugLogger.debug("❌ Delete account failed: \(errorMsg)", category: "User")
                         self?.isDeletingAccount = false
                         completion(false)
                     }
@@ -1253,7 +1253,7 @@ class UserViewModel: ObservableObject {
     /// This endpoint handles all Firestore cleanup server-side, so we only need to delete Auth locally.
     func archiveAndDeleteBannedAccount(completion: @escaping (Bool) -> Void) {
         guard let user = Auth.auth().currentUser else {
-            print("❌ No authenticated user found")
+            DebugLogger.debug("❌ No authenticated user found", category: "User")
             UserDefaults.standard.set(false, forKey: "isLoggedIn")
             completion(false)
             return
@@ -1261,21 +1261,21 @@ class UserViewModel: ObservableObject {
         
         // Clear UserDefaults flag for this user before deletion
         UserDefaults.standard.removeObject(forKey: "hasSeenWelcome_\(user.uid)")
-        print("🧹 Cleared welcome popup flag for user: \(user.uid)")
+        DebugLogger.debug("🧹 Cleared welcome popup flag for user: \(user.uid)", category: "User")
         
-        print("📦 Archiving banned account data via backend...")
+        DebugLogger.debug("📦 Archiving banned account data via backend...", category: "User")
         
         // Get ID token and call the archive endpoint
         user.getIDToken { [weak self] token, error in
             if let error = error {
-                print("❌ Failed to get ID token: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Failed to get ID token: \(error.localizedDescription)", category: "User")
                 DispatchQueue.main.async { completion(false) }
                 return
             }
             
             guard let token = token,
                   let url = URL(string: "\(Config.backendURL)/admin/banned-account-archive") else {
-                print("❌ Invalid token or URL")
+                DebugLogger.debug("❌ Invalid token or URL", category: "User")
                 DispatchQueue.main.async { completion(false) }
                 return
             }
@@ -1288,26 +1288,26 @@ class UserViewModel: ObservableObject {
             
             URLSession.shared.dataTask(with: request) { data, response, error in
                 if let error = error {
-                    print("❌ Archive request failed: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ Archive request failed: \(error.localizedDescription)", category: "User")
                     DispatchQueue.main.async { completion(false) }
                     return
                 }
                 
                 guard let httpResponse = response as? HTTPURLResponse else {
-                    print("❌ Invalid response")
+                    DebugLogger.debug("❌ Invalid response", category: "User")
                     DispatchQueue.main.async { completion(false) }
                     return
                 }
                 
                 if httpResponse.statusCode >= 200 && httpResponse.statusCode < 300 {
-                    print("✅ Backend archive complete. Now deleting Auth user...")
+                    DebugLogger.debug("✅ Backend archive complete. Now deleting Auth user...", category: "User")
                     
                     // Delete the Firebase Auth user locally
                     user.delete { deleteError in
                         DispatchQueue.main.async {
                             if let deleteError = deleteError as NSError?,
                                deleteError.code == AuthErrorCode.requiresRecentLogin.rawValue {
-                                print("ℹ️ Recent login required. Starting SMS re-auth flow…")
+                                DebugLogger.debug("ℹ️ Recent login required. Starting SMS re-auth flow…", category: "User")
                                 self?.startBannedAccountDeletionReauth { started in
                                     completion(started)
                                 }
@@ -1315,14 +1315,14 @@ class UserViewModel: ObservableObject {
                             }
                             
                             if let deleteError = deleteError {
-                                print("❌ Error deleting Auth user: \(deleteError.localizedDescription)")
+                                DebugLogger.debug("❌ Error deleting Auth user: \(deleteError.localizedDescription)", category: "User")
                                 // Archive was successful but Auth deletion failed
                                 // This is acceptable - user doc is already deleted
                                 completion(false)
                                 return
                             }
                             
-                            print("✅ Auth user deleted successfully")
+                            DebugLogger.debug("✅ Auth user deleted successfully", category: "User")
                             completion(true)
                         }
                     }
@@ -1334,7 +1334,7 @@ class UserViewModel: ObservableObject {
                        let msg = json["error"] as? String {
                         errorMsg = msg
                     }
-                    print("❌ Archive failed: \(errorMsg)")
+                    DebugLogger.debug("❌ Archive failed: \(errorMsg)", category: "User")
                     DispatchQueue.main.async { completion(false) }
                 }
             }.resume()
@@ -1348,15 +1348,15 @@ class UserViewModel: ObservableObject {
             return
         }
         guard let phoneNumber = user.phoneNumber, !phoneNumber.isEmpty else {
-            print("❌ Current user does not have a phone number attached")
+            DebugLogger.debug("❌ Current user does not have a phone number attached", category: "User")
             completion(false)
             return
         }
-        print("📲 Sending re-auth SMS for banned account deletion to: \(phoneNumber)")
+        DebugLogger.debug("📲 Sending re-auth SMS for banned account deletion to: \(phoneNumber)", category: "User")
         PhoneAuthProvider.provider().verifyPhoneNumber(phoneNumber, uiDelegate: nil) { [weak self] verificationID, error in
             DispatchQueue.main.async {
                 if let error = error {
-                    print("❌ Error sending verification SMS: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ Error sending verification SMS: \(error.localizedDescription)", category: "User")
                     self?.pendingDeletionVerificationID = nil
                     self?.isAwaitingDeletionSMSCode = false
                     completion(false)
@@ -1364,7 +1364,7 @@ class UserViewModel: ObservableObject {
                 }
                 self?.pendingDeletionVerificationID = verificationID
                 self?.isAwaitingDeletionSMSCode = true
-                print("✅ Verification ID received for banned deletion re-auth")
+                DebugLogger.debug("✅ Verification ID received for banned deletion re-auth", category: "User")
                 completion(true)
             }
         }
@@ -1374,39 +1374,39 @@ class UserViewModel: ObservableObject {
     /// Called when user enters SMS code after archiveAndDeleteBannedAccount required re-auth.
     func finalizeBannedAccountDeletion(withSMSCode smsCode: String, completion: @escaping (Bool) -> Void) {
         guard let user = Auth.auth().currentUser else {
-            print("❌ No authenticated user found")
+            DebugLogger.debug("❌ No authenticated user found", category: "User")
             UserDefaults.standard.set(false, forKey: "isLoggedIn")
             completion(false)
             return
         }
         guard let verificationID = pendingDeletionVerificationID, !verificationID.isEmpty else {
-            print("❌ No pending verification ID")
+            DebugLogger.debug("❌ No pending verification ID", category: "User")
             completion(false)
             return
         }
         
         let credential = PhoneAuthProvider.provider().credential(withVerificationID: verificationID, verificationCode: smsCode)
-        print("🔐 Reauthenticating user for banned account deletion…")
+        DebugLogger.debug("🔐 Reauthenticating user for banned account deletion…", category: "User")
         
         user.reauthenticate(with: credential) { [weak self] _, error in
             if let error = error {
-                print("❌ Re-authentication failed: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Re-authentication failed: \(error.localizedDescription)", category: "User")
                 DispatchQueue.main.async { completion(false) }
                 return
             }
             
-            print("✅ Re-authenticated. Now deleting Auth user…")
+            DebugLogger.debug("✅ Re-authenticated. Now deleting Auth user…", category: "User")
             user.delete { deleteError in
                 DispatchQueue.main.async {
                     self?.pendingDeletionVerificationID = nil
                     self?.isAwaitingDeletionSMSCode = false
                     
                     if let deleteError = deleteError {
-                        print("❌ Error deleting Auth user: \(deleteError.localizedDescription)")
+                        DebugLogger.debug("❌ Error deleting Auth user: \(deleteError.localizedDescription)", category: "User")
                         completion(false)
                         return
                     }
-                    print("✅ Auth user deleted successfully")
+                    DebugLogger.debug("✅ Auth user deleted successfully", category: "User")
                     completion(true)
                 }
             }
@@ -1418,7 +1418,7 @@ class UserViewModel: ObservableObject {
     func resetWelcomePopupFlag() {
         guard let uid = Auth.auth().currentUser?.uid else { return }
         UserDefaults.standard.removeObject(forKey: "hasSeenWelcome_\(uid)")
-        print("🧹 Reset welcome popup flag for testing")
+        DebugLogger.debug("🧹 Reset welcome popup flag for testing", category: "User")
     }
 
 }

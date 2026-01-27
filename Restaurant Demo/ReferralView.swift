@@ -20,7 +20,7 @@ fileprivate struct ReferralCache {
         let data = CachedData(code: code, shareUrl: shareUrl, timestamp: Date())
         if let encoded = try? JSONEncoder().encode(data) {
             UserDefaults.standard.set(encoded, forKey: cacheKeyPrefix + userId)
-            print("📦 Cached referral code for user \(userId)")
+            DebugLogger.debug("📦 Cached referral code for user \(userId)", category: "Referral")
         }
     }
     
@@ -29,13 +29,13 @@ fileprivate struct ReferralCache {
               let cached = try? JSONDecoder().decode(CachedData.self, from: data) else {
             return nil
         }
-        print("📦 Loaded cached referral code for user \(userId)")
+        DebugLogger.debug("📦 Loaded cached referral code for user \(userId)", category: "Referral")
         return (cached.code, cached.shareUrl)
     }
     
     static func clear(userId: String) {
         UserDefaults.standard.removeObject(forKey: cacheKeyPrefix + userId)
-        print("📦 Cleared referral cache for user \(userId)")
+        DebugLogger.debug("📦 Cleared referral cache for user \(userId)", category: "Referral")
     }
     
     static func clearAll() {
@@ -51,7 +51,7 @@ fileprivate struct ReferralCache {
         let keys = UserDefaults.standard.dictionaryRepresentation().keys
         for key in keys where key.hasPrefix("referral_cache_") && !key.hasPrefix(cacheKeyPrefix) {
             UserDefaults.standard.removeObject(forKey: key)
-            print("🗑️ Cleared legacy referral cache: \(key)")
+            DebugLogger.debug("🗑️ Cleared legacy referral cache: \(key)", category: "Referral")
         }
     }
 }
@@ -170,14 +170,14 @@ struct ReferralView: View {
             }
         }
         .onAppear {
-            print("🪪 ReferralView appeared")
+            DebugLogger.debug("🪪 ReferralView appeared", category: "Referral")
             
             // Load from cache first for instant display
             if myCode.isEmpty, let userId = Auth.auth().currentUser?.uid {
                 if let cached = ReferralCache.load(userId: userId) {
                     myCode = cached.code
                     shareURL = URL(string: cached.shareUrl)
-                    print("✅ Referral code loaded from cache instantly")
+                    DebugLogger.debug("✅ Referral code loaded from cache instantly", category: "Referral")
                 } else {
                     // Cache miss - fetch from server
                     fetchMyCode()

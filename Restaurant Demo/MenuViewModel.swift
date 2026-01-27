@@ -26,7 +26,7 @@ class MenuViewModel: ObservableObject {
     private var imageCacheManager: MenuImageCacheManager? {
         // Check if caching is explicitly disabled
         if UserDefaults.standard.object(forKey: "disableAllImageCaching") as? Bool == true {
-            print("⚠️ Image caching completely disabled by safety flag")
+            DebugLogger.debug("⚠️ Image caching completely disabled by safety flag", category: "Menu")
             return nil
         }
         // Try to access the cache manager safely
@@ -143,7 +143,7 @@ class MenuViewModel: ObservableObject {
                     chosen[itemId] = (docId, item)
                 }
             } catch {
-                print("❌ Decoding error for item \(doc.documentID) in category \(categoryId): \(error)")
+                DebugLogger.debug("❌ Decoding error for item \(doc.documentID) in category \(categoryId): \(error)", category: "Menu")
             }
         }
 
@@ -369,7 +369,7 @@ class MenuViewModel: ObservableObject {
     /// Enable admin editing mode - starts real-time listeners for all data
     /// Call this when admin enters the menu editing screen
     func enableAdminEditingMode() {
-        print("🔐 Admin editing mode enabled - starting real-time listeners")
+        DebugLogger.debug("🔐 Admin editing mode enabled - starting real-time listeners", category: "Menu")
         isAdminUser = true
         isAdminEditingModeEnabled = true
         
@@ -386,7 +386,7 @@ class MenuViewModel: ObservableObject {
     /// Disable admin editing mode - stops real-time listeners and caches current data
     /// Call this when admin leaves the menu editing screen
     func disableAdminEditingMode() {
-        print("🔐 Admin editing mode disabled - stopping listeners and caching data")
+        DebugLogger.debug("🔐 Admin editing mode disabled - stopping listeners and caching data", category: "Menu")
         isAdminEditingModeEnabled = false
         
         // Stop all real-time listeners
@@ -430,7 +430,7 @@ class MenuViewModel: ObservableObject {
         listenerRegistration = db.collection("menu").addSnapshotListener { [weak self] (snapshot, error) in
             guard let self = self else { return }
             if let error = error {
-                print("❌ Error fetching menu categories: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Error fetching menu categories: \(error.localizedDescription)", category: "Menu")
                 return
             }
             guard let documents = snapshot?.documents else { return }
@@ -474,7 +474,7 @@ class MenuViewModel: ObservableObject {
     
     deinit {
         // Performance: Log deinit for memory leak tracking
-        print("🧹 MenuViewModel deinit - cleaning up listeners")
+        DebugLogger.debug("🧹 MenuViewModel deinit - cleaning up listeners", category: "Menu")
         
         // Stop listening for changes when the view model is deallocated.
         listenerRegistration?.remove()
@@ -523,12 +523,12 @@ class MenuViewModel: ObservableObject {
         let userRef = db.collection("users").document(user.uid)
         userRef.getDocument { (document, error) in
             if let error = error {
-                print("❌ requireAdmin: Error reading users/\(user.uid): \(error.localizedDescription)")
+                DebugLogger.debug("❌ requireAdmin: Error reading users/\(user.uid): \(error.localizedDescription)", category: "Menu")
                 completion(false, "Error checking admin status: \(error.localizedDescription)")
                 return
             }
             guard let document = document, document.exists else {
-                print("❌ requireAdmin: users/\(user.uid) does not exist")
+                DebugLogger.debug("❌ requireAdmin: users/\(user.uid) does not exist", category: "Menu")
                 completion(false, "User profile not found. Please contact support.")
                 return
             }
@@ -536,7 +536,7 @@ class MenuViewModel: ObservableObject {
             let data = document.data() ?? [:]
             let isAdminValue = data["isAdmin"]
             let isAdminType = isAdminValue.map { String(describing: Swift.type(of: $0)) } ?? "nil"
-            print("🔐 requireAdmin: users/\(user.uid) exists. isAdmin=\(String(describing: isAdminValue)) type=\(isAdminType)")
+            DebugLogger.debug("🔐 requireAdmin: users/\(user.uid) exists. isAdmin=\(String(describing: isAdminValue)) type=\(isAdminType)", category: "Menu")
             
             // Strongly validate: security rules require boolean true.
             if isAdminValue != nil && (isAdminValue as? Bool) == nil {
@@ -580,7 +580,7 @@ class MenuViewModel: ObservableObject {
             guard let self = self else { return }
 
             if let error = error {
-                print("❌ Error fetching menu categories: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Error fetching menu categories: \(error.localizedDescription)", category: "Menu")
                 DispatchQueue.main.async {
                     self.isLoading = false
                     self.isFetchingMenu = false
@@ -666,7 +666,7 @@ class MenuViewModel: ObservableObject {
                     }
 
                     if let itemsError = itemsError {
-                        print("⚠️ Error fetching items for \(categoryId): \(itemsError.localizedDescription)")
+                        DebugLogger.debug("⚠️ Error fetching items for \(categoryId): \(itemsError.localizedDescription)", category: "Menu")
                         DispatchQueue.main.async { self.loadingCategories.remove(categoryId) }
                         group.leave()
                         return
@@ -701,7 +701,7 @@ class MenuViewModel: ObservableObject {
             guard let self = self else { return }
             
             if let error = error {
-                print("⚠️ Error fetching menu order: \(error.localizedDescription)")
+                DebugLogger.debug("⚠️ Error fetching menu order: \(error.localizedDescription)", category: "Menu")
                 return
             }
             
@@ -781,7 +781,7 @@ class MenuViewModel: ObservableObject {
     
     /// Print cache status to console (for debugging)
     func printCacheStatus() {
-        print(getCacheStatus())
+        DebugLogger.debug(getCacheStatus(), category: "Menu")
     }
     
     // MARK: - Image Caching Methods
@@ -834,7 +834,7 @@ class MenuViewModel: ObservableObject {
         
         DispatchQueue.main.async {
             self.cachedCategoryIcons = icons
-            print("✅ Loaded \(icons.count) cached category icons from disk")
+            DebugLogger.debug("✅ Loaded \(icons.count) cached category icons from disk", category: "Menu")
         }
     }
     
@@ -873,7 +873,7 @@ class MenuViewModel: ObservableObject {
             
             DispatchQueue.main.async {
                 self.cachedItemImages = images
-                print("✅ Loaded \(images.count) cached menu item images from disk")
+                DebugLogger.debug("✅ Loaded \(images.count) cached menu item images from disk", category: "Menu")
             }
         }
     }
@@ -936,7 +936,7 @@ class MenuViewModel: ObservableObject {
         if !menuItemURLs.isEmpty {
             cacheManager.preloadMenuItems(urls: menuItemURLs, batchSize: 10) { [weak self] loadedCount in
                 guard let self = self else { return }
-                print("✅ Preloaded \(loadedCount) menu item images")
+                DebugLogger.debug("✅ Preloaded \(loadedCount) menu item images", category: "Menu")
                 // Reload cached images after preloading completes to include newly cached images
                 self.loadCachedMenuItemImages()
                 
@@ -1151,11 +1151,11 @@ class MenuViewModel: ObservableObject {
             // return a clear "saved locally" message.
             updatedDocRef.getDocument(source: .server) { snapshot, error in
                 if let error = error {
-                    print("⚠️ Server verification failed (likely offline): \(error.localizedDescription)")
+                    DebugLogger.debug("⚠️ Server verification failed (likely offline): \(error.localizedDescription)", category: "Menu")
                     updatedDocRef.getDocument { localSnapshot, localError in
                         if let localError = localError {
                             // We can't verify even locally; still surface a helpful message.
-                            print("⚠️ Local verification also failed: \(localError.localizedDescription)")
+                            DebugLogger.debug("⚠️ Local verification also failed: \(localError.localizedDescription)", category: "Menu")
                             finishSuccess(infoMessage: "Saved locally. Will sync when you're back online.")
                             return
                         }
@@ -1176,7 +1176,7 @@ class MenuViewModel: ObservableObject {
                 
                 let serverDesc = snapshot.data()?["description"] as? String ?? ""
                 if serverDesc != expectedDescription {
-                    print("❌ Server verification mismatch. Expected: '\(expectedDescription)' Got: '\(serverDesc)'")
+                    DebugLogger.debug("❌ Server verification mismatch. Expected: '\(expectedDescription)' Got: '\(serverDesc)'", category: "Menu")
                     finishFailure("Update did not persist. Please try again.")
                     return
                 }
@@ -1478,7 +1478,7 @@ class MenuViewModel: ObservableObject {
                             group.enter()
                             newItemsRef.document(doc.documentID).setData(doc.data()) { copyErr in
                                 if let copyErr = copyErr {
-                                    print("❌ Failed to copy item \(doc.documentID): \(copyErr.localizedDescription)")
+                                    DebugLogger.debug("❌ Failed to copy item \(doc.documentID): \(copyErr.localizedDescription)", category: "Menu")
                                 }
                                 group.leave()
                             }
@@ -1527,7 +1527,7 @@ class MenuViewModel: ObservableObject {
                                     deleteGroup.notify(queue: .main) {
                                         oldRef.delete { delErr in
                                             if let delErr = delErr {
-                                                print("⚠️ Failed to delete old category doc: \(delErr.localizedDescription)")
+                                                DebugLogger.debug("⚠️ Failed to delete old category doc: \(delErr.localizedDescription)", category: "Menu")
                                             }
 
                                             // Sync items array on new category and refresh
@@ -1635,9 +1635,9 @@ class MenuViewModel: ObservableObject {
     // MARK: - Menu Order Management
     
     func updateMenuOrder(categories: [String], itemsByCategory: [String: [String]], completion: @escaping (Bool) -> Void) {
-        print("🔄 Updating menu order...")
-        print("Categories: \(categories)")
-        print("Items by category: \(itemsByCategory)")
+        DebugLogger.debug("🔄 Updating menu order...", category: "Menu")
+        DebugLogger.debug("Categories: \(categories)", category: "Menu")
+        DebugLogger.debug("Items by category: \(itemsByCategory)", category: "Menu")
         
         let orderData: [String: Any] = [
             "orderedCategoryIds": categories,
@@ -1651,10 +1651,10 @@ class MenuViewModel: ObservableObject {
         orderDocRef.setData(orderData) { [weak self] error in
             DispatchQueue.main.async {
                 if let error = error {
-                    print("❌ Error updating menu order: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ Error updating menu order: \(error.localizedDescription)", category: "Menu")
                     completion(false)
                 } else {
-                    print("✅ Menu order updated successfully")
+                    DebugLogger.debug("✅ Menu order updated successfully", category: "Menu")
                     // Update local state
                     self?.orderedCategoryIds = categories
                     self?.orderedItemIdsByCategory = itemsByCategory
@@ -1665,7 +1665,7 @@ class MenuViewModel: ObservableObject {
     }
     
     func listenToMenuOrder() {
-        print("🔍 Setting up menu order listener...")
+        DebugLogger.debug("🔍 Setting up menu order listener...", category: "Menu")
         
         // Remove any existing listener first
         orderListener?.remove()
@@ -1674,26 +1674,26 @@ class MenuViewModel: ObservableObject {
             guard let self = self else { return }
             
             if let error = error {
-                print("❌ Error listening to menu order: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Error listening to menu order: \(error.localizedDescription)", category: "Menu")
                 // IMPORTANT: Remove the listener on permission errors to prevent Firestore queue re-entrancy crashes
                 // This typically happens when a non-admin user tries to listen to admin-only collections
                 DispatchQueue.main.async {
                     self.orderListener?.remove()
                     self.orderListener = nil
-                    print("⚠️ Menu order listener removed due to error. Non-admin users will use default ordering.")
+                    DebugLogger.debug("⚠️ Menu order listener removed due to error. Non-admin users will use default ordering.", category: "Menu")
                 }
                 return
             }
             
             guard let document = documentSnapshot, document.exists else {
                 if self.isAdminUser {
-                    print("📄 No menu order document found, creating default (admin)...")
+                    DebugLogger.debug("📄 No menu order document found, creating default (admin)...", category: "Menu")
                     // Dispatch to main queue to avoid Firestore queue re-entrancy issues
                     DispatchQueue.main.async {
                         self.createDefaultMenuOrder()
                     }
                 } else {
-                    print("📄 No menu order document found (non-admin). Using default ordering.")
+                    DebugLogger.debug("📄 No menu order document found (non-admin). Using default ordering.", category: "Menu")
                 }
                 return
             }
@@ -1712,9 +1712,9 @@ class MenuViewModel: ObservableObject {
                 ?? (data["itemsByCategory"] as? [String: [String]])
                 ?? [:]
             
-            print("📋 Received menu order update:")
-            print("  Categories: \(orderedCategoryIds)")
-            print("  Items by category: \(orderedItemIdsByCategory)")
+            DebugLogger.debug("📋 Received menu order update:", category: "Menu")
+            DebugLogger.debug("  Categories: \(orderedCategoryIds)", category: "Menu")
+            DebugLogger.debug("  Items by category: \(orderedItemIdsByCategory)", category: "Menu")
             
             DispatchQueue.main.async {
                 self.orderedCategoryIds = orderedCategoryIds
@@ -1724,7 +1724,7 @@ class MenuViewModel: ObservableObject {
     }
     
     private func createDefaultMenuOrder() {
-        print("🆕 Creating default menu order...")
+        DebugLogger.debug("🆕 Creating default menu order...", category: "Menu")
         
         // Get all category IDs from current menu
         let categoryIds = menuCategories.map { $0.id }
@@ -1739,9 +1739,9 @@ class MenuViewModel: ObservableObject {
         // Save default order
         updateMenuOrder(categories: categoryIds, itemsByCategory: defaultItemOrder) { success in
             if success {
-                print("✅ Default menu order created successfully")
+                DebugLogger.debug("✅ Default menu order created successfully", category: "Menu")
             } else {
-                print("❌ Failed to create default menu order")
+                DebugLogger.debug("❌ Failed to create default menu order", category: "Menu")
             }
         }
     }
@@ -1752,7 +1752,7 @@ class MenuViewModel: ObservableObject {
     func fetchConfig() {
         // Only fetch if cache is stale
         guard dataCacheManager.isConfigPricingStale() else {
-            print("✅ Config loaded from cache")
+            DebugLogger.debug("✅ Config loaded from cache", category: "Menu")
             return
         }
         
@@ -1765,7 +1765,7 @@ class MenuViewModel: ObservableObject {
                 let price = data["halfAndHalfPrice"] as? Double ?? 13.99
                 self.halfAndHalfPrice = price
                 self.dataCacheManager.cacheConfigPricing(halfAndHalfPrice: price)
-                print("✅ Fetched and cached config pricing")
+                DebugLogger.debug("✅ Fetched and cached config pricing", category: "Menu")
             }
         }
     }
@@ -1784,10 +1784,10 @@ class MenuViewModel: ObservableObject {
     func updateHalfAndHalfPrice(_ newPrice: Double, completion: ((Error?) -> Void)? = nil) {
         configDocRef.setData(["halfAndHalfPrice": newPrice]) { error in
             if let error = error {
-                print("❌ Failed to update half and half price: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Failed to update half and half price: \(error.localizedDescription)", category: "Menu")
             } else {
                 self.halfAndHalfPrice = newPrice
-                print("✅ Updated half and half price to: $\(newPrice)")
+                DebugLogger.debug("✅ Updated half and half price to: $\(newPrice)", category: "Menu")
             }
             completion?(error)
         }
@@ -1795,11 +1795,11 @@ class MenuViewModel: ObservableObject {
 
     // Add a single item to the menu order for a specific category
     func addItemToMenuOrder(categoryId: String, itemId: String, completion: (() -> Void)? = nil) {
-        print("🔍 addItemToMenuOrder called for category: '\(categoryId)', item: '\(itemId)'")
+        DebugLogger.debug("🔍 addItemToMenuOrder called for category: '\(categoryId)', item: '\(itemId)'", category: "Menu")
         
         // First, ensure the category is in the ordered categories
         if !orderedCategoryIds.contains(categoryId) {
-            print("🔍 Adding category '\(categoryId)' to ordered categories")
+            DebugLogger.debug("🔍 Adding category '\(categoryId)' to ordered categories", category: "Menu")
             orderedCategoryIds.append(categoryId)
         }
         
@@ -1809,16 +1809,16 @@ class MenuViewModel: ObservableObject {
         }
         
         if !orderedItemIdsByCategory[categoryId]!.contains(itemId) {
-            print("🔍 Adding item '\(itemId)' to ordered items for category '\(categoryId)'")
+            DebugLogger.debug("🔍 Adding item '\(itemId)' to ordered items for category '\(categoryId)'", category: "Menu")
             orderedItemIdsByCategory[categoryId]!.append(itemId)
         }
         
         // Update the menu order in Firestore
         updateMenuOrder(categories: orderedCategoryIds, itemsByCategory: orderedItemIdsByCategory) { success in
             if success {
-                print("✅ Successfully added item '\(itemId)' to menu order for category '\(categoryId)'")
+                DebugLogger.debug("✅ Successfully added item '\(itemId)' to menu order for category '\(categoryId)'", category: "Menu")
             } else {
-                print("❌ Failed to add item to menu order (unknown error)")
+                DebugLogger.debug("❌ Failed to add item to menu order (unknown error)", category: "Menu")
             }
             completion?()
         }
@@ -1917,7 +1917,7 @@ class MenuViewModel: ObservableObject {
     func markDumplingItemsInFirestore(completion: ((Int, Int) -> Void)? = nil) {
         db.collection("menu").getDocuments { (snapshot, error) in
             guard let documents = snapshot?.documents, error == nil else {
-                print("❌ Error fetching menu documents: \(error?.localizedDescription ?? "Unknown error")")
+                DebugLogger.debug("❌ Error fetching menu documents: \(error?.localizedDescription ?? "Unknown error")", category: "Menu")
                 completion?(0, 0)
                 return
             }
@@ -1931,9 +1931,9 @@ class MenuViewModel: ObservableObject {
                     group.enter()
                     doc.reference.updateData(["isDumpling": true]) { err in
                         if let err = err {
-                            print("❌ Failed to update \(id): \(err.localizedDescription)")
+                            DebugLogger.debug("❌ Failed to update \(id): \(err.localizedDescription)", category: "Menu")
                         } else {
-                            print("✅ Marked \(id) as dumpling")
+                            DebugLogger.debug("✅ Marked \(id) as dumpling", category: "Menu")
                             updated += 1
                         }
                         group.leave()
@@ -1941,7 +1941,7 @@ class MenuViewModel: ObservableObject {
                 }
             }
             group.notify(queue: .main) {
-                print("✅ Done marking dumpling items. Updated \(updated) out of \(total) items.")
+                DebugLogger.debug("✅ Done marking dumpling items. Updated \(updated) out of \(total) items.", category: "Menu")
                 completion?(updated, total)
             }
         }
@@ -1951,7 +1951,7 @@ class MenuViewModel: ObservableObject {
     func checkMenuItemsForMissingFields() {
         db.collection("menu").getDocuments { (snapshot, error) in
             guard let documents = snapshot?.documents, error == nil else {
-                print("❌ Error fetching menu documents: \(error?.localizedDescription ?? "Unknown error")")
+                DebugLogger.debug("❌ Error fetching menu documents: \(error?.localizedDescription ?? "Unknown error")", category: "Menu")
                 return
             }
             let requiredFields: [String] = ["id", "description", "price", "imageURL", "isAvailable", "paymentLinkID"]
@@ -1965,14 +1965,14 @@ class MenuViewModel: ObservableObject {
                     }
                 }
                 if !missing.isEmpty {
-                    print("❌ Document \(doc.documentID) is missing fields: \(missing.joined(separator: ", "))")
+                    DebugLogger.debug("❌ Document \(doc.documentID) is missing fields: \(missing.joined(separator: ", "))", category: "Menu")
                     missingCount += 1
                 }
             }
             if missingCount == 0 {
-                print("✅ All menu items have the required fields.")
+                DebugLogger.debug("✅ All menu items have the required fields.", category: "Menu")
             } else {
-                print("❌ Found \(missingCount) menu items with missing fields.")
+                DebugLogger.debug("❌ Found \(missingCount) menu items with missing fields.", category: "Menu")
             }
         }
     }
@@ -1981,7 +1981,7 @@ class MenuViewModel: ObservableObject {
     func migrateMenuItemsToSubcollections(completion: (() -> Void)? = nil) {
         db.collection("menu").getDocuments { (snapshot, error) in
             guard let documents = snapshot?.documents, error == nil else {
-                print("❌ Error fetching menu documents: \(error?.localizedDescription ?? "Unknown error")")
+                DebugLogger.debug("❌ Error fetching menu documents: \(error?.localizedDescription ?? "Unknown error")", category: "Menu")
                 completion?()
                 return
             }
@@ -1992,7 +1992,7 @@ class MenuViewModel: ObservableObject {
                 if let items = data["items"] as? [[String: Any]], !items.isEmpty {
                     let categoryId = doc.documentID
                     let itemsCollection = doc.reference.collection("items")
-                    print("Migrating \(items.count) items for category: \(categoryId)")
+                    DebugLogger.debug("Migrating \(items.count) items for category: \(categoryId)", category: "Menu")
                     for itemData in items {
                         if let id = itemData["id"] as? String {
                             // Sanitize the document ID to remove invalid characters
@@ -2006,9 +2006,9 @@ class MenuViewModel: ObservableObject {
                             group.enter()
                             itemsCollection.document(sanitizedId).setData(itemData) { err in
                                 if let err = err {
-                                    print("❌ Failed to migrate item \(id) (sanitized: \(sanitizedId)) in category \(categoryId): \(err.localizedDescription)")
+                                    DebugLogger.debug("❌ Failed to migrate item \(id) (sanitized: \(sanitizedId)) in category \(categoryId): \(err.localizedDescription)", category: "Menu")
                                 } else {
-                                    print("✅ Migrated item \(id) (sanitized: \(sanitizedId)) in category \(categoryId)")
+                                    DebugLogger.debug("✅ Migrated item \(id) (sanitized: \(sanitizedId)) in category \(categoryId)", category: "Menu")
                                 }
                                 group.leave()
                             }
@@ -2018,9 +2018,9 @@ class MenuViewModel: ObservableObject {
                     group.enter()
                     doc.reference.updateData(["items": FieldValue.delete()]) { err in
                         if let err = err {
-                            print("❌ Failed to remove 'items' field from category \(categoryId): \(err.localizedDescription)")
+                            DebugLogger.debug("❌ Failed to remove 'items' field from category \(categoryId): \(err.localizedDescription)", category: "Menu")
                         } else {
-                            print("✅ Removed 'items' field from category \(categoryId)")
+                            DebugLogger.debug("✅ Removed 'items' field from category \(categoryId)", category: "Menu")
                         }
                         group.leave()
                     }
@@ -2028,7 +2028,7 @@ class MenuViewModel: ObservableObject {
                 }
             }
             group.notify(queue: .main) {
-                print("✅ Migration complete. Migrated \(migratedCategories) categories.")
+                DebugLogger.debug("✅ Migration complete. Migrated \(migratedCategories) categories.", category: "Menu")
                 completion?()
             }
         }
@@ -2039,11 +2039,11 @@ class MenuViewModel: ObservableObject {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyyMMdd_HHmmss"
         let backupCollectionName = "menu_backup_\(dateFormatter.string(from: Date()))"
-        print("Creating backup: \(backupCollectionName)")
+        DebugLogger.debug("Creating backup: \(backupCollectionName)", category: "Menu")
         
         db.collection("menu").getDocuments { (snapshot, error) in
             guard let documents = snapshot?.documents, error == nil else {
-                print("❌ Error fetching menu documents: \(error?.localizedDescription ?? "Unknown error")")
+                DebugLogger.debug("❌ Error fetching menu documents: \(error?.localizedDescription ?? "Unknown error")", category: "Menu")
                 completion?(false, "Failed to fetch menu documents")
                 return
             }
@@ -2059,10 +2059,10 @@ class MenuViewModel: ObservableObject {
                 group.enter()
                 backupDocRef.setData(data) { err in
                     if let err = err {
-                        print("❌ Failed to backup category \(categoryId): \(err.localizedDescription)")
+                        DebugLogger.debug("❌ Failed to backup category \(categoryId): \(err.localizedDescription)", category: "Menu")
                         errorCount += 1
                     } else {
-                        print("✅ Backed up category: \(categoryId)")
+                        DebugLogger.debug("✅ Backed up category: \(categoryId)", category: "Menu")
                         backupCount += 1
                     }
                     group.leave()
@@ -2072,7 +2072,7 @@ class MenuViewModel: ObservableObject {
                 let itemsCollection = doc.reference.collection("items")
                 itemsCollection.getDocuments { (itemsSnapshot, itemsError) in
                     if let itemsDocs = itemsSnapshot?.documents, !itemsDocs.isEmpty {
-                        print("Backing up \(itemsDocs.count) items for category: \(categoryId)")
+                        DebugLogger.debug("Backing up \(itemsDocs.count) items for category: \(categoryId)", category: "Menu")
                         for itemDoc in itemsDocs {
                             group.enter()
                             let itemData = itemDoc.data()
@@ -2086,10 +2086,10 @@ class MenuViewModel: ObservableObject {
                             let backupItemRef = backupDocRef.collection("items").document(sanitizedId)
                             backupItemRef.setData(itemData) { err in
                                 if let err = err {
-                                    print("❌ Failed to backup item \(itemDoc.documentID) (sanitized: \(sanitizedId)) in category \(categoryId): \(err.localizedDescription)")
+                                    DebugLogger.debug("❌ Failed to backup item \(itemDoc.documentID) (sanitized: \(sanitizedId)) in category \(categoryId): \(err.localizedDescription)", category: "Menu")
                                     errorCount += 1
                                 } else {
-                                    print("✅ Backed up item: \(itemDoc.documentID) (sanitized: \(sanitizedId)) in category \(categoryId)")
+                                    DebugLogger.debug("✅ Backed up item: \(itemDoc.documentID) (sanitized: \(sanitizedId)) in category \(categoryId)", category: "Menu")
                                     backupCount += 1
                                 }
                                 group.leave()
@@ -2100,7 +2100,7 @@ class MenuViewModel: ObservableObject {
             }
             group.notify(queue: .main) {
                 let message = "Backup complete: \(backupCollectionName). Backed up \(backupCount) documents with \(errorCount) errors."
-                print("✅ \(message)")
+                DebugLogger.debug("✅ \(message)", category: "Menu")
                 completion?(errorCount == 0, message)
             }
         }
@@ -2108,13 +2108,13 @@ class MenuViewModel: ObservableObject {
 
     /// Manually refresh the menu data
     func refreshMenu() {
-        print("🔄 refreshMenu() called - forcing fresh data fetch")
+        DebugLogger.debug("🔄 refreshMenu() called - forcing fresh data fetch", category: "Menu")
         forceRefreshMenu()
     }
     
     /// Force refresh a specific category's items
     func refreshCategoryItems(categoryId: String) {
-        print("🔄 refreshCategoryItems called for category: \(categoryId)")
+        DebugLogger.debug("🔄 refreshCategoryItems called for category: \(categoryId)", category: "Menu")
         // Mark this category as loading
         DispatchQueue.main.async {
             self.loadingCategories.insert(categoryId)
@@ -2132,16 +2132,16 @@ class MenuViewModel: ObservableObject {
             guard let self = self else { return }
             var items: [MenuItem] = []
             if let itemsSnapshot = itemsSnapshot {
-                print("🔄 Items snapshot received for category '\(categoryId)': \(itemsSnapshot.documents.count) items")
+                DebugLogger.debug("🔄 Items snapshot received for category '\(categoryId)': \(itemsSnapshot.documents.count) items", category: "Menu")
                 items = self.dedupeMenuItemsFromSnapshot(categoryId: categoryId, documents: itemsSnapshot.documents)
-                print("🔄 Fetched items for category \(categoryId): \(items.map { $0.id })")
+                DebugLogger.debug("🔄 Fetched items for category \(categoryId): \(items.map { $0.id })", category: "Menu")
             }
             DispatchQueue.main.async {
                 if let catIndex = self.menuCategories.firstIndex(where: { $0.id == categoryId }) {
                     self.menuCategories[catIndex].items = items
-                    print("🔄 Updated category '\(categoryId)' with \(items.count) items")
+                    DebugLogger.debug("🔄 Updated category '\(categoryId)' with \(items.count) items", category: "Menu")
                 } else {
-                    print("❌ Category '\(categoryId)' not found in menuCategories")
+                    DebugLogger.debug("❌ Category '\(categoryId)' not found in menuCategories", category: "Menu")
                 }
                 // Category finished loading (regardless of item count)
                 self.loadingCategories.remove(categoryId)
@@ -2152,11 +2152,11 @@ class MenuViewModel: ObservableObject {
 
     /// Restore menu data from a backup collection
     func restoreFromBackup(backupCollectionName: String, completion: ((Bool, String) -> Void)? = nil) {
-        print("🔄 Restoring from backup: \(backupCollectionName)")
+        DebugLogger.debug("🔄 Restoring from backup: \(backupCollectionName)", category: "Menu")
         
         db.collection(backupCollectionName).getDocuments { (snapshot, error) in
             guard let documents = snapshot?.documents, error == nil else {
-                print("❌ Error fetching backup documents: \(error?.localizedDescription ?? "Unknown error")")
+                DebugLogger.debug("❌ Error fetching backup documents: \(error?.localizedDescription ?? "Unknown error")", category: "Menu")
                 completion?(false, "Failed to fetch backup documents")
                 return
             }
@@ -2173,10 +2173,10 @@ class MenuViewModel: ObservableObject {
                 group.enter()
                 categoryRef.setData(data) { err in
                     if let err = err {
-                        print("❌ Failed to restore category \(categoryId): \(err.localizedDescription)")
+                        DebugLogger.debug("❌ Failed to restore category \(categoryId): \(err.localizedDescription)", category: "Menu")
                         errorCount += 1
                     } else {
-                        print("✅ Restored category: \(categoryId)")
+                        DebugLogger.debug("✅ Restored category: \(categoryId)", category: "Menu")
                         restoredCount += 1
                     }
                     group.leave()
@@ -2186,7 +2186,7 @@ class MenuViewModel: ObservableObject {
                 let backupItemsCollection = doc.reference.collection("items")
                 backupItemsCollection.getDocuments { (itemsSnapshot, itemsError) in
                     if let itemsDocs = itemsSnapshot?.documents, !itemsDocs.isEmpty {
-                        print("Restoring \(itemsDocs.count) items for category: \(categoryId)")
+                        DebugLogger.debug("Restoring \(itemsDocs.count) items for category: \(categoryId)", category: "Menu")
                         let itemsCollection = categoryRef.collection("items")
                         
                         for itemDoc in itemsDocs {
@@ -2194,10 +2194,10 @@ class MenuViewModel: ObservableObject {
                             let itemData = itemDoc.data()
                             itemsCollection.document(itemDoc.documentID).setData(itemData) { err in
                                 if let err = err {
-                                    print("❌ Failed to restore item \(itemDoc.documentID) in category \(categoryId): \(err.localizedDescription)")
+                                    DebugLogger.debug("❌ Failed to restore item \(itemDoc.documentID) in category \(categoryId): \(err.localizedDescription)", category: "Menu")
                                     errorCount += 1
                                 } else {
-                                    print("✅ Restored item: \(itemDoc.documentID) in category \(categoryId)")
+                                    DebugLogger.debug("✅ Restored item: \(itemDoc.documentID) in category \(categoryId)", category: "Menu")
                                     restoredCount += 1
                                 }
                                 group.leave()
@@ -2209,7 +2209,7 @@ class MenuViewModel: ObservableObject {
             
             group.notify(queue: .main) {
                 let message = "Restore complete from \(backupCollectionName). Restored \(restoredCount) documents with \(errorCount) errors."
-                print("✅ \(message)")
+                DebugLogger.debug("✅ \(message)", category: "Menu")
                 completion?(errorCount == 0, message)
             }
         }
@@ -2248,7 +2248,7 @@ class MenuViewModel: ObservableObject {
         db.collection("allergyTags").getDocuments { [weak self] (snapshot, error) in
             guard let self = self else { return }
             if let error = error {
-                print("❌ Error fetching allergy tags: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Error fetching allergy tags: \(error.localizedDescription)", category: "Menu")
                 DispatchQueue.main.async {
                     self.isFetchingAllergyTags = false
                 }
@@ -2269,7 +2269,7 @@ class MenuViewModel: ObservableObject {
                 self.allergyTags = tags
                 self.isFetchingAllergyTags = false
                 self.dataCacheManager.cacheAllergyTags(tags)
-                print("✅ Fetched and cached \(tags.count) allergy tags")
+                DebugLogger.debug("✅ Fetched and cached \(tags.count) allergy tags", category: "Menu")
             }
         }
     }
@@ -2280,7 +2280,7 @@ class MenuViewModel: ObservableObject {
         allergyTagsListener = db.collection("allergyTags").addSnapshotListener { [weak self] (snapshot, error) in
             guard let self = self else { return }
             if let error = error {
-                print("Error fetching allergy tags: \(error.localizedDescription)")
+                DebugLogger.debug("Error fetching allergy tags: \(error.localizedDescription)", category: "Menu")
                 return
             }
             guard let documents = snapshot?.documents else {
@@ -2380,7 +2380,7 @@ class MenuViewModel: ObservableObject {
         db.collection("drinkOptions").getDocuments { [weak self] (snapshot, error) in
             guard let self = self else { return }
             if let error = error {
-                print("❌ Error fetching drink options: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Error fetching drink options: \(error.localizedDescription)", category: "Menu")
                 return
             }
             guard let documents = snapshot?.documents else {
@@ -2393,7 +2393,7 @@ class MenuViewModel: ObservableObject {
             
             self.drinkOptions = options
             self.dataCacheManager.cacheDrinkOptions(options)
-            print("✅ Fetched and cached \(options.count) drink options")
+            DebugLogger.debug("✅ Fetched and cached \(options.count) drink options", category: "Menu")
         }
     }
     
@@ -2403,7 +2403,7 @@ class MenuViewModel: ObservableObject {
         drinkOptionsListener = db.collection("drinkOptions").addSnapshotListener { [weak self] (snapshot, error) in
             guard let self = self else { return }
             if let error = error {
-                print("Error fetching drink options: \(error.localizedDescription)")
+                DebugLogger.debug("Error fetching drink options: \(error.localizedDescription)", category: "Menu")
                 return
             }
             guard let documents = snapshot?.documents else {
@@ -2504,7 +2504,7 @@ class MenuViewModel: ObservableObject {
         db.collection("drinkFlavors").getDocuments { [weak self] (snapshot, error) in
             guard let self = self else { return }
             if let error = error {
-                print("❌ Error fetching drink flavors: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Error fetching drink flavors: \(error.localizedDescription)", category: "Menu")
                 return
             }
             guard let documents = snapshot?.documents else {
@@ -2517,7 +2517,7 @@ class MenuViewModel: ObservableObject {
             
             self.drinkFlavors = flavors
             self.dataCacheManager.cacheDrinkFlavors(flavors)
-            print("✅ Fetched and cached \(flavors.count) drink flavors")
+            DebugLogger.debug("✅ Fetched and cached \(flavors.count) drink flavors", category: "Menu")
         }
     }
     
@@ -2527,7 +2527,7 @@ class MenuViewModel: ObservableObject {
         drinkFlavorsListener = db.collection("drinkFlavors").addSnapshotListener { [weak self] (snapshot, error) in
             guard let self = self else { return }
             if let error = error {
-                print("Error fetching drink flavors: \(error.localizedDescription)")
+                DebugLogger.debug("Error fetching drink flavors: \(error.localizedDescription)", category: "Menu")
                 return
             }
             guard let documents = snapshot?.documents else {
@@ -2667,7 +2667,7 @@ class MenuViewModel: ObservableObject {
         db.collection("drinkToppings").getDocuments { [weak self] (snapshot, error) in
             guard let self = self else { return }
             if let error = error {
-                print("❌ Error fetching drink toppings: \(error.localizedDescription)")
+                DebugLogger.debug("❌ Error fetching drink toppings: \(error.localizedDescription)", category: "Menu")
                 return
             }
             guard let documents = snapshot?.documents else {
@@ -2680,7 +2680,7 @@ class MenuViewModel: ObservableObject {
             
             self.drinkToppings = toppings
             self.dataCacheManager.cacheDrinkToppings(toppings)
-            print("✅ Fetched and cached \(toppings.count) drink toppings")
+            DebugLogger.debug("✅ Fetched and cached \(toppings.count) drink toppings", category: "Menu")
         }
     }
     
@@ -2690,7 +2690,7 @@ class MenuViewModel: ObservableObject {
         drinkToppingsListener = db.collection("drinkToppings").addSnapshotListener { [weak self] (snapshot, error) in
             guard let self = self else { return }
             if let error = error {
-                print("Error fetching drink toppings: \(error.localizedDescription)")
+                DebugLogger.debug("Error fetching drink toppings: \(error.localizedDescription)", category: "Menu")
                 return
             }
             guard let documents = snapshot?.documents else {
@@ -2781,7 +2781,7 @@ class MenuViewModel: ObservableObject {
         let globalToppings = drinkOptions.filter { !$0.isMilkSub }
         
         if globalToppings.isEmpty {
-            print("No global drink toppings found. Please create global drink options first.")
+            DebugLogger.debug("No global drink toppings found. Please create global drink options first.", category: "Menu")
             return
         }
         
@@ -2797,14 +2797,14 @@ class MenuViewModel: ObservableObject {
             addDrinkTopping(drinkTopping)
         }
         
-        print("Created \(globalToppings.count) drink toppings for Lemonades and Sodas")
+        DebugLogger.debug("Created \(globalToppings.count) drink toppings for Lemonades and Sodas", category: "Menu")
     }
     
     // MARK: - Image Debugging
     
     /// Debug function to test all image URLs in the current menu
     func debugAllImageURLs() {
-        print("🔍 Debugging all image URLs in menu...")
+        DebugLogger.debug("🔍 Debugging all image URLs in menu...", category: "Menu")
         var totalItems = 0
         var validURLs = 0
         var invalidURLs = 0
@@ -2812,33 +2812,33 @@ class MenuViewModel: ObservableObject {
         for category in menuCategories {
             for item in category.items ?? [] {
                 totalItems += 1
-                print("\n--- Item: \(item.id) ---")
-                print("Raw imageURL: '\(item.imageURL)'")
+                DebugLogger.debug("\n--- Item: \(item.id) ---", category: "Menu")
+                DebugLogger.debug("Raw imageURL: '\(item.imageURL)'", category: "Menu")
                 
                 // Test the URL conversion
                 if let url = convertImageURL(item.imageURL) {
                     validURLs += 1
-                    print("✅ Valid URL: \(url)")
+                    DebugLogger.debug("✅ Valid URL: \(url)", category: "Menu")
                     
                     // Test network access
                     testImageURLAccess(url) { success in
                         if success {
-                            print("✅ Image accessible")
+                            DebugLogger.debug("✅ Image accessible", category: "Menu")
                         } else {
-                            print("❌ Image not accessible")
+                            DebugLogger.debug("❌ Image not accessible", category: "Menu")
                         }
                     }
                 } else {
                     invalidURLs += 1
-                    print("❌ Invalid URL")
+                    DebugLogger.debug("❌ Invalid URL", category: "Menu")
                 }
             }
         }
         
-        print("\n📊 Summary:")
-        print("Total items: \(totalItems)")
-        print("Valid URLs: \(validURLs)")
-        print("Invalid URLs: \(invalidURLs)")
+        DebugLogger.debug("\n📊 Summary:", category: "Menu")
+        DebugLogger.debug("Total items: \(totalItems)", category: "Menu")
+        DebugLogger.debug("Valid URLs: \(validURLs)", category: "Menu")
+        DebugLogger.debug("Invalid URLs: \(invalidURLs)", category: "Menu")
     }
     
     /// Convert image URL using the same logic as MenuItemCard
@@ -2874,14 +2874,14 @@ class MenuViewModel: ObservableObject {
         URLSession.shared.dataTask(with: request) { _, response, error in
             DispatchQueue.main.async {
                 if let error = error {
-                    print("❌ Network error: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ Network error: \(error.localizedDescription)", category: "Menu")
                     completion(false)
                 } else if let httpResponse = response as? HTTPURLResponse {
                     let success = httpResponse.statusCode == 200
-                    print("📡 HTTP Status: \(httpResponse.statusCode) - \(success ? "✅" : "❌")")
+                    DebugLogger.debug("📡 HTTP Status: \(httpResponse.statusCode) - \(success ? "✅" : "❌")", category: "Menu")
                     completion(success)
                 } else {
-                    print("❌ No HTTP response")
+                    DebugLogger.debug("❌ No HTTP response", category: "Menu")
                     completion(false)
                 }
             }
@@ -2892,32 +2892,32 @@ class MenuViewModel: ObservableObject {
     
     /// Debug function to test drink options configuration
     func debugDrinkOptions() {
-        print("🔍 Debugging drink options...")
-        print("Total drink options: \(drinkOptions.count)")
+        DebugLogger.debug("🔍 Debugging drink options...", category: "Menu")
+        DebugLogger.debug("Total drink options: \(drinkOptions.count)", category: "Menu")
         
         let toppings = drinkOptions.filter { !$0.isMilkSub }
         let milkSubs = drinkOptions.filter { $0.isMilkSub }
         
-        print("Toppings: \(toppings.count)")
+        DebugLogger.debug("Toppings: \(toppings.count)", category: "Menu")
         for topping in toppings {
-            print("  - \(topping.name) (ID: \(topping.id), Price: $\(topping.price))")
+            DebugLogger.debug("  - \(topping.name) (ID: \(topping.id), Price: $\(topping.price))", category: "Menu")
         }
         
-        print("Milk Substitutions: \(milkSubs.count)")
+        DebugLogger.debug("Milk Substitutions: \(milkSubs.count)", category: "Menu")
         for milkSub in milkSubs {
-            print("  - \(milkSub.name) (ID: \(milkSub.id), Price: $\(milkSub.price))")
+            DebugLogger.debug("  - \(milkSub.name) (ID: \(milkSub.id), Price: $\(milkSub.price))", category: "Menu")
         }
         
-        print("\n📊 Menu Items with Drink Options:")
+        DebugLogger.debug("\n📊 Menu Items with Drink Options:", category: "Menu")
         for category in menuCategories {
             for item in category.items ?? [] {
                 // Check items that have topping or milk sub modifiers enabled
                 if item.toppingModifiersEnabled || item.milkSubModifiersEnabled {
-                    print("\n--- Item: \(item.id) (Category: \(category.id)) ---")
-                    print("  toppingModifiersEnabled: \(item.toppingModifiersEnabled)")
-                    print("  milkSubModifiersEnabled: \(item.milkSubModifiersEnabled)")
-                    print("  availableToppingIDs: \(item.availableToppingIDs)")
-                    print("  availableMilkSubIDs: \(item.availableMilkSubIDs)")
+                    DebugLogger.debug("\n--- Item: \(item.id) (Category: \(category.id)) ---", category: "Menu")
+                    DebugLogger.debug("  toppingModifiersEnabled: \(item.toppingModifiersEnabled)", category: "Menu")
+                    DebugLogger.debug("  milkSubModifiersEnabled: \(item.milkSubModifiersEnabled)", category: "Menu")
+                    DebugLogger.debug("  availableToppingIDs: \(item.availableToppingIDs)", category: "Menu")
+                    DebugLogger.debug("  availableMilkSubIDs: \(item.availableMilkSubIDs)", category: "Menu")
                     
                     // Test available options
                     let availableToppings = item.availableToppingIDs.compactMap { toppingID in
@@ -2927,8 +2927,8 @@ class MenuViewModel: ObservableObject {
                         drinkOptions.first(where: { $0.id == milkID && $0.isMilkSub })
                     }
                     
-                    print("  Available toppings: \(availableToppings.count)")
-                    print("  Available milk subs: \(availableMilkSubs.count)")
+                    DebugLogger.debug("  Available toppings: \(availableToppings.count)", category: "Menu")
+                    DebugLogger.debug("  Available milk subs: \(availableMilkSubs.count)", category: "Menu")
                 }
             }
         }

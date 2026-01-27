@@ -41,17 +41,17 @@ class NotificationService: NSObject, ObservableObject {
                 self?.hasNotificationPermission = granted
                 
                 if let error = error {
-                    print("❌ NotificationService: Permission request error: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ NotificationService: Permission request error: \(error.localizedDescription)", category: "Notifications")
                 }
                 
                 if granted {
-                    print("✅ NotificationService: Notification permission granted")
+                    DebugLogger.debug("✅ NotificationService: Notification permission granted", category: "Notifications")
                     // Register for remote notifications on the main thread
                     DispatchQueue.main.async {
                         UIApplication.shared.registerForRemoteNotifications()
                     }
                 } else {
-                    print("⚠️ NotificationService: Notification permission denied")
+                    DebugLogger.debug("⚠️ NotificationService: Notification permission denied", category: "Notifications")
                 }
                 
                 completion?(granted)
@@ -82,7 +82,7 @@ class NotificationService: NSObject, ObservableObject {
     /// Store FCM token via server endpoint (enables deduplication across users)
     func storeFCMToken(_ token: String) {
         guard let user = Auth.auth().currentUser else {
-            print("⚠️ NotificationService: No authenticated user, cannot store FCM token")
+            DebugLogger.debug("⚠️ NotificationService: No authenticated user, cannot store FCM token", category: "Notifications")
             return
         }
         
@@ -90,7 +90,7 @@ class NotificationService: NSObject, ObservableObject {
         // to prevent notifications going to wrong device after account switch
         user.getIDToken { [weak self] idToken, error in
             if let error = error {
-                print("❌ NotificationService: Failed to get ID token: \(error.localizedDescription)")
+                DebugLogger.debug("❌ NotificationService: Failed to get ID token: \(error.localizedDescription)", category: "Notifications")
                 // Fallback to direct Firestore write
                 self?.storeFCMTokenDirectly(token, uid: user.uid)
                 return
@@ -98,7 +98,7 @@ class NotificationService: NSObject, ObservableObject {
             
             guard let idToken = idToken,
                   let url = URL(string: "\(Config.backendURL)/me/fcmToken") else {
-                print("❌ NotificationService: Invalid URL or token")
+                DebugLogger.debug("❌ NotificationService: Invalid URL or token", category: "Notifications")
                 self?.storeFCMTokenDirectly(token, uid: user.uid)
                 return
             }
@@ -113,19 +113,19 @@ class NotificationService: NSObject, ObservableObject {
             
             URLSession.shared.dataTask(with: request) { data, response, error in
                 if let error = error {
-                    print("❌ NotificationService: Server FCM token store failed: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ NotificationService: Server FCM token store failed: \(error.localizedDescription)", category: "Notifications")
                     // Fallback to direct Firestore write
                     self?.storeFCMTokenDirectly(token, uid: user.uid)
                     return
                 }
                 
                 if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
-                    print("✅ NotificationService: FCM token stored via server (with deduplication)")
+                    DebugLogger.debug("✅ NotificationService: FCM token stored via server (with deduplication)", category: "Notifications")
                     DispatchQueue.main.async {
                         self?.fcmToken = token
                     }
                 } else {
-                    print("⚠️ NotificationService: Server returned non-200, falling back to direct write")
+                    DebugLogger.debug("⚠️ NotificationService: Server returned non-200, falling back to direct write", category: "Notifications")
                     self?.storeFCMTokenDirectly(token, uid: user.uid)
                 }
             }.resume()
@@ -141,9 +141,9 @@ class NotificationService: NSObject, ObservableObject {
             "fcmTokenUpdatedAt": FieldValue.serverTimestamp()
         ]) { [weak self] error in
             if let error = error {
-                print("❌ NotificationService: Failed to store FCM token directly: \(error.localizedDescription)")
+                DebugLogger.debug("❌ NotificationService: Failed to store FCM token directly: \(error.localizedDescription)", category: "Notifications")
             } else {
-                print("✅ NotificationService: FCM token stored directly (fallback)")
+                DebugLogger.debug("✅ NotificationService: FCM token stored directly (fallback)", category: "Notifications")
                 DispatchQueue.main.async {
                     self?.fcmToken = token
                 }
@@ -158,7 +158,7 @@ class NotificationService: NSObject, ObservableObject {
         // Use server endpoint for token removal
         user.getIDToken { [weak self] idToken, error in
             if let error = error {
-                print("❌ NotificationService: Failed to get ID token for removal: \(error.localizedDescription)")
+                DebugLogger.debug("❌ NotificationService: Failed to get ID token for removal: \(error.localizedDescription)", category: "Notifications")
                 self?.removeFCMTokenDirectly(uid: user.uid)
                 return
             }
@@ -180,13 +180,13 @@ class NotificationService: NSObject, ObservableObject {
             
             URLSession.shared.dataTask(with: request) { data, response, error in
                 if let error = error {
-                    print("❌ NotificationService: Server FCM token removal failed: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ NotificationService: Server FCM token removal failed: \(error.localizedDescription)", category: "Notifications")
                     self?.removeFCMTokenDirectly(uid: user.uid)
                     return
                 }
                 
                 if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
-                    print("✅ NotificationService: FCM token removed via server")
+                    DebugLogger.debug("✅ NotificationService: FCM token removed via server", category: "Notifications")
                 } else {
                     self?.removeFCMTokenDirectly(uid: user.uid)
                 }
@@ -207,9 +207,9 @@ class NotificationService: NSObject, ObservableObject {
             "fcmTokenUpdatedAt": FieldValue.delete()
         ]) { error in
             if let error = error {
-                print("❌ NotificationService: Failed to remove FCM token directly: \(error.localizedDescription)")
+                DebugLogger.debug("❌ NotificationService: Failed to remove FCM token directly: \(error.localizedDescription)", category: "Notifications")
             } else {
-                print("✅ NotificationService: FCM token removed directly (fallback)")
+                DebugLogger.debug("✅ NotificationService: FCM token removed directly (fallback)", category: "Notifications")
             }
         }
     }
@@ -222,12 +222,12 @@ class NotificationService: NSObject, ObservableObject {
         
         Messaging.messaging().token { [weak self] token, error in
             if let error = error {
-                print("❌ NotificationService: Error fetching FCM token: \(error.localizedDescription)")
+                DebugLogger.debug("❌ NotificationService: Error fetching FCM token: \(error.localizedDescription)", category: "Notifications")
                 return
             }
 
             if let token = token {
-                print("✅ NotificationService: FCM token fetched")
+                DebugLogger.debug("✅ NotificationService: FCM token fetched", category: "Notifications")
                 self?.storeFCMToken(token)
             }
         }
@@ -253,7 +253,7 @@ class NotificationService: NSObject, ObservableObject {
             .limit(to: 50)
             .addSnapshotListener { [weak self] snapshot, error in
                 if let error = error {
-                    print("❌ NotificationService: Notifications listener error: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ NotificationService: Notifications listener error: \(error.localizedDescription)", category: "Notifications")
                     return
                 }
                 
@@ -270,7 +270,7 @@ class NotificationService: NSObject, ObservableObject {
                     let data = doc.data()
                     // Validate that data is actually a dictionary
                     guard data is [String: Any] else {
-                        print("⚠️ NotificationService: Invalid data format for notification \(doc.documentID)")
+                        DebugLogger.debug("⚠️ NotificationService: Invalid data format for notification \(doc.documentID)", category: "Notifications")
                         return nil
                     }
                     // Safely create notification - init handles edge cases internally
@@ -334,7 +334,7 @@ class NotificationService: NSObject, ObservableObject {
             "read": true
         ]) { [weak self] error in
             if let error = error {
-                print("❌ NotificationService: Failed to mark notification as read: \(error.localizedDescription)")
+                DebugLogger.debug("❌ NotificationService: Failed to mark notification as read: \(error.localizedDescription)", category: "Notifications")
             } else {
                 DispatchQueue.main.async {
                     self?.updateAppBadge()
@@ -381,7 +381,7 @@ class NotificationService: NSObject, ObservableObject {
                 
                 // Handle errors explicitly
                 if let error = error {
-                    print("❌ NotificationService: Error fetching unread notifications: \(error.localizedDescription)")
+                    DebugLogger.debug("❌ NotificationService: Error fetching unread notifications: \(error.localizedDescription)", category: "Notifications")
                     DispatchQueue.main.async {
                         self.isMarkingAllAsRead = false
                     }
@@ -405,10 +405,10 @@ class NotificationService: NSObject, ObservableObject {
                         guard let self = self else { return }
                         
                         if let error = error {
-                            print("❌ NotificationService: Failed to mark all as read: \(error.localizedDescription)")
+                            DebugLogger.debug("❌ NotificationService: Failed to mark all as read: \(error.localizedDescription)", category: "Notifications")
                             self.isMarkingAllAsRead = false
                         } else {
-                            print("✅ NotificationService: All notifications marked as read")
+                            DebugLogger.debug("✅ NotificationService: All notifications marked as read", category: "Notifications")
                             
                             // Keep flag set for a grace period to catch notifications that arrive immediately after
                             // This prevents referral notifications (created by triggers) from causing badge to reappear
@@ -438,7 +438,7 @@ class NotificationService: NSObject, ObservableObject {
         
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
-                print("❌ NotificationService: Failed to show local notification: \(error.localizedDescription)")
+                DebugLogger.debug("❌ NotificationService: Failed to show local notification: \(error.localizedDescription)", category: "Notifications")
             }
         }
     }
@@ -448,7 +448,7 @@ class NotificationService: NSObject, ObservableObject {
     /// Handle when user taps on a push notification
     /// Marks all unread notifications as read (since push payloads don't include Firestore document IDs)
     func handlePushNotificationTap(userInfo: [String: Any]) {
-        print("📱 NotificationService: Handling push notification tap")
+        DebugLogger.debug("📱 NotificationService: Handling push notification tap", category: "Notifications")
         markAllNotificationsAsRead()
     }
     
@@ -458,7 +458,7 @@ class NotificationService: NSObject, ObservableObject {
     func updateAppBadge() {
         DispatchQueue.main.async {
             UIApplication.shared.applicationIconBadgeNumber = self.unreadNotificationCount
-            print("📱 NotificationService: Updated app badge to \(self.unreadNotificationCount)")
+            DebugLogger.debug("📱 NotificationService: Updated app badge to \(self.unreadNotificationCount)", category: "Notifications")
         }
     }
     
@@ -479,10 +479,10 @@ class NotificationService: NSObject, ObservableObject {
             "promotionalNotificationsEnabled": enabled
         ]) { error in
             if let error = error {
-                print("❌ NotificationService: Failed to update promotional preference: \(error.localizedDescription)")
+                DebugLogger.debug("❌ NotificationService: Failed to update promotional preference: \(error.localizedDescription)", category: "Notifications")
                 completion(false, error)
             } else {
-                print("✅ NotificationService: Promotional preference updated to \(enabled)")
+                DebugLogger.debug("✅ NotificationService: Promotional preference updated to \(enabled)", category: "Notifications")
                 completion(true, nil)
             }
         }
@@ -493,10 +493,10 @@ class NotificationService: NSObject, ObservableObject {
 
 extension NotificationService: MessagingDelegate {
     func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
-        print("🔔 NotificationService: FCM token received/refreshed")
+        DebugLogger.debug("🔔 NotificationService: FCM token received/refreshed", category: "Notifications")
         
         guard let token = fcmToken else {
-            print("⚠️ NotificationService: FCM token is nil")
+            DebugLogger.debug("⚠️ NotificationService: FCM token is nil", category: "Notifications")
             return
         }
         

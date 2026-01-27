@@ -318,7 +318,7 @@ struct RewardDumplingSelectionView: View {
         
         let tierId = reward.rewardTierId ?? "none"
         let tierInfo = "Reward: '\(reward.title)', TierId: '\(tierId)', Points: \(reward.pointsRequired)"
-        print("🥟 Loading eligible dumplings - \(tierInfo)")
+        DebugLogger.debug("🥟 Loading eligible dumplings - \(tierInfo)", category: "Rewards")
         
         let result = await redemptionService.fetchEligibleItems(
             pointsRequired: reward.pointsRequired,
@@ -329,15 +329,15 @@ struct RewardDumplingSelectionView: View {
             switch result {
             case .success(let items):
                 eligibleItems = items
-                print("✅ Loaded \(items.count) dumpling items - \(tierInfo)")
+                DebugLogger.debug("✅ Loaded \(items.count) dumpling items - \(tierInfo)", category: "Rewards")
                 
                 if eligibleItems.isEmpty {
-                    print("⚠️ Warning: Backend returned empty items array for tier. This tier may not be configured in Firestore 'rewardTierItems' collection.")
+                    DebugLogger.debug("⚠️ Warning: Backend returned empty items array for tier. This tier may not be configured in Firestore 'rewardTierItems' collection.", category: "Rewards")
                 }
                 
                 isLoading = false
             case .failure(let error):
-                print("❌ Failed to load dumplings - \(tierInfo): \(error.localizedDescription)")
+                DebugLogger.debug("❌ Failed to load dumplings - \(tierInfo): \(error.localizedDescription)", category: "Rewards")
                 errorMessage = error.localizedDescription
                 isLoading = false
             }

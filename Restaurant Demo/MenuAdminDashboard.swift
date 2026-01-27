@@ -324,9 +324,9 @@ struct MenuAdminDashboard: View {
         categoryRef.delete { error in
             DispatchQueue.main.async {
                 if let error = error {
-                    print("Error deleting category: \(error.localizedDescription)")
+                    DebugLogger.debug("Error deleting category: \(error.localizedDescription)", category: "Admin")
                 } else {
-                    print("Category deleted successfully: \(category.id)")
+                    DebugLogger.debug("Category deleted successfully: \(category.id)", category: "Admin")
                     menuVM.fetchMenu() // Refresh the menu
                 }
             }
@@ -1081,17 +1081,17 @@ struct ItemAdminCard: View {
     private func deleteItem() {
         isDeleting = true
         
-        print("🗑️ Attempting to delete item: '\(item.id)' from category: '\(category.id)'")
+        DebugLogger.debug("🗑️ Attempting to delete item: '\(item.id)' from category: '\(category.id)'", category: "Admin")
         
         menuVM.deleteItemFromCategory(categoryId: category.id, item: item) { success, error in
             DispatchQueue.main.async {
                 self.isDeleting = false
                 if success {
-                    print("✅ Item deleted successfully: \(item.id)")
+                    DebugLogger.debug("✅ Item deleted successfully: \(item.id)", category: "Admin")
                     menuVM.fetchMenu() // Refresh the menu
                 } else {
                     let errorMsg = error ?? "Unknown error occurred"
-                    print("❌ Failed to delete item: \(item.id), Error: \(errorMsg)")
+                    DebugLogger.debug("❌ Failed to delete item: \(item.id), Error: \(errorMsg)", category: "Admin")
                     self.deleteErrorMessage = "Failed to delete '\(item.id)': \(errorMsg)\n\nThe item may have been modified or the document ID may have special characters. Please try again or contact support if the issue persists."
                     self.showDeleteError = true
                 }
@@ -1102,7 +1102,7 @@ struct ItemAdminCard: View {
     private func moveItem() {
         // Don't move if same category
         guard selectedCategoryId != category.id else {
-            print("⚠️ Item is already in category: \(selectedCategoryId)")
+            DebugLogger.debug("⚠️ Item is already in category: \(selectedCategoryId)", category: "Admin")
             return
         }
         
@@ -1118,7 +1118,7 @@ struct ItemAdminCard: View {
                 DispatchQueue.main.async {
                     self.isMoving = false
                     self.selectedCategoryId = self.category.id // Reset
-                    print("❌ Failed to add item to new category: \(error ?? "Unknown error")")
+                    DebugLogger.debug("❌ Failed to add item to new category: \(error ?? "Unknown error")", category: "Admin")
                 }
                 return
             }
@@ -1131,14 +1131,14 @@ struct ItemAdminCard: View {
                         self.menuVM.deleteItemFromCategory(categoryId: self.selectedCategoryId, item: movedItem) { _, _ in
                             self.isMoving = false
                             self.selectedCategoryId = self.category.id // Reset
-                            print("❌ Failed to delete from old category, rolled back: \(error ?? "Unknown error")")
+                            DebugLogger.debug("❌ Failed to delete from old category, rolled back: \(error ?? "Unknown error")", category: "Admin")
                         }
                         return
                     }
                     
                     // Success!
                     self.isMoving = false
-                    print("✅ Item moved successfully from '\(self.category.id)' to '\(self.selectedCategoryId)'")
+                    DebugLogger.debug("✅ Item moved successfully from '\(self.category.id)' to '\(self.selectedCategoryId)'", category: "Admin")
                     self.menuVM.fetchMenu() // Refresh the menu
                 }
             }
@@ -2098,7 +2098,7 @@ struct DrinkFlavorAdminCard: View {
                 isDeleting = false
                 if !success {
                     // Show error alert
-                    print("❌ Failed to delete drink flavor: \(errorMessage ?? "Unknown error")")
+                    DebugLogger.debug("❌ Failed to delete drink flavor: \(errorMessage ?? "Unknown error")", category: "Admin")
                     // You could add an alert here to show the error to the user
                 }
             }
@@ -2474,13 +2474,13 @@ struct AddItemSheet: View {
                     if let downloadURL = url {
                         // Use the direct HTTPS URL instead of gs:// for better compatibility
                         imageURL = downloadURL.absoluteString
-                        print("✅ Image uploaded successfully: \(downloadURL.absoluteString)")
+                        DebugLogger.debug("✅ Image uploaded successfully: \(downloadURL.absoluteString)", category: "Admin")
                     } else {
                         // Fallback: construct gs:// URL with correct bucket name
                         // Firebase default bucket is always projectId.appspot.com
                         let gsURL = "gs://dumplinghouseapp.appspot.com/menu_images/\(imageName)"
                         imageURL = gsURL
-                        print("✅ Image uploaded (using gs:// fallback): \(gsURL)")
+                        DebugLogger.debug("✅ Image uploaded (using gs:// fallback): \(gsURL)", category: "Admin")
                     }
                     isUploading = false
                 }
@@ -2803,14 +2803,14 @@ struct ItemEditSheet: View {
         imageURL = ""
         selectedImage = nil
         hasSelectedNewImage = false
-        print("🗑️ Image marked for removal")
+        DebugLogger.debug("🗑️ Image marked for removal", category: "Admin")
     }
     
     private func clearSelectedImage() {
         selectedImage = nil
         hasSelectedNewImage = false
         imageURL = originalImageURL
-        print("❌ Cleared selected image, restored original")
+        DebugLogger.debug("❌ Cleared selected image, restored original", category: "Admin")
     }
     
     private func saveChanges() {
@@ -2916,14 +2916,14 @@ struct ItemEditSheet: View {
                         // Use the direct HTTPS URL instead of gs:// for better compatibility
                         imageURL = downloadURL.absoluteString
                         hasSelectedNewImage = true
-                        print("✅ Image uploaded successfully: \(downloadURL.absoluteString)")
+                        DebugLogger.debug("✅ Image uploaded successfully: \(downloadURL.absoluteString)", category: "Admin")
                     } else {
                         // Fallback: construct gs:// URL with correct bucket name
                         // Firebase default bucket is always projectId.appspot.com
                         let gsURL = "gs://dumplinghouseapp.appspot.com/menu_images/\(imageName)"
                         imageURL = gsURL
                         hasSelectedNewImage = true
-                        print("✅ Image uploaded (using gs:// fallback): \(gsURL)")
+                        DebugLogger.debug("✅ Image uploaded (using gs:// fallback): \(gsURL)", category: "Admin")
                     }
                     isUploading = false
                 }
@@ -3155,7 +3155,7 @@ struct AllergyTagAdminCard: View {
             DispatchQueue.main.async {
                 isDeleting = false
                 if !success {
-                    print("❌ Failed to delete allergy tag: \(errorMessage ?? "Unknown error")")
+                    DebugLogger.debug("❌ Failed to delete allergy tag: \(errorMessage ?? "Unknown error")", category: "Admin")
                 }
             }
         }

@@ -81,7 +81,7 @@ struct AdminUserDetailView: View {
                         .tint(.white)
 
                         Button("Save") {
-                            print("🟡 AdminUserDetailView: Save tapped for userId=\(viewModel.userId)")
+                            DebugLogger.debug("🟡 AdminUserDetailView: Save tapped for userId=\(viewModel.userId)", category: "Admin")
                             viewModel.saveAdminEdits { success, message in
                                 if success {
                                     isEditing = false
@@ -391,12 +391,14 @@ struct AdminUserDetailView: View {
                 }
             }
 
+            #if DEBUG
             if !viewModel.referralAwardCheckDebug.isEmpty {
                 Text(viewModel.referralAwardCheckDebug)
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundColor(.white.opacity(0.7))
                     .padding(.top, 4)
             }
+            #endif
         }
         .padding()
         .background(

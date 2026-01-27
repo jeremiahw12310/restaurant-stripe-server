@@ -129,14 +129,14 @@ struct AuthFlowView: View {
                             .environmentObject(UserViewModel())
                             .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
                             .onAppear { 
-                                print("🔵 Navigation: UserPreferencesView")
+                                DebugLogger.debug("🔵 Navigation: UserPreferencesView", category: "Auth")
                                 authVM.printNavigationState()
                             }
                     } else if authVM.shouldNavigateToCustomization == true {
                         AccountCustomizationView(uid: Auth.auth().currentUser?.uid ?? "")
                             .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
                             .onAppear { 
-                                print("🔵 Navigation: AccountCustomizationView")
+                                DebugLogger.debug("🔵 Navigation: AccountCustomizationView", category: "Auth")
                                 authVM.printNavigationState()
                             }
                     } else if authVM.didAuthenticate {
@@ -144,21 +144,21 @@ struct AuthFlowView: View {
                         ContentView()
                             .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
                             .onAppear { 
-                                print("🔵 Navigation: ContentView")
+                                DebugLogger.debug("🔵 Navigation: ContentView", category: "Auth")
                                 authVM.printNavigationState()
                             }
                     } else if authVM.shouldNavigateToUserDetails == true {
                         UserDetailsEntryView()
                             .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
                             .onAppear { 
-                                print("🔵 Navigation: UserDetailsEntryView")
+                                DebugLogger.debug("🔵 Navigation: UserDetailsEntryView", category: "Auth")
                                 authVM.printNavigationState()
                             }
                     } else if authVM.verificationID == nil {
                         EnterPhoneView()
                             .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
                             .onAppear { 
-                                print("🔵 Navigation: EnterPhoneView")
+                                DebugLogger.debug("🔵 Navigation: EnterPhoneView", category: "Auth")
                                 authVM.printNavigationState()
                             }
                     } else if !authVM.didAuthenticate && !authVM.shouldNavigateToUserDetails {
@@ -168,13 +168,13 @@ struct AuthFlowView: View {
                             // and first-responder timing, causing OTP insertion to fail
                             .transition(.identity)
                             .onAppear { 
-                                print("🔵 Navigation: EnterCodeView")
+                                DebugLogger.debug("🔵 Navigation: EnterCodeView", category: "Auth")
                                 authVM.printNavigationState()
                             }
                     } else {
                         Text("No navigation condition met")
                             .onAppear { 
-                                print("🔴 No navigation condition met!")
+                                DebugLogger.debug("🔴 No navigation condition met!", category: "Auth")
                                 authVM.printNavigationState()
                             }
                     }
@@ -184,20 +184,20 @@ struct AuthFlowView: View {
             .animation(.spring(response: 0.5, dampingFraction: 0.8), value: navStage)
         }
         .onReceive(authVM.$didAuthenticate) { didAuth in
-            print("🔵 didAuthenticate changed to: \(didAuth)")
+            DebugLogger.debug("🔵 didAuthenticate changed to: \(didAuth)", category: "Auth")
             if didAuth {
                 isLoggedIn = true
             }
         }
         .onReceive(authVM.$shouldNavigateToUserDetails) { shouldNavigate in
-            print("🔵 shouldNavigateToUserDetails changed to: \(shouldNavigate)")
+            DebugLogger.debug("🔵 shouldNavigateToUserDetails changed to: \(shouldNavigate)", category: "Auth")
         }
         .onReceive(authVM.$shouldNavigateToCustomization) { shouldNavigate in
-            print("🔵 shouldNavigateToCustomization changed to: \(shouldNavigate)")
+            DebugLogger.debug("🔵 shouldNavigateToCustomization changed to: \(shouldNavigate)", category: "Auth")
         }
         .onAppear {
             // Reset navigation state when AuthFlowView appears to ensure clean navigation
-            print("🔵 AuthFlowView: onAppear, resetting navigation state")
+            DebugLogger.debug("🔵 AuthFlowView: onAppear, resetting navigation state", category: "Auth")
             authVM.resetAllNavigationState()
         }
         .onReceive(authVM.$shouldNavigateToSplash) { shouldNavigate in

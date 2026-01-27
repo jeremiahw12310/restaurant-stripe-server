@@ -58,7 +58,7 @@ class MenuDataCacheManager {
             try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
             validateCacheVersion()
         } catch {
-            print("❌ Failed to create MenuDataCache directory: \(error)")
+            DebugLogger.debug("❌ Failed to create MenuDataCache directory: \(error)", category: "Cache")
         }
     }
     
@@ -339,7 +339,7 @@ class MenuDataCacheManager {
                 try? fileManager.removeItem(at: file)
             }
         } catch {
-            print("❌ Failed to clear menu data cache: \(error)")
+            DebugLogger.debug("❌ Failed to clear menu data cache: \(error)", category: "Cache")
         }
     }
     
@@ -388,7 +388,7 @@ class MenuDataCacheManager {
             UserDefaults.standard.set(Date(), forKey: timestampKey.rawValue)
             
         } catch {
-            print("❌ Failed to cache \(key.rawValue): \(error)")
+            DebugLogger.debug("❌ Failed to cache \(key.rawValue): \(error)", category: "Cache")
         }
     }
     
@@ -406,7 +406,7 @@ class MenuDataCacheManager {
             let decoded = try decoder.decode(T.self, from: data)
             return decoded
         } catch {
-            print("⚠️ Failed to load cache for \(key.rawValue): \(error)")
+            DebugLogger.debug("⚠️ Failed to load cache for \(key.rawValue): \(error)", category: "Cache")
             // Remove corrupted cache file
             try? fileManager.removeItem(at: fileURL)
             return nil

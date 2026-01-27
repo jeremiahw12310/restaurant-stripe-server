@@ -19,7 +19,7 @@ struct DrinksListView: View {
     }
     
     var body: some View {
-        let _ = print("🍹 DrinksListView - category: \(category.id), disableItemSelection: \(disableItemSelection)")
+        let _ = DebugLogger.debug("🍹 DrinksListView - category: \(category.id), disableItemSelection: \(disableItemSelection)", category: "Menu")
         ScrollView {
             LazyVStack(spacing: 0) {
                 // Admin tools if needed

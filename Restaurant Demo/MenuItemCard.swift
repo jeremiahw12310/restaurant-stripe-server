@@ -15,7 +15,7 @@ struct MenuItemCard: View {
     private var imageURL: URL? {
         // Handle empty URLs
         guard !item.imageURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            print("🖼️ Empty imageURL for item: \(item.id)")
+            DebugLogger.debug("🖼️ Empty imageURL for item: \(item.id)", category: "Menu")
             return nil
         }
         
@@ -34,36 +34,36 @@ struct MenuItemCard: View {
                 let encodedPath = filePath.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filePath
                 let downloadURL = "https://firebasestorage.googleapis.com/v0/b/\(bucketName)/o/\(encodedPath)?alt=media"
                 
-                print("🖼️ Converting gs:// URL:")
-                print("   Original: \(item.imageURL)")
-                print("   Bucket: \(bucketName)")
-                print("   Path: \(filePath)")
-                print("   Encoded: \(encodedPath)")
-                print("   Final URL: \(downloadURL)")
+                DebugLogger.debug("🖼️ Converting gs:// URL:", category: "Menu")
+                DebugLogger.debug("   Original: \(item.imageURL)", category: "Menu")
+                DebugLogger.debug("   Bucket: \(bucketName)", category: "Menu")
+                DebugLogger.debug("   Path: \(filePath)", category: "Menu")
+                DebugLogger.debug("   Encoded: \(encodedPath)", category: "Menu")
+                DebugLogger.debug("   Final URL: \(downloadURL)", category: "Menu")
                 
                 // Test the URL immediately
                 if let url = URL(string: downloadURL) {
-                    print("✅ URL created successfully")
+                    DebugLogger.debug("✅ URL created successfully", category: "Menu")
                     return url
                 } else {
-                    print("❌ Failed to create URL from: \(downloadURL)")
+                    DebugLogger.debug("❌ Failed to create URL from: \(downloadURL)", category: "Menu")
                     return nil
                 }
             } else {
-                print("❌ Invalid gs:// URL format: \(item.imageURL)")
+                DebugLogger.debug("❌ Invalid gs:// URL format: \(item.imageURL)", category: "Menu")
                 return nil
             }
         } else if item.imageURL.hasPrefix("https://firebasestorage.googleapis.com") {
             // Already a Firebase Storage URL
-            print("🖼️ Using existing Firebase Storage URL: \(item.imageURL)")
+            DebugLogger.debug("🖼️ Using existing Firebase Storage URL: \(item.imageURL)", category: "Menu")
             return URL(string: item.imageURL)
         } else if item.imageURL.hasPrefix("http") {
             // Regular URL
-            print("🖼️ Using regular URL: \(item.imageURL)")
+            DebugLogger.debug("🖼️ Using regular URL: \(item.imageURL)", category: "Menu")
             return URL(string: item.imageURL)
         } else {
             // Invalid or empty URL
-            print("🖼️ Invalid or empty URL: '\(item.imageURL)'")
+            DebugLogger.debug("🖼️ Invalid or empty URL: '\(item.imageURL)'", category: "Menu")
             return nil
         }
     }
@@ -96,11 +96,11 @@ struct MenuItemCard: View {
                             }
                         }
                         .onFailure { error in
-                            print("❌ Image loading failed for item \(item.id): \(error.localizedDescription)")
-                            print("❌ Failed URL: \(imageURL)")
+                            DebugLogger.debug("❌ Image loading failed for item \(item.id): \(error.localizedDescription)", category: "Menu")
+                            DebugLogger.debug("❌ Failed URL: \(imageURL)", category: "Menu")
                         }
                         .onSuccess { _ in
-                            print("✅ Image loaded successfully for item \(item.id)")
+                            DebugLogger.debug("✅ Image loaded successfully for item \(item.id)", category: "Menu")
                         }
                         .fade(duration: 0.3)
                         .cacheMemoryOnly()
@@ -123,8 +123,8 @@ struct MenuItemCard: View {
                 }
                 .frame(width: 154, height: 154)
                 .onAppear {
-                    print("🖼️ No valid image URL for item: \(item.id)")
-                    print("🖼️ Raw imageURL: '\(item.imageURL)'")
+                    DebugLogger.debug("🖼️ No valid image URL for item: \(item.id)", category: "Menu")
+                    DebugLogger.debug("🖼️ Raw imageURL: '\(item.imageURL)'", category: "Menu")
                 }
             }
             

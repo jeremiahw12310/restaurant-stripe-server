@@ -62,6 +62,26 @@ class ChatbotViewModel: ObservableObject {
         }
     }
 
+    private enum ChatbotAPIError: Error {
+        case rateLimited
+        case other
+    }
+
+    private static let rateLimitMessage = "I'm running a little short on dumpling magic... Please try again later."
+
+    private static func isRateLimitError(statusCode: Int, body: Data) -> Bool {
+        guard statusCode == 429 else { return false }
+        guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let code = json["errorCode"] as? String else { return false }
+        switch code {
+        case "CHAT_RATE_LIMITED", "DAILY_LIMIT_REACHED", "HERO_RATE_LIMITED",
+             "AI_RATE_LIMITED", "RATE_LIMITED":
+            return true
+        default:
+            return false
+        }
+    }
+
     private func idTokenPublisher() -> AnyPublisher<String, Error> {
         Future<String, Error> { promise in
             guard let user = Auth.auth().currentUser else {
@@ -185,28 +205,38 @@ class ChatbotViewModel: ObservableObject {
         }
 
         idTokenPublisher()
-            .flatMap { token -> AnyPublisher<Data, Error> in
+            .flatMap { token -> AnyPublisher<ChatResponse, Error> in
                 var authed = request
                 authed.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 return URLSession.shared.dataTaskPublisher(for: authed)
-                    .map(\.data)
                     .mapError { $0 as Error }
+                    .tryMap { data, response -> ChatResponse in
+                        guard let http = response as? HTTPURLResponse else { throw ChatbotAPIError.other }
+                        if http.statusCode == 200 {
+                            return try JSONDecoder().decode(ChatResponse.self, from: data)
+                        }
+                        if http.statusCode == 429, Self.isRateLimitError(statusCode: 429, body: data) {
+                            throw ChatbotAPIError.rateLimited
+                        }
+                        throw ChatbotAPIError.other
+                    }
                     .eraseToAnyPublisher()
             }
-            .decode(type: ChatResponse.self, decoder: JSONDecoder())
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { completion in
                     self.isLoading = false
                     if case .failure(let error) = completion {
                         DebugLogger.debug("Error: \(error)", category: "Chatbot")
-                        self.messages.append(ChatMessage(
-                            content: (error as? ChatbotAuthError) == .notSignedIn
-                                ? "Please sign in to chat with Dumpling Hero."
-                                : "Sorry, I'm having trouble connecting right now. Please try again!",
-                            isUser: false,
-                            timestamp: Date()
-                        ))
+                        let content: String
+                        if (error as? ChatbotAuthError) == .notSignedIn {
+                            content = "Please sign in to chat with Dumpling Hero."
+                        } else if (error as? ChatbotAPIError) == .rateLimited {
+                            content = Self.rateLimitMessage
+                        } else {
+                            content = "Sorry, I'm having trouble connecting right now. Please try again!"
+                        }
+                        self.messages.append(ChatMessage(content: content, isUser: false, timestamp: Date()))
                     }
                 },
                 receiveValue: { response in
@@ -331,28 +361,38 @@ class ChatbotViewModel: ObservableObject {
         do { request.httpBody = try JSONSerialization.data(withJSONObject: requestBody) } catch { return }
 
         idTokenPublisher()
-            .flatMap { token -> AnyPublisher<Data, Error> in
+            .flatMap { token -> AnyPublisher<ChatResponse, Error> in
                 var authed = request
                 authed.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 return URLSession.shared.dataTaskPublisher(for: authed)
-                    .map(\.data)
                     .mapError { $0 as Error }
+                    .tryMap { data, response -> ChatResponse in
+                        guard let http = response as? HTTPURLResponse else { throw ChatbotAPIError.other }
+                        if http.statusCode == 200 {
+                            return try JSONDecoder().decode(ChatResponse.self, from: data)
+                        }
+                        if http.statusCode == 429, Self.isRateLimitError(statusCode: 429, body: data) {
+                            throw ChatbotAPIError.rateLimited
+                        }
+                        throw ChatbotAPIError.other
+                    }
                     .eraseToAnyPublisher()
             }
-            .decode(type: ChatResponse.self, decoder: JSONDecoder())
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { completion in
                     self.isLoading = false
                     if case .failure(let error) = completion {
-                        self.messages.append(ChatMessage(
-                            content: (error as? ChatbotAuthError) == .notSignedIn
-                                ? "Please sign in to chat with Dumpling Hero."
-                                : "Sorry, I'm having trouble connecting right now. Please try again!",
-                            isUser: false,
-                            timestamp: Date()
-                        ))
                         DebugLogger.debug("Regenerate error: \(error)", category: "Chatbot")
+                        let content: String
+                        if (error as? ChatbotAuthError) == .notSignedIn {
+                            content = "Please sign in to chat with Dumpling Hero."
+                        } else if (error as? ChatbotAPIError) == .rateLimited {
+                            content = Self.rateLimitMessage
+                        } else {
+                            content = "Sorry, I'm having trouble connecting right now. Please try again!"
+                        }
+                        self.messages.append(ChatMessage(content: content, isUser: false, timestamp: Date()))
                     }
                 },
                 receiveValue: { response in
@@ -399,15 +439,23 @@ class ChatbotViewModel: ObservableObject {
         }
 
         idTokenPublisher()
-            .flatMap { token -> AnyPublisher<Data, Error> in
+            .flatMap { token -> AnyPublisher<MagicPreviewResponse, Error> in
                 var authed = request
                 authed.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 return URLSession.shared.dataTaskPublisher(for: authed)
-                    .map(\.data)
                     .mapError { $0 as Error }
+                    .tryMap { data, response -> MagicPreviewResponse in
+                        guard let http = response as? HTTPURLResponse else { throw ChatbotAPIError.other }
+                        if http.statusCode == 200 {
+                            return try JSONDecoder().decode(MagicPreviewResponse.self, from: data)
+                        }
+                        if http.statusCode == 429, Self.isRateLimitError(statusCode: 429, body: data) {
+                            throw ChatbotAPIError.rateLimited
+                        }
+                        throw ChatbotAPIError.other
+                    }
                     .eraseToAnyPublisher()
             }
-            .decode(type: MagicPreviewResponse.self, decoder: JSONDecoder())
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { completion in
@@ -416,6 +464,8 @@ class ChatbotViewModel: ObservableObject {
                         DebugLogger.debug("Magic preview error: \(error)", category: "Chatbot")
                         if (error as? ChatbotAuthError) == .notSignedIn {
                             self.messages.append(ChatMessage(content: "Please sign in to use Dumpling Hero magic.", isUser: false, timestamp: Date()))
+                        } else if (error as? ChatbotAPIError) == .rateLimited {
+                            self.messages.append(ChatMessage(content: Self.rateLimitMessage, isUser: false, timestamp: Date()))
                         }
                     }
                 },
