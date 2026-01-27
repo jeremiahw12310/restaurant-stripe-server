@@ -111,7 +111,7 @@ class NotificationService: NSObject, ObservableObject {
             let body: [String: Any] = ["fcmToken": token]
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
             
-            URLSession.shared.dataTask(with: request) { data, response, error in
+            URLSession.configured.dataTask(with: request) { data, response, error in
                 if let error = error {
                     DebugLogger.debug("❌ NotificationService: Server FCM token store failed: \(error.localizedDescription)", category: "Notifications")
                     // Fallback to direct Firestore write
@@ -178,7 +178,7 @@ class NotificationService: NSObject, ObservableObject {
             let body: [String: Any?] = ["fcmToken": nil]
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
             
-            URLSession.shared.dataTask(with: request) { data, response, error in
+            URLSession.configured.dataTask(with: request) { data, response, error in
                 if let error = error {
                     DebugLogger.debug("❌ NotificationService: Server FCM token removal failed: \(error.localizedDescription)", category: "Notifications")
                     self?.removeFCMTokenDirectly(uid: user.uid)

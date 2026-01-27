@@ -122,6 +122,7 @@ class PromoCarouselViewModel: ObservableObject {
         listener = db.collection("promoSlides")
             .whereField("isActive", isEqualTo: true)
             .order(by: "orderIndex")
+            .limit(to: 20)
             .addSnapshotListener { [weak self] snapshot, error in
                 guard let self = self else { return }
                 if let error = error {

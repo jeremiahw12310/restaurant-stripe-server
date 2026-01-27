@@ -427,7 +427,7 @@ class MenuViewModel: ObservableObject {
         }
         itemListeners.removeAll()
         
-        listenerRegistration = db.collection("menu").addSnapshotListener { [weak self] (snapshot, error) in
+        listenerRegistration = db.collection("menu").limit(to: 50).addSnapshotListener { [weak self] (snapshot, error) in
             guard let self = self else { return }
             if let error = error {
                 DebugLogger.debug("❌ Error fetching menu categories: \(error.localizedDescription)", category: "Menu")
@@ -576,7 +576,7 @@ class MenuViewModel: ObservableObject {
         itemListeners.removeAll()
 
         // Customer path: one-time fetch + caching (avoid realtime listener fan-out)
-        db.collection("menu").getDocuments { [weak self] snapshot, error in
+        db.collection("menu").limit(to: 50).getDocuments { [weak self] snapshot, error in
             guard let self = self else { return }
 
             if let error = error {
@@ -2250,7 +2250,7 @@ class MenuViewModel: ObservableObject {
         allergyTagsListener?.remove()
         allergyTagsListener = nil
         
-        db.collection("allergyTags").getDocuments { [weak self] (snapshot, error) in
+        db.collection("allergyTags").limit(to: 100).getDocuments { [weak self] (snapshot, error) in
             guard let self = self else { return }
             if let error = error {
                 DebugLogger.debug("❌ Error fetching allergy tags: \(error.localizedDescription)", category: "Menu")
@@ -2382,7 +2382,7 @@ class MenuViewModel: ObservableObject {
         drinkOptionsListener?.remove()
         drinkOptionsListener = nil
         
-        db.collection("drinkOptions").getDocuments { [weak self] (snapshot, error) in
+        db.collection("drinkOptions").limit(to: 100).getDocuments { [weak self] (snapshot, error) in
             guard let self = self else { return }
             if let error = error {
                 DebugLogger.debug("❌ Error fetching drink options: \(error.localizedDescription)", category: "Menu")
@@ -2506,7 +2506,7 @@ class MenuViewModel: ObservableObject {
         drinkFlavorsListener?.remove()
         drinkFlavorsListener = nil
         
-        db.collection("drinkFlavors").getDocuments { [weak self] (snapshot, error) in
+        db.collection("drinkFlavors").limit(to: 100).getDocuments { [weak self] (snapshot, error) in
             guard let self = self else { return }
             if let error = error {
                 DebugLogger.debug("❌ Error fetching drink flavors: \(error.localizedDescription)", category: "Menu")
@@ -2669,7 +2669,7 @@ class MenuViewModel: ObservableObject {
         drinkToppingsListener?.remove()
         drinkToppingsListener = nil
         
-        db.collection("drinkToppings").getDocuments { [weak self] (snapshot, error) in
+        db.collection("drinkToppings").limit(to: 100).getDocuments { [weak self] (snapshot, error) in
             guard let self = self else { return }
             if let error = error {
                 DebugLogger.debug("❌ Error fetching drink toppings: \(error.localizedDescription)", category: "Menu")

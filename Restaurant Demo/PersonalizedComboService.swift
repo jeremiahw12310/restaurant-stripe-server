@@ -78,7 +78,7 @@ class PersonalizedComboService: ObservableObject {
             .flatMap { token -> AnyPublisher<Data, Error> in
                 var authed = urlRequest
                 authed.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-                return URLSession.shared.dataTaskPublisher(for: authed)
+                return URLSession.configured.dataTaskPublisher(for: authed)
                     .map(\.data)
                     .mapError { $0 as Error }
                     .eraseToAnyPublisher()

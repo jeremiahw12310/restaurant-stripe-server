@@ -183,7 +183,12 @@ struct ManageDrinkFlavorsSheet: View {
                             showAlert = true
                             return
                         }
-                        let id = isEditing ? editingFlavor!.id : UUID().uuidString
+                        let id: String
+                        if isEditing, let existingFlavor = editingFlavor {
+                            id = existingFlavor.id
+                        } else {
+                            id = UUID().uuidString
+                        }
                         let flavor = DrinkFlavor(id: id, name: newName, isLemonade: isLemonade, isAvailable: isAvailable, icon: newIcon)
                         if isEditing {
                             menuVM.updateDrinkFlavor(flavor)

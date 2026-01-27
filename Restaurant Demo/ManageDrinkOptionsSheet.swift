@@ -133,7 +133,12 @@ struct ManageDrinkOptionsSheet: View {
                             showAlert = true
                             return
                         }
-                        let id = isEditing ? editingOption!.id : UUID().uuidString
+                        let id: String
+                        if isEditing, let existingOption = editingOption {
+                            id = existingOption.id
+                        } else {
+                            id = UUID().uuidString
+                        }
                         let option = DrinkOption(id: id, name: newName, price: price, isMilkSub: isMilkSub, isAvailable: isAvailable)
                         if isEditing {
                             menuVM.updateDrinkOption(option)

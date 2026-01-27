@@ -208,7 +208,7 @@ class ChatbotViewModel: ObservableObject {
             .flatMap { token -> AnyPublisher<ChatResponse, Error> in
                 var authed = request
                 authed.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-                return URLSession.shared.dataTaskPublisher(for: authed)
+                return URLSession.configured.dataTaskPublisher(for: authed)
                     .mapError { $0 as Error }
                     .tryMap { data, response -> ChatResponse in
                         guard let http = response as? HTTPURLResponse else { throw ChatbotAPIError.other }
@@ -364,7 +364,7 @@ class ChatbotViewModel: ObservableObject {
             .flatMap { token -> AnyPublisher<ChatResponse, Error> in
                 var authed = request
                 authed.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-                return URLSession.shared.dataTaskPublisher(for: authed)
+                return URLSession.configured.dataTaskPublisher(for: authed)
                     .mapError { $0 as Error }
                     .tryMap { data, response -> ChatResponse in
                         guard let http = response as? HTTPURLResponse else { throw ChatbotAPIError.other }
@@ -442,7 +442,7 @@ class ChatbotViewModel: ObservableObject {
             .flatMap { token -> AnyPublisher<MagicPreviewResponse, Error> in
                 var authed = request
                 authed.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-                return URLSession.shared.dataTaskPublisher(for: authed)
+                return URLSession.configured.dataTaskPublisher(for: authed)
                     .mapError { $0 as Error }
                     .tryMap { data, response -> MagicPreviewResponse in
                         guard let http = response as? HTTPURLResponse else { throw ChatbotAPIError.other }

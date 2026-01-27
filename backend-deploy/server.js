@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
+const helmet = require('helmet');
 const fs = require('fs');
 const { randomUUID } = require('crypto');
 const pino = require('pino');
@@ -14,6 +15,26 @@ const { DateTime } = require('luxon');
 
 // Input validation schemas and middleware
 const { validate, chatSchema, comboSchema, referralAcceptSchema, adminUserUpdateSchema, redeemRewardSchema } = require('./validation');
+
+// OpenAI timeout helper - wraps API calls with 30-second timeout to prevent hanging requests
+const OPENAI_TIMEOUT_MS = 30000;
+
+async function openaiWithTimeout(openaiInstance, createOptions) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
+  
+  try {
+    const response = await openaiInstance.chat.completions.create(createOptions, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      throw new Error('OpenAI request timed out after 30 seconds');
+    }
+    throw error;
+  }
+}
 
 // Initialize Firebase Admin
 const admin = require('firebase-admin');
@@ -97,6 +118,12 @@ function validateEnvironment() {
   }
   console.warn(message);
 }
+
+// Security headers - protect against common web vulnerabilities
+app.use(helmet({
+  contentSecurityPolicy: false, // Disable CSP for API server (responses are JSON, not HTML)
+  crossOriginEmbedderPolicy: false // Allow embedding from mobile apps
+}));
 
 // CORS configuration - restrict to allowed origins
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
@@ -441,6 +468,22 @@ const referralPerIpLimiter = createRateLimiter({
   errorCode: 'REFERRAL_RATE_LIMITED'
 });
 
+// General rate limiter for authenticated endpoints without specific limiters
+// 60 requests per minute per user is reasonable for general API access
+const generalPerUserLimiter = createRateLimiter({
+  keyFn: (req) => req.auth?.uid,
+  windowMs: 60_000,
+  max: 60,
+  errorCode: 'RATE_LIMITED'
+});
+
+const generalPerIpLimiter = createRateLimiter({
+  keyFn: (req) => getClientIp(req),
+  windowMs: 60_000,
+  max: 120,
+  errorCode: 'RATE_LIMITED'
+});
+
 // Create or get referral code
 app.post('/referrals/create', requireFirebaseAuth, referralPerUserLimiter, referralPerIpLimiter, async (req, res) => {
   try {
@@ -772,7 +815,7 @@ app.post('/referrals/accept', requireFirebaseAuth, referralPerUserLimiter, refer
 });
 
 // Get user's referral connections
-app.get('/referrals/mine', requireFirebaseAuth, async (req, res) => {
+app.get('/referrals/mine', requireFirebaseAuth, generalPerUserLimiter, generalPerIpLimiter, async (req, res) => {
   try {
     const uid = req.auth.uid;
 
@@ -1184,7 +1227,7 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
  *   - { status: 'already_awarded', referralId } if already processed
  *   - { status: 'not_eligible', reason } if not eligible
  */
-app.post('/referrals/award-check', requireFirebaseAuth, async (req, res) => {
+app.post('/referrals/award-check', requireFirebaseAuth, generalPerUserLimiter, generalPerIpLimiter, async (req, res) => {
   try {
     const authenticatedUid = req.auth.uid;
     
@@ -1921,7 +1964,7 @@ Calculate the total price accurately. Keep the response warm and personal.`;
     console.log('🥗 Selected Appetizer/Soup Type:', randomAppetizerSoup);
     
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const completion = await openai.chat.completions.create({
+    const completion = await openaiWithTimeout(openai, {
       model: "gpt-4o-mini",
       messages: [
         {
@@ -2348,8 +2391,8 @@ If a field is missing, use null.`;
       console.log('🤖 Sending request to OpenAI for FIRST validation...');
       console.log('📊 API Call 1 - Starting at:', new Date().toISOString());
       
-      // First OpenAI call
-      const response1 = await openai.chat.completions.create({
+      // First OpenAI call (with timeout)
+      const response1 = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
         messages: [
           {
@@ -2370,8 +2413,8 @@ If a field is missing, use null.`;
       console.log('🤖 Sending request to OpenAI for SECOND validation...');
       console.log('📊 API Call 2 - Starting at:', new Date().toISOString());
       
-      // Second OpenAI call
-      const response2 = await openai.chat.completions.create({
+      // Second OpenAI call (with timeout)
+      const response2 = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
         messages: [
           {
@@ -2932,7 +2975,7 @@ or {"error": "error message"}.
 If a field is missing, use null.`;
 
       console.log('🤖 Sending request to OpenAI for FIRST validation (submit-receipt)...');
-      const response1 = await openai.chat.completions.create({
+      const response1 = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
         messages: [
           {
@@ -2948,7 +2991,7 @@ If a field is missing, use null.`;
       });
 
       console.log('🤖 Sending request to OpenAI for SECOND validation (submit-receipt)...');
-      const response2 = await openai.chat.completions.create({
+      const response2 = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
         messages: [
           {
@@ -3088,8 +3131,18 @@ If a field is missing, use null.`;
       const tipIsUsable = data.tipLineVisible === true && tipAmount !== null && !Number.isNaN(tipAmount);
       const tipTotalMatches = tipIsUsable ? Math.abs((subtotal + tax + tipAmount) - totalAmt) <= 0.02 : false;
       const totalMatchesOrderTotal = Math.abs(totalAmt - orderTotalAmt) <= 0.01;
+      // Also allow totalAmount + tip to equal orderTotal (when "Total" is pre-tip and "Grand Total" is post-tip)
+      const totalWithTipMatchesOrderTotal = tipIsUsable 
+        ? Math.abs((totalAmt + tipAmount) - orderTotalAmt) <= 0.02 
+        : false;
 
-      if ((!baseTotalMatches && !tipTotalMatches) || !totalMatchesOrderTotal) {
+      // Debug logging for totals reconciliation
+      console.log('💰 Totals reconciliation check:', {
+        subtotal, tax, totalAmt, orderTotalAmt, tipAmount,
+        baseTotalMatches, tipTotalMatches, totalMatchesOrderTotal, totalWithTipMatchesOrderTotal
+      });
+
+      if ((!baseTotalMatches && !tipTotalMatches) || (!totalMatchesOrderTotal && !totalWithTipMatchesOrderTotal)) {
         await logFailureAndCheckLockout(uid, "TOTAL_INCONSISTENT", db, ipAddress);
         return sendError(res, 400, "TOTAL_INCONSISTENT", "Totals don't reconcile — please rescan with Subtotal/Tax/Total clearly visible.");
       }
@@ -3569,7 +3622,7 @@ If a field is missing, use null.`;
   // Welcome points claim (server-authoritative)
   // Prevents clients from directly incrementing their own points in Firestore.
   // Also checks abusePreventionHashes to prevent users who deleted accounts from re-claiming.
-  app.post('/welcome/claim', requireFirebaseAuth, async (req, res) => {
+  app.post('/welcome/claim', requireFirebaseAuth, generalPerUserLimiter, generalPerIpLimiter, async (req, res) => {
     try {
       const uid = req.auth.uid;
 
@@ -4231,7 +4284,7 @@ LOYALTY/REWARDS CONTEXT:
       console.log('🤖 Sending request to OpenAI...');
       console.log('📋 System prompt preview:', systemPrompt.substring(0, 200) + '...');
       
-      const response = await openai.chat.completions.create({
+      const response = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
         messages: messages,
         max_tokens: parseInt(process.env.CHAT_MAX_TOKENS || '500', 10),
@@ -4459,7 +4512,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
 
       console.log('🤖 Sending request to OpenAI for Dumpling Hero post...');
       
-      const response = await openai.chat.completions.create({
+      const response = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
         messages: [
           { role: 'system', content: systemPrompt },
@@ -4723,7 +4776,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       console.log(userMessage);
       console.log('---END OF MESSAGE---');
       
-      const response = await openai.chat.completions.create({
+      const response = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
         messages: [
           { role: 'system', content: systemPrompt },
@@ -4982,7 +5035,7 @@ IMPORTANT:
       console.log('📝 User message being sent to ChatGPT:');
       console.log(userMessage);
       
-      const response = await openai.chat.completions.create({
+      const response = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
         messages: [
           { role: 'system', content: systemPrompt },
@@ -5227,7 +5280,7 @@ IMPORTANT:
       console.log('📝 User message being sent to ChatGPT:');
       console.log(userMessage);
       
-      const response = await openai.chat.completions.create({
+      const response = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
         messages: [
           { role: 'system', content: systemPrompt },
@@ -5277,7 +5330,7 @@ IMPORTANT:
   // Reward Tier Items - Fetch eligible items for a reward tier
   // ---------------------------------------------------------------------------
   
-  app.get('/reward-tier-items/:pointsRequired', async (req, res) => {
+  app.get('/reward-tier-items/:pointsRequired', generalPerIpLimiter, async (req, res) => {
     try {
       const pointsRequired = parseInt(req.params.pointsRequired, 10);
       
@@ -5325,7 +5378,7 @@ IMPORTANT:
   });
 
   // Fetch eligible items for a reward tier by tier ID
-  app.get('/reward-tier-items/by-id/:tierId', async (req, res) => {
+  app.get('/reward-tier-items/by-id/:tierId', generalPerIpLimiter, async (req, res) => {
     try {
       const { tierId } = req.params;
       if (!tierId) {
@@ -5706,7 +5759,7 @@ IMPORTANT:
    * - { fcmToken: string } to set token
    * - { fcmToken: null } to clear token
    */
-  app.post('/me/fcmToken', requireFirebaseAuth, async (req, res) => {
+  app.post('/me/fcmToken', requireFirebaseAuth, generalPerUserLimiter, generalPerIpLimiter, async (req, res) => {
     try {
       const uid = req.auth.uid;
 

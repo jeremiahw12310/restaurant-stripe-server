@@ -43,7 +43,7 @@ class RewardRedemptionService: ObservableObject {
                 DebugLogger.debug("🎁 Fetching eligible items for \(pointsRequired) point tier", category: "Rewards")
             }
             
-            let (data, response) = try await URLSession.shared.data(for: urlRequest)
+            let (data, response) = try await URLSession.configured.data(for: urlRequest)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw NetworkError.invalidResponse
@@ -170,7 +170,7 @@ class RewardRedemptionService: ObservableObject {
             DebugLogger.debug("📡 API URL: \(url)", category: "Rewards")
             DebugLogger.debug("📦 Request data: \(String(data: jsonData, encoding: .utf8) ?? "")", category: "Rewards")
             
-            let (data, response) = try await URLSession.shared.data(for: urlRequest)
+            let (data, response) = try await URLSession.configured.data(for: urlRequest)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw NetworkError.invalidResponse

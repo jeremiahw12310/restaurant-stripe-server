@@ -1012,7 +1012,8 @@ struct ReferralView: View {
             var req = URLRequest(url: url)
             req.httpMethod = "GET"
             req.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            URLSession.shared.dataTask(with: req) { data, resp, error in
+            URLSession.configured.dataTask(with: req) { [weak self] data, resp, error in
+                guard let self = self else { return }
                 if let error = error {
                     DebugLogger.debug("❌ ReferralView: Error fetching connections: \(error.localizedDescription)", category: "Referral")
                     return
@@ -1092,7 +1093,7 @@ struct ReferralView: View {
                 "shareUrl": shareURL?.absoluteString ?? ""
             ]
             req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-            URLSession.shared.dataTask(with: req).resume()
+            URLSession.configured.dataTask(with: req).resume()
         }
     }
 
@@ -1127,7 +1128,8 @@ struct ReferralView: View {
             req.addValue("application/json", forHTTPHeaderField: "Accept")
             req.httpBody = Data("{}".utf8)
 
-            URLSession.shared.dataTask(with: req) { data, resp, err in
+            URLSession.configured.dataTask(with: req) { [weak self] data, resp, err in
+                guard let self = self else { return }
                 DispatchQueue.main.async { self.isLoading = false }
                 if let err = err {
                     DispatchQueue.main.async { self.errorMessage = err.localizedDescription }
@@ -1212,7 +1214,8 @@ struct ReferralView: View {
             let body: [String: Any] = ["code": trimmed, "deviceId": deviceId]
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-            URLSession.shared.dataTask(with: req) { data, resp, err in
+            URLSession.configured.dataTask(with: req) { [weak self] data, resp, err in
+                guard let self = self else { return }
                 if let err = err {
                     DispatchQueue.main.async { self.acceptStatus = err.localizedDescription }
                     return
