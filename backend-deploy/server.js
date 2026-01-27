@@ -8034,7 +8034,82 @@ IMPORTANT:
         .where('userId', '==', uid)
         .get();
 
-      const claimedGiftIds = new Set(claimsSnapshot.docs.map(doc => doc.data().giftedRewardId));
+      // Build a map of giftedRewardId -> array of redeemedRewardIds (handle multiple claims)
+      // Also track gifts with claims that have no redeemedRewardId (treat as claimed to be safe)
+      const claimMap = new Map();
+      const giftsWithInvalidClaims = new Set();
+      
+      for (const doc of claimsSnapshot.docs) {
+        const data = doc.data();
+        if (data.giftedRewardId) {
+          if (data.redeemedRewardId) {
+            // Valid claim with redeemedRewardId
+            if (!claimMap.has(data.giftedRewardId)) {
+              claimMap.set(data.giftedRewardId, []);
+            }
+            claimMap.get(data.giftedRewardId).push(data.redeemedRewardId);
+          } else {
+            // Claim exists but no redeemedRewardId - treat as claimed to be safe
+            giftsWithInvalidClaims.add(data.giftedRewardId);
+          }
+        }
+      }
+
+      // Collect all redeemedRewardIds and batch fetch them
+      const allRedeemedRewardIds = [];
+      for (const redeemedRewardIds of claimMap.values()) {
+        allRedeemedRewardIds.push(...redeemedRewardIds);
+      }
+      const redeemedRewardsMap = new Map();
+
+      if (allRedeemedRewardIds.length > 0) {
+        // Firestore 'in' query supports up to 30 items, so batch if needed
+        const batchSize = 30;
+        for (let i = 0; i < allRedeemedRewardIds.length; i += batchSize) {
+          const batch = allRedeemedRewardIds.slice(i, i + batchSize);
+          const redeemedSnapshot = await db.collection('redeemedRewards')
+            .where(admin.firestore.FieldPath.documentId(), 'in', batch)
+            .get();
+          
+          for (const redeemedDoc of redeemedSnapshot.docs) {
+            redeemedRewardsMap.set(redeemedDoc.id, redeemedDoc.data());
+          }
+        }
+      }
+
+      // Build claimedGiftIds set - only include gifts where ANY redemption was used OR is still active
+      // Start with gifts that have invalid claims (no redeemedRewardId)
+      const claimedGiftIds = new Set(giftsWithInvalidClaims);
+      
+      for (const [giftId, redeemedRewardIds] of claimMap.entries()) {
+        let hasActiveOrUsedRedemption = false;
+        
+        for (const redeemedRewardId of redeemedRewardIds) {
+          const rewardData = redeemedRewardsMap.get(redeemedRewardId);
+          
+          if (!rewardData) {
+            // Reward document doesn't exist - treat as claimed to be safe
+            hasActiveOrUsedRedemption = true;
+            break;
+          }
+          
+          const isUsed = rewardData.isUsed === true;
+          const expiresAt = parseFirestoreDate(rewardData.expiresAt);
+          const isExpired = rewardData.isExpired === true || (expiresAt ? expiresAt <= new Date() : false);
+          
+          // If ANY redemption was used OR is still active, mark gift as claimed
+          if (isUsed || !isExpired) {
+            hasActiveOrUsedRedemption = true;
+            break;
+          }
+        }
+        
+        // Only mark as claimed if at least one redemption was used or is still active
+        if (hasActiveOrUsedRedemption) {
+          claimedGiftIds.add(giftId);
+        }
+        // If all redemptions expired unused, the gift will reappear (giftId not added to set)
+      }
 
       // Filter and combine gifts
       const availableGifts = [];
@@ -8192,15 +8267,79 @@ IMPORTANT:
         }
       }
 
-      // Check if already claimed
-      const existingClaim = await db.collection('giftedRewardClaims')
+      // Check if already claimed - but allow re-claiming if ALL previous redemptions expired unused
+      const existingClaims = await db.collection('giftedRewardClaims')
         .where('giftedRewardId', '==', giftedRewardId)
         .where('userId', '==', uid)
-        .limit(1)
         .get();
 
-      if (!existingClaim.empty) {
-        return res.status(400).json({ error: 'Gift reward already claimed' });
+      if (!existingClaims.empty) {
+        // Check all existing claims to see if any have an active or used redemption
+        // First, collect all redeemedRewardIds and batch fetch them
+        const redeemedRewardIds = [];
+        const claimsWithoutRedeemedReward = [];
+        
+        for (const claimDoc of existingClaims.docs) {
+          const claimData = claimDoc.data();
+          const redeemedRewardId = claimData.redeemedRewardId;
+          
+          if (!redeemedRewardId) {
+            // No redeemedRewardId - treat as claimed to be safe
+            claimsWithoutRedeemedReward.push(claimDoc);
+          } else {
+            redeemedRewardIds.push(redeemedRewardId);
+          }
+        }
+        
+        // If any claim has no redeemedRewardId, block re-claiming
+        if (claimsWithoutRedeemedReward.length > 0) {
+          return res.status(400).json({ error: 'Gift reward already claimed' });
+        }
+        
+        // Batch fetch all redeemed rewards
+        const redeemedRewardsMap = new Map();
+        if (redeemedRewardIds.length > 0) {
+          // Firestore 'in' query supports up to 30 items
+          const batchSize = 30;
+          for (let i = 0; i < redeemedRewardIds.length; i += batchSize) {
+            const batch = redeemedRewardIds.slice(i, i + batchSize);
+            const redeemedSnapshot = await db.collection('redeemedRewards')
+              .where(admin.firestore.FieldPath.documentId(), 'in', batch)
+              .get();
+            
+            for (const redeemedDoc of redeemedSnapshot.docs) {
+              redeemedRewardsMap.set(redeemedDoc.id, redeemedDoc.data());
+            }
+          }
+        }
+        
+        // Check each redemption status
+        let hasActiveOrUsedRedemption = false;
+        for (const redeemedRewardId of redeemedRewardIds) {
+          const rewardData = redeemedRewardsMap.get(redeemedRewardId);
+          
+          if (!rewardData) {
+            // Redeemed reward doesn't exist - treat as claimed to be safe
+            hasActiveOrUsedRedemption = true;
+            break;
+          }
+          
+          const isUsed = rewardData.isUsed === true;
+          const expiresAt = parseFirestoreDate(rewardData.expiresAt);
+          const isExpired = rewardData.isExpired === true || (expiresAt ? expiresAt <= new Date() : false);
+          
+          // If this redemption was used OR is still active, block re-claiming
+          if (isUsed || !isExpired) {
+            hasActiveOrUsedRedemption = true;
+            break;
+          }
+        }
+        
+        // If any redemption is active or used, block re-claiming
+        if (hasActiveOrUsedRedemption) {
+          return res.status(400).json({ error: 'Gift reward already claimed' });
+        }
+        // If all redemptions expired unused, allow re-claiming (continue)
       }
 
       // Generate redemption code (8 digits)
