@@ -64,10 +64,9 @@ struct ReferralHistoryView: View {
         outboundListener = db.collection("referrals")
             .whereField("referrerUserId", isEqualTo: uid)
             .limit(to: 100)
-            .addSnapshotListener { [weak self] snap, _ in
-                guard let self = self else { return }
+            .addSnapshotListener { snap, _ in
                 guard let docs = snap?.documents else {
-                    self.outbound = []
+                    outbound = []
                     return
                 }
                 // IMPORTANT: Do not read users/{uid} for other users here (blocked by Firestore rules).
@@ -85,7 +84,7 @@ struct ReferralHistoryView: View {
                     return HistoryItem(id: d.documentID, name: name, status: status, isOutbound: true, pointsTowards50: pointsTowards50, createdAt: createdAt)
                 }
                 DispatchQueue.main.async {
-                    self.outbound = items.sorted { item1, item2 in
+                    outbound = items.sorted { item1, item2 in
                         // Sort by date (most recent first), then by name if dates are equal
                         let date1 = item1.createdAt ?? Date.distantPast
                         let date2 = item2.createdAt ?? Date.distantPast
@@ -102,10 +101,9 @@ struct ReferralHistoryView: View {
         inboundListener = db.collection("referrals")
             .whereField("referredUserId", isEqualTo: uid)
             .limit(to: 100)
-            .addSnapshotListener { [weak self] snap, _ in
-                guard let self = self else { return }
+            .addSnapshotListener { snap, _ in
                 guard let docs = snap?.documents, !docs.isEmpty else {
-                    self.inbound = []
+                    inbound = []
                     return
                 }
                 // IMPORTANT: Do not read users/{uid} for other users here (blocked by Firestore rules).
@@ -123,7 +121,7 @@ struct ReferralHistoryView: View {
                     return HistoryItem(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: pointsTowards50, createdAt: createdAt)
                 }
                 DispatchQueue.main.async {
-                    self.inbound = items.sorted { item1, item2 in
+                    inbound = items.sorted { item1, item2 in
                         // Sort by date (most recent first), then by name if dates are equal
                         let date1 = item1.createdAt ?? Date.distantPast
                         let date2 = item2.createdAt ?? Date.distantPast

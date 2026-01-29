@@ -3467,6 +3467,32 @@ If a field is missing, use null.`;
         norm1.feeLineVisible === norm2.feeLineVisible;
 
       if (!responsesMatch) {
+        logger.info('⚠️ Double-parse mismatch details:', {
+          orderNumber1: norm1.orderNumber,
+          orderNumber2: norm2.orderNumber,
+          orderTotal1: norm1.orderTotal,
+          orderTotal2: norm2.orderTotal,
+          tipAmount1: norm1.tipAmount,
+          tipAmount2: norm2.tipAmount,
+          feeAmount1: norm1.feeAmount,
+          feeAmount2: norm2.feeAmount,
+          subtotalAmount1: norm1.subtotalAmount,
+          subtotalAmount2: norm2.subtotalAmount,
+          taxAmount1: norm1.taxAmount,
+          taxAmount2: norm2.taxAmount,
+          totalAmount1: norm1.totalAmount,
+          totalAmount2: norm2.totalAmount,
+          subtotalLineVisible1: norm1.subtotalLineVisible,
+          subtotalLineVisible2: norm2.subtotalLineVisible,
+          taxLineVisible1: norm1.taxLineVisible,
+          taxLineVisible2: norm2.taxLineVisible,
+          totalLineVisible1: norm1.totalLineVisible,
+          totalLineVisible2: norm2.totalLineVisible,
+          tipLineVisible1: norm1.tipLineVisible,
+          tipLineVisible2: norm2.tipLineVisible,
+          feeLineVisible1: norm1.feeLineVisible,
+          feeLineVisible2: norm2.feeLineVisible
+        });
         await logFailureAndCheckLockout(uid, "DOUBLE_PARSE_MISMATCH", db, ipAddress);
         return sendError(
           res,
@@ -3494,6 +3520,19 @@ If a field is missing, use null.`;
         data.taxAmount === null || data.taxAmount === undefined ||
         data.totalAmount === null || data.totalAmount === undefined
       ) {
+        logger.info('⚠️ Totals section not visible:', {
+          subtotalLineVisible: data.subtotalLineVisible,
+          taxLineVisible: data.taxLineVisible,
+          totalLineVisible: data.totalLineVisible,
+          subtotalAmount: data.subtotalAmount,
+          taxAmount: data.taxAmount,
+          totalAmount: data.totalAmount,
+          orderTotal: data.orderTotal,
+          tipAmount: data.tipAmount,
+          feeAmount: data.feeAmount,
+          tipLineVisible: data.tipLineVisible,
+          feeLineVisible: data.feeLineVisible
+        });
         await logFailureAndCheckLockout(uid, "TOTAL_SECTION_NOT_VISIBLE", db, ipAddress);
         return sendError(res, 400, "TOTAL_SECTION_NOT_VISIBLE", "Make sure all receipt text is visible and try again.");
       }
@@ -3511,6 +3550,14 @@ If a field is missing, use null.`;
         ? parseFloat(data.feeAmount)
         : null;
       if ([subtotal, tax, totalAmt, orderTotalAmt].some(Number.isNaN)) {
+        logger.info('⚠️ Totals invalid (NaN) from parsed values:', {
+          subtotalRaw: data.subtotalAmount,
+          taxRaw: data.taxAmount,
+          totalRaw: data.totalAmount,
+          orderTotalRaw: data.orderTotal,
+          tipRaw: data.tipAmount,
+          feeRaw: data.feeAmount
+        });
         await logFailureAndCheckLockout(uid, "TOTAL_INVALID", db, ipAddress);
         return sendError(res, 400, "TOTAL_INVALID", "Could not validate totals — please rescan with Subtotal/Tax/Total visible.");
       }
@@ -3556,6 +3603,16 @@ If a field is missing, use null.`;
       const orderTotalMatches = totalMatchesOrderTotal || totalWithTipMatchesOrderTotal || totalWithFeeMatchesOrderTotal || totalWithTipAndFeeMatchesOrderTotal;
 
       if (!anyTotalMatches || !orderTotalMatches) {
+        logger.info('⚠️ Totals mismatch details:', {
+          subtotal, tax, totalAmt, orderTotalAmt, tipAmount, feeAmount,
+          subtotalLineVisible: data.subtotalLineVisible,
+          taxLineVisible: data.taxLineVisible,
+          totalLineVisible: data.totalLineVisible,
+          tipLineVisible: data.tipLineVisible,
+          feeLineVisible: data.feeLineVisible,
+          baseTotalMatches, tipTotalMatches, feeTotalMatches, tipAndFeeTotalMatches,
+          totalMatchesOrderTotal, totalWithTipMatchesOrderTotal, totalWithFeeMatchesOrderTotal, totalWithTipAndFeeMatchesOrderTotal
+        });
         await logFailureAndCheckLockout(uid, "TOTAL_INCONSISTENT", db, ipAddress);
         return sendError(res, 400, "TOTAL_INCONSISTENT", "Totals don't reconcile — please rescan with Subtotal/Tax/Total clearly visible.");
       }

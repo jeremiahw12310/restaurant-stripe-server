@@ -548,10 +548,39 @@ class AuthenticationViewModel: ObservableObject {
         }
     }
     
+    /// Calculates age from birthday string (formatted as .medium date style)
+    private func calculateAge(from birthdayString: String) -> Int? {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        
+        guard let birthDate = formatter.date(from: birthdayString) else {
+            return nil
+        }
+        
+        let calendar = Calendar.current
+        let ageComponents = calendar.dateComponents([.year], from: birthDate, to: Date())
+        return ageComponents.year
+    }
+    
     private func validateNewAccountDetails() -> Bool {
         if firstName.trimmingCharacters(in: .whitespaces).isEmpty || lastName.trimmingCharacters(in: .whitespaces).isEmpty {
             errorMessage = "First and last name are required."; return false
         }
+        
+        // Validate age is 18 or older
+        if birthday.isEmpty {
+            errorMessage = "Birthday is required."; return false
+        }
+        
+        guard let age = calculateAge(from: birthday) else {
+            errorMessage = "Invalid birthday format. Please try again."; return false
+        }
+        
+        if age < 18 {
+            errorMessage = "You must be 18 years or older to use this app."; return false
+        }
+        
         return true
     }
     

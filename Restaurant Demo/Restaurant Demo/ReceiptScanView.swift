@@ -1666,6 +1666,17 @@ class CameraController: NSObject, ObservableObject {
     func stopSession() {
         setTorch(on: false)
         torchLatchedOn = false
+        // Reset exposure bias to default
+        if let device = cameraDevice, device.isExposureModeSupported(.autoExpose) {
+            do {
+                try device.lockForConfiguration()
+                device.setExposureTargetBias(0) { _ in }
+                device.unlockForConfiguration()
+            } catch {
+                // Ignore errors when stopping
+            }
+        }
+        currentExposureBias = 0
         if captureSession.isRunning {
             captureSession.stopRunning()
         }
@@ -1722,6 +1733,20 @@ class CameraController: NSObject, ObservableObject {
     private let torchMinToggleInterval: CFTimeInterval = 0.9
     private let lowLightOnThreshold: Double = 0.20  // 0..1 (lower = darker)
     private let lowLightOffThreshold: Double = 0.28 // hysteresis
+    
+    // Bright/low-contrast handling + preprocessing heuristics
+    private var lowContrastStreak: Int = 0
+    private var noCandidateStreak: Int = 0
+    private let brightLowContrastThreshold: Double = 0.58
+    private let lowContrastStdThreshold: Double = 0.09
+    private let preprocessStreakThreshold: Int = 2
+    private let fallbackStreakThreshold: Int = 3
+    
+    // Exposure bias tuning for bright, low-contrast scenes
+    private var lastExposureBiasUpdateAt: CFTimeInterval = 0
+    private var currentExposureBias: Float = 0
+    private let exposureBiasUpdateInterval: CFTimeInterval = 0.6
+    private let lowContrastExposureBias: Float = -0.45
 
     // Pre-capture totals OCR hint (throttled, low-res check)
     private var lastFastTotalsCheckAt: CFTimeInterval = 0
@@ -1813,6 +1838,10 @@ class CameraController: NSObject, ObservableObject {
         statusCandidateSince = 0
         trackedQuadStartTime = 0
         trackedQuadBestStability = 0
+        lowContrastStreak = 0
+        noCandidateStreak = 0
+        currentExposureBias = 0
+        lastExposureBiasUpdateAt = 0
         
         // Stop any existing session
         if captureSession.isRunning {
@@ -2089,22 +2118,23 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
             if now - lastTorchEvalAt >= torchEvalInterval {
                 lastTorchEvalAt = now
                 if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
-                    let brightness = estimateBrightnessBGRA(pixelBuffer)
-                    if brightness >= 0 {
+                    let stats = estimateLumaStats(pixelBuffer)
+                    if stats.brightness >= 0 {
                         // Latch behavior: once the torch turns on due to low light, keep it on for the
                         // rest of the scanning session (prevents flickering as exposure/brightness fluctuates).
                         if torchLatchedOn {
                             setTorch(on: true)
                         } else {
-                            if brightness < lowLightOnThreshold {
+                            if stats.brightness < lowLightOnThreshold {
                                 torchLatchedOn = true
                                 torchDesiredOn = true
                                 setTorch(on: true)
-                            } else if brightness > lowLightOffThreshold {
+                            } else if stats.brightness > lowLightOffThreshold {
                                 torchDesiredOn = false
                                 setTorch(on: false)
                             }
                         }
+                        updateExposureBiasIfNeeded(brightness: stats.brightness, contrastStd: stats.contrastStd)
                     }
                 }
             }
@@ -2127,29 +2157,72 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
             // Portrait back camera: .right is typically correct for buffers.
             let orientation = CGImagePropertyOrientation.right
 
-            let request = VNDetectRectanglesRequest()
-            request.maximumObservations = 8
-            request.minimumConfidence = 0.45
-            request.minimumAspectRatio = 0.10
-            request.maximumAspectRatio = 0.90
-            request.minimumSize = 0.08
-            request.quadratureTolerance = 35.0 // was 25.0 - increased for tilted receipts
-            if let roi = self.liveScanROI {
-                request.regionOfInterest = roi
+            let lumaStats = self.estimateLumaStats(pixelBuffer)
+            let isBrightLowContrast = lumaStats.brightness >= self.brightLowContrastThreshold &&
+                lumaStats.contrastStd >= 0 &&
+                lumaStats.contrastStd <= self.lowContrastStdThreshold
+            if isBrightLowContrast {
+                self.lowContrastStreak = min(10, self.lowContrastStreak + 1)
+            } else {
+                self.lowContrastStreak = max(0, self.lowContrastStreak - 1)
             }
 
-            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
-            do {
-                try handler.perform([request])
-            } catch {
-                DispatchQueue.main.async {
-                    self.detectedReceiptQuad = nil
-                    self.applyStatusText("Finding receipt…", force: true)
+            let shouldPreprocess = self.lowContrastStreak >= self.preprocessStreakThreshold ||
+                self.noCandidateStreak >= self.fallbackStreakThreshold
+
+            func makePrimaryRequest() -> VNDetectRectanglesRequest {
+                let request = VNDetectRectanglesRequest()
+                request.maximumObservations = 8
+                request.minimumConfidence = 0.45
+                request.minimumAspectRatio = 0.10
+                request.maximumAspectRatio = 0.90
+                request.minimumSize = 0.08
+                request.quadratureTolerance = 35.0 // was 25.0 - increased for tilted receipts
+                if let roi = self.liveScanROI {
+                    request.regionOfInterest = roi
                 }
-                return
+                return request
             }
 
-            guard let obs = request.results, !obs.isEmpty else {
+            func makeFallbackRequest() -> VNDetectRectanglesRequest {
+                let request = VNDetectRectanglesRequest()
+                request.maximumObservations = 10
+                request.minimumConfidence = 0.32
+                request.minimumAspectRatio = 0.08
+                request.maximumAspectRatio = 0.92
+                request.minimumSize = 0.06
+                request.quadratureTolerance = 45.0
+                if let roi = self.liveScanROI {
+                    request.regionOfInterest = roi
+                }
+                return request
+            }
+
+            func performRequest(_ request: VNDetectRectanglesRequest, using image: CIImage) -> [VNRectangleObservation] {
+                let handler = VNImageRequestHandler(ciImage: image, orientation: orientation, options: [:])
+                do {
+                    try handler.perform([request])
+                    return request.results ?? []
+                } catch {
+                    return []
+                }
+            }
+
+            let baseCIImage = CIImage(cvPixelBuffer: pixelBuffer)
+            let primaryImage = shouldPreprocess ? self.preprocessReceiptImage(baseCIImage, stats: lumaStats) : baseCIImage
+            let primaryRequest = makePrimaryRequest()
+            var observations = performRequest(primaryRequest, using: primaryImage)
+
+            // Try fallback with preprocessing if primary failed and we've detected issues (low contrast or repeated failures)
+            if observations.isEmpty && shouldPreprocess {
+                // Reuse preprocessed image if we already preprocessed for primary
+                let fallbackImage = shouldPreprocess ? primaryImage : self.preprocessReceiptImage(baseCIImage, stats: lumaStats)
+                let fallbackRequest = makeFallbackRequest()
+                observations = performRequest(fallbackRequest, using: fallbackImage)
+            }
+
+            guard !observations.isEmpty else {
+                self.noCandidateStreak = min(12, self.noCandidateStreak + 1)
                 // Dropout tolerance: keep showing the last good quad briefly instead of blinking out.
                 let now = CACurrentMediaTime()
                 let withinGrace = (now - self.lastGoodQuadAt) <= self.quadHoldGraceSeconds
@@ -2220,7 +2293,7 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                 let area: Double
             }
 
-            func makeCandidate(_ o: VNRectangleObservation) -> Candidate? {
+            func makeCandidate(_ o: VNRectangleObservation, minConfidence: Float) -> Candidate? {
                 let bb = o.boundingBox
                 let w = Double(bb.width)
                 let h = Double(bb.height)
@@ -2237,7 +2310,7 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                 // Edge contrast validation: reject very low confidence detections
                 // (likely false positives on white backgrounds or from hands)
                 // This helps filter out "ghost" rectangles that Vision sometimes detects
-                if o.confidence < 0.50 { return nil } // was implicit 0.45 from request
+                if o.confidence < minConfidence { return nil } // was implicit 0.45 from request
 
                 let q = DetectedQuad(
                     topLeft: o.topLeft,
@@ -2251,9 +2324,12 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                 return Candidate(quad: q, longSide: longSide, aspect: aspect, area: area)
             }
 
-            let candidates = obs.compactMap(makeCandidate).sorted { $0.quad.score > $1.quad.score }
+            let minCandidateConfidence: Float = (observations.count > 0 && shouldPreprocess) ? 0.40 : 0.50
+            let candidates = observations.compactMap { makeCandidate($0, minConfidence: minCandidateConfidence) }
+                .sorted { $0.quad.score > $1.quad.score }
             guard let top = candidates.first else {
                 // No valid candidates after filtering: apply the same dropout tolerance.
+                self.noCandidateStreak = min(12, self.noCandidateStreak + 1)
                 let now = CACurrentMediaTime()
                 let withinGrace = (now - self.lastGoodQuadAt) <= self.quadHoldGraceSeconds
                 if withinGrace {
@@ -2278,6 +2354,7 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                 }
                 return
             }
+            self.noCandidateStreak = 0
 
             // Hysteresis: stick to the currently tracked quad unless a new candidate is clearly better
             // or is very close geometrically (same receipt, slight jitter).
@@ -2533,38 +2610,107 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
         }
     }
 
-    /// Returns a rough 0..1 brightness estimate from a BGRA pixel buffer.
+    private struct LumaStats {
+        let brightness: Double
+        let contrastStd: Double
+    }
+
+    /// Returns a rough 0..1 brightness and contrast estimate from a BGRA pixel buffer.
     /// Samples a sparse grid (fast) and uses the green channel as a luminance proxy.
-    private func estimateBrightnessBGRA(_ pixelBuffer: CVPixelBuffer) -> Double {
+    private func estimateLumaStats(_ pixelBuffer: CVPixelBuffer) -> LumaStats {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
 
-        guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return -1 }
+        guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+            return LumaStats(brightness: -1, contrastStd: -1)
+        }
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         let bpr = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        if width <= 0 || height <= 0 { return -1 }
+        if width <= 0 || height <= 0 {
+            return LumaStats(brightness: -1, contrastStd: -1)
+        }
 
         // Sample ~40x40 grid max.
         let stepX = max(1, width / 40)
         let stepY = max(1, height / 40)
 
-        var sum: Int64 = 0
-        var count: Int64 = 0
+        var sum: Double = 0
+        var sumSq: Double = 0
+        var count: Double = 0
 
         for y in stride(from: 0, to: height, by: stepY) {
             let row = base.advanced(by: y * bpr)
             for x in stride(from: 0, to: width, by: stepX) {
                 let px = row.advanced(by: x * 4)
-                // BGRA: [B, G, R, A]
-                let g = px.load(fromByteOffset: 1, as: UInt8.self)
-                sum += Int64(g)
+                // BGRA: [B, G, R, A] - use G as luma proxy
+                let g = Double(px.load(fromByteOffset: 1, as: UInt8.self))
+                sum += g
+                sumSq += g * g
                 count += 1
             }
         }
 
-        guard count > 0 else { return -1 }
-        return Double(sum) / Double(count * 255)
+        guard count > 0 else { return LumaStats(brightness: -1, contrastStd: -1) }
+        let mean = sum / count
+        let variance = max(0, (sumSq / count) - (mean * mean))
+        let std = sqrt(variance)
+        return LumaStats(brightness: mean / 255.0, contrastStd: std / 255.0)
+    }
+
+    private func preprocessReceiptImage(_ image: CIImage, stats: LumaStats) -> CIImage {
+        let contrastBoost: Double
+        if stats.contrastStd >= 0 && stats.contrastStd < 0.06 {
+            contrastBoost = 1.55
+        } else if stats.contrastStd >= 0 && stats.contrastStd < 0.09 {
+            contrastBoost = 1.35
+        } else {
+            contrastBoost = 1.18
+        }
+
+        let brightnessAdjust: Double
+        if stats.brightness > 0.75 {
+            brightnessAdjust = -0.10
+        } else if stats.brightness > 0.60 {
+            brightnessAdjust = -0.06
+        } else {
+            brightnessAdjust = -0.02
+        }
+
+        let colorAdjusted = image.applyingFilter("CIColorControls", parameters: [
+            kCIInputContrastKey: contrastBoost,
+            kCIInputBrightnessKey: brightnessAdjust,
+            kCIInputSaturationKey: 0.0
+        ])
+
+        return colorAdjusted.applyingFilter("CISharpenLuminance", parameters: [
+            kCIInputSharpnessKey: 0.4
+        ])
+    }
+
+    private func updateExposureBiasIfNeeded(brightness: Double, contrastStd: Double) {
+        guard let device = cameraDevice else { return }
+        let now = CACurrentMediaTime()
+        if now - lastExposureBiasUpdateAt < exposureBiasUpdateInterval { return }
+
+        let shouldLowerExposure = brightness >= brightLowContrastThreshold &&
+            contrastStd >= 0 &&
+            contrastStd <= lowContrastStdThreshold
+        let targetBias: Float = shouldLowerExposure ? lowContrastExposureBias : 0.0
+
+        if abs(targetBias - currentExposureBias) < 0.05 { return }
+
+        do {
+            try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
+            let clamped = min(device.maxExposureTargetBias, max(device.minExposureTargetBias, targetBias))
+            device.setExposureTargetBias(clamped) { [weak self] _ in
+                self?.currentExposureBias = clamped
+            }
+            lastExposureBiasUpdateAt = now
+        } catch {
+            DebugLogger.debug("⚠️ Exposure bias config failed: \(error.localizedDescription)", category: "ReceiptScan")
+        }
     }
 }
 
@@ -2727,8 +2873,8 @@ private func receiptHasSubtotalTaxTotalSync(_ image: UIImage) -> Bool {
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .fast
     request.usesLanguageCorrection = false
-    // Focus on the bottom portion where Subtotal/Tax/Total typically live (origin is bottom-left).
-    request.regionOfInterest = CGRect(x: 0.0, y: 0.0, width: 1.0, height: 0.65)
+    // Expanded: scan bottom 85% of image (up from 65%) to catch more receipt layouts.
+    request.regionOfInterest = CGRect(x: 0.0, y: 0.0, width: 1.0, height: 0.85)
 
     let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
     do {
@@ -2740,11 +2886,17 @@ private func receiptHasSubtotalTaxTotalSync(_ image: UIImage) -> Bool {
     let strings = request.results?.compactMap { $0.topCandidates(1).first?.string } ?? []
     let text = strings.joined(separator: "\n").lowercased()
 
+    // Expanded keyword list for totals section detection
     let hasSubtotal = text.contains("subtotal") || text.contains("sub total")
     let hasTax = text.contains("tax")
     let hasTotal = text.contains("total")
-    let keywordCount = [hasSubtotal, hasTax, hasTotal].filter { $0 }.count
-    guard keywordCount >= 2 else { return false }
+    let hasTip = text.contains("tip") || text.contains("gratuity")
+    let hasFee = text.contains("fee")
+    let hasDue = text.contains("due") || text.contains("amount")
+    
+    // Relaxed: require only 1 keyword from the expanded set (down from 2 of 3)
+    let hasAnyTotalsKeyword = hasSubtotal || hasTax || hasTotal || hasTip || hasFee || hasDue
+    guard hasAnyTotalsKeyword else { return false }
 
     // Require at least one currency-like amount to reduce false positives.
     let pattern = #"\b\d+\.\d{2}\b"#

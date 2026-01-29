@@ -865,14 +865,14 @@ struct ReferralView: View {
         outboundListener = db.collection("referrals")
             .whereField("referrerUserId", isEqualTo: uid)
             .limit(to: 100)
-            .addSnapshotListener { [weak self] snap, _ in
-                guard let self = self else { return }
+            .addSnapshotListener { snap, _ in
                 guard let docs = snap?.documents else {
-                    self.outboundConnections = []
+                    outboundConnections = []
                     return
                 }
                 // IMPORTANT: Do not read users/{uid} for other users here (blocked by Firestore rules).
                 // Use denormalized names and progress stored on the referral doc.
+                let currentOutbound = outboundConnections
                 let items: [ReferralDisplay] = docs.map { d in
                     let data = d.data()
                     let statusRaw = (data["status"] as? String) ?? "pending"
@@ -881,7 +881,7 @@ struct ReferralView: View {
                     let rawName = (data["referredFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     // If this referral doc predates denormalized names, don't overwrite a better name
                     // that may have come from the server fallback.
-                    let existingName = self.outboundConnections.first(where: { $0.id == d.documentID })?.name
+                    let existingName = currentOutbound.first(where: { $0.id == d.documentID })?.name
                     let name = rawName.isEmpty ? (existingName ?? "Friend") : rawName
                     // Read pointsTowards50 from referral doc (maintained by Cloud Function)
                     let ptsRaw = (data["pointsTowards50"] as? NSNumber)?.intValue ?? (data["pointsTowards50"] as? Int) ?? 0
@@ -889,7 +889,7 @@ struct ReferralView: View {
                     return ReferralDisplay(id: d.documentID, name: name, status: status, isOutbound: true, pointsTowards50: pointsTowards50, createdAt: createdAt)
                 }
                 DispatchQueue.main.async {
-                    self.outboundConnections = items.sorted { item1, item2 in
+                    outboundConnections = items.sorted { item1, item2 in
                         // Sort by date (most recent first), then by name if dates are equal
                         let date1 = item1.createdAt ?? Date.distantPast
                         let date2 = item2.createdAt ?? Date.distantPast
@@ -906,10 +906,9 @@ struct ReferralView: View {
         inboundListener = db.collection("referrals")
             .whereField("referredUserId", isEqualTo: uid)
             .limit(to: 1)
-            .addSnapshotListener { [weak self] snap, _ in
-                guard let self = self else { return }
+            .addSnapshotListener { snap, _ in
                 guard let doc = snap?.documents.first else {
-                    self.inboundConnection = nil
+                    inboundConnection = nil
                     return
                 }
                 let data = doc.data()
@@ -918,11 +917,12 @@ struct ReferralView: View {
                 let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
                 // Tombstoned docs may have referrerUserId removed; we still show "Deleted User" from referrerFirstName.
                 let rawName = (data["referrerFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let name = rawName.isEmpty ? (self.inboundConnection?.name ?? "Friend") : rawName
+                let currentInbound = inboundConnection
+                let name = rawName.isEmpty ? (currentInbound?.name ?? "Friend") : rawName
                 let ptsRaw = (data["pointsTowards50"] as? NSNumber)?.intValue ?? (data["pointsTowards50"] as? Int) ?? 0
                 let pointsTowards50 = min(max(ptsRaw, 0), 50) // Clamp to 0-50
                 DispatchQueue.main.async {
-                    self.inboundConnection = ReferralDisplay(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: pointsTowards50, createdAt: createdAt)
+                    inboundConnection = ReferralDisplay(id: doc.documentID, name: name, status: status, isOutbound: false, pointsTowards50: pointsTowards50, createdAt: createdAt)
                 }
             }
     }
@@ -937,26 +937,26 @@ struct ReferralView: View {
         }()
         let db = Firestore.firestore()
         userDocListener?.remove()
-        userDocListener = db.collection("users").document(uid).addSnapshotListener { [weak self] snap, _ in
-            guard let self = self else { return }
+        userDocListener = db.collection("users").document(uid).addSnapshotListener { snap, _ in
             let data = snap?.data() ?? [:]
             let referredById = (data["referredBy"] as? String) ?? ""
             let referralId = (data["referralId"] as? String) ?? ""
             let used = !referredById.isEmpty
-            self.hasUsedReferral = used
-            self.canShowEnterCode = within24h && !used
+            hasUsedReferral = used
+            canShowEnterCode = within24h && !used
 
             // If a referral was linked during sign-up, show inbound pending immediately
             if used {
                 // IMPORTANT: Do not read users/{uid} for other users here (blocked by Firestore rules).
                 // Fetch referral doc (read is allowed for referrer/referred) and use denormalized name fields.
+                let currentInbound = inboundConnection
                 let updateFromReferralDoc: (DocumentSnapshot?) -> Void = { refDoc in
                     let refData = refDoc?.data() ?? [:]
                     let statusRaw = (refData["status"] as? String) ?? "pending"
                     let status = ReferralView.displayStatus(from: statusRaw)
                     let createdAt = (refData["createdAt"] as? Timestamp)?.dateValue()
                     let rawName = (refData["referrerFirstName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    let name = rawName.isEmpty ? (self.inboundConnection?.name ?? "Friend") : rawName
+                    let name = rawName.isEmpty ? (currentInbound?.name ?? "Friend") : rawName
                     // Read pointsTowards50 from referral doc (maintained by Cloud Function)
                     let ptsRaw = (refData["pointsTowards50"] as? NSNumber)?.intValue ?? (refData["pointsTowards50"] as? Int) ?? 0
                     let pointsTowards50 = min(max(ptsRaw, 0), 50) // Clamp to 0-50
@@ -965,7 +965,7 @@ struct ReferralView: View {
                     let finalProgress = pointsTowards50 > 0 ? pointsTowards50 : min(max(currentUserPoints, 0), 50)
                     DispatchQueue.main.async {
                         let idToUse = (refDoc?.documentID ?? (referralId.isEmpty ? UUID().uuidString : referralId))
-                        self.inboundConnection = ReferralDisplay(id: idToUse, name: name, status: status, isOutbound: false, pointsTowards50: finalProgress, createdAt: createdAt ?? self.inboundConnection?.createdAt)
+                        inboundConnection = ReferralDisplay(id: idToUse, name: name, status: status, isOutbound: false, pointsTowards50: finalProgress, createdAt: createdAt ?? currentInbound?.createdAt)
                     }
                 }
 

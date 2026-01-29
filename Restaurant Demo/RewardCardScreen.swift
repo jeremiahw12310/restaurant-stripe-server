@@ -454,12 +454,13 @@ struct RewardCardScreen: View {
     
     // MARK: - Firestore Live Updates
     private func attachFirestoreListener() {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
         let db = Firestore.firestore()
         rewardListener = db.collection("redeemedRewards")
+            .whereField("userId", isEqualTo: uid)
             .whereField("redemptionCode", isEqualTo: successData.redemptionCode)
             .limit(to: 1)
-            .addSnapshotListener { [weak self] snapshot, error in
-                guard let self = self else { return }
+            .addSnapshotListener { snapshot, error in
                 if let error = error {
                     DebugLogger.debug("❌ Reward listener error: \(error.localizedDescription)", category: "Rewards")
                     return
@@ -470,11 +471,11 @@ struct RewardCardScreen: View {
                 // Ensure state updates happen on main thread
                 DispatchQueue.main.async {
                     if let isUsed = data["isUsed"] as? Bool, isUsed {
-                        self.terminalState = .claimed
-                        self.showClaimedCongrats = true
+                        terminalState = .claimed
+                        showClaimedCongrats = true
                     }
                     if let isExpired = data["isExpired"] as? Bool, isExpired {
-                        self.terminalState = .expired
+                        terminalState = .expired
                     }
                 }
             }
