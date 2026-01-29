@@ -3,6 +3,7 @@ const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs');
+const fsPromises = require('fs').promises;
 const { OpenAI } = require('openai');
 
 // Initialize Firebase Admin
@@ -52,7 +53,9 @@ const path = require('path');
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 app.use(cors());
-app.use(express.json());
+// Body size limits to prevent DoS (1MB for JSON, file uploads handled separately by multer)
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Serve static files from public folder (privacy policy, terms, etc.)
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -71,12 +74,24 @@ function getClientIp(req) {
 
 function createInMemoryRateLimiter({ keyFn, windowMs, max, errorCode }) {
   const hits = new Map();
+  let lastCleanupAt = 0;
 
   return function rateLimiter(req, res, next) {
     const key = keyFn(req);
     if (!key) return next();
 
     const now = Date.now();
+
+    // Clean up expired entries periodically
+    if (now - lastCleanupAt > windowMs) {
+      for (const [hitKey, entry] of hits.entries()) {
+        if (!entry || entry.resetAt <= now) {
+          hits.delete(hitKey);
+        }
+      }
+      lastCleanupAt = now;
+    }
+
     const entry = hits.get(key);
     if (!entry || now > entry.resetAt) {
       hits.set(key, { count: 1, resetAt: now + windowMs });
@@ -145,6 +160,25 @@ async function requireFirebaseAuth(req, res, next) {
 const comboInsights = []; // Track combo patterns for insights, not restrictions
 const MAX_INSIGHTS = 100;
 const userComboPreferences = new Map(); // Track user preferences for personalization
+
+// Helper function to safely add insights with size limit enforcement
+function addComboInsight(insight) {
+  comboInsights.push(insight);
+  if (comboInsights.length > MAX_INSIGHTS) {
+    comboInsights.shift(); // Remove oldest entry to maintain size limit
+  }
+}
+
+// Size limit for user combo preferences Map (LRU eviction)
+const MAX_USER_PREFERENCES = 1000;
+function setUserComboPreference(userId, preference) {
+  // If at capacity, remove oldest entry (first key in insertion order)
+  if (userComboPreferences.size >= MAX_USER_PREFERENCES && !userComboPreferences.has(userId)) {
+    const firstKey = userComboPreferences.keys().next().value;
+    userComboPreferences.delete(firstKey);
+  }
+  userComboPreferences.set(userId, preference);
+}
 
 // 🛡️ DIETARY RESTRICTION SAFETY VALIDATION SYSTEM
 // This function validates AI-generated combos against user dietary restrictions
@@ -905,7 +939,7 @@ if (!process.env.OPENAI_API_KEY) {
       console.log('📁 Image file received:', req.file.originalname, 'Size:', req.file.size);
       
       const imagePath = req.file.path;
-      const imageData = fs.readFileSync(imagePath, { encoding: 'base64' });
+      const imageData = await fsPromises.readFile(imagePath, { encoding: 'base64' });
 
       const prompt = `You are a receipt parser for Dumpling House. Follow these STRICT validation rules:
 
@@ -944,7 +978,7 @@ If a field is missing, use null.`;
       console.log('✅ OpenAI response received');
       
       // Clean up the uploaded file
-      fs.unlinkSync(imagePath);
+      await fsPromises.unlink(imagePath).catch(err => console.error('Failed to delete file:', err));
 
       const text = response.choices[0].message.content;
       console.log('📝 Raw OpenAI response:', text);

@@ -836,7 +836,7 @@ class AdminNotificationsViewModel: ObservableObject {
             request.httpMethod = "GET"
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             
-            URLSession.shared.dataTask(with: request) { data, response, networkError in
+            URLSession.configured.dataTask(with: request) { data, response, networkError in
                 timeoutWorkItem.cancel()
                 
                 DispatchQueue.main.async {
@@ -967,7 +967,7 @@ class AdminNotificationsViewModel: ObservableObject {
             request.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
             request.httpBody = try? JSONSerialization.data(withJSONObject: requestBody)
             
-            URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            URLSession.configured.dataTask(with: request) { [weak self] data, response, error in
                 DispatchQueue.main.async {
                     self?.isSending = false
                     

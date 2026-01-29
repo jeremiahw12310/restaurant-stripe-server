@@ -233,7 +233,7 @@ struct AdminSendRewardsView: View {
             
             // Image Upload
             VStack(alignment: .leading, spacing: 8) {
-                Text("Reward Image")
+                Text("Reward Image (Optional)")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.gray)
                 
@@ -515,10 +515,9 @@ class AdminSendRewardsViewModel: ObservableObject {
         if selectedReward != nil {
             return true // Existing reward selected
         } else {
-            // Custom reward
+            // Custom reward - image is optional
             return !customTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                   !customDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                   selectedImage != nil
+                   !customDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
     
@@ -571,7 +570,7 @@ class AdminSendRewardsViewModel: ObservableObject {
             request.httpMethod = "GET"
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             
-            URLSession.shared.dataTask(with: request) { data, response, error in
+            URLSession.configured.dataTask(with: request) { data, response, error in
                 DispatchQueue.main.async {
                     self.isLoadingUsers = false
                     
@@ -666,7 +665,7 @@ class AdminSendRewardsViewModel: ObservableObject {
         request.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
         request.httpBody = try? JSONSerialization.data(withJSONObject: requestBody)
         
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+        URLSession.configured.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
                 self?.isSending = false
                 
@@ -711,18 +710,6 @@ class AdminSendRewardsViewModel: ObservableObject {
     }
     
     private func sendCustomReward(idToken: String) {
-        guard let image = selectedImage else { return }
-        
-        // Convert image to JPEG data
-        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
-            DispatchQueue.main.async {
-                self.isSending = false
-                self.errorMessage = "Failed to process image"
-                self.showErrorAlert = true
-            }
-            return
-        }
-        
         guard let url = URL(string: "\(Config.backendURL)/admin/rewards/gift/custom") else {
             DispatchQueue.main.async {
                 self.isSending = false
@@ -742,12 +729,24 @@ class AdminSendRewardsViewModel: ObservableObject {
         
         var body = Data()
         
-        // Add image
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"image\"; filename=\"reward.jpg\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
-        body.append(imageData)
-        body.append("\r\n".data(using: .utf8)!)
+        // Add image if provided
+        if let image = selectedImage {
+            // Convert image to JPEG data
+            guard let imageData = image.jpegData(compressionQuality: 0.8) else {
+                DispatchQueue.main.async {
+                    self.isSending = false
+                    self.errorMessage = "Failed to process image"
+                    self.showErrorAlert = true
+                }
+                return
+            }
+            
+            body.appendString("--\(boundary)\r\n")
+            body.appendString("Content-Disposition: form-data; name=\"image\"; filename=\"reward.jpg\"\r\n")
+            body.appendString("Content-Type: image/jpeg\r\n\r\n")
+            body.append(imageData)
+            body.appendString("\r\n")
+        }
         
         // Add other fields
         var userIdsString = ""
@@ -767,16 +766,16 @@ class AdminSendRewardsViewModel: ObservableObject {
         ]
         
         for (key, value) in fields {
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n".data(using: .utf8)!)
-            body.append(value.data(using: .utf8)!)
-            body.append("\r\n".data(using: .utf8)!)
+            body.appendString("--\(boundary)\r\n")
+            body.appendString("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n")
+            body.appendString(value)
+            body.appendString("\r\n")
         }
         
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        body.appendString("--\(boundary)--\r\n")
         request.httpBody = body
         
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+        URLSession.configured.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
                 self?.isSending = false
                 
@@ -865,6 +864,15 @@ struct ImagePicker: UIViewControllerRepresentable {
         
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
             parent.dismiss()
+        }
+    }
+}
+
+// MARK: - Data Extension Helper
+extension Data {
+    mutating func appendString(_ string: String) {
+        if let data = string.data(using: .utf8) {
+            self.append(data)
         }
     }
 }

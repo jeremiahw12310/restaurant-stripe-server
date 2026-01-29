@@ -4,7 +4,7 @@ import SwiftUI
 /// Displays drink items from a specific category for Full Combo selection
 struct RewardComboDrinkItemSelectionView: View {
     let reward: RewardOption
-    let drinkCategory: String // "Fruit Tea", "Milk Tea", "Lemonade", "Soda"
+    let drinkCategory: String // "Fruit Tea", "Milk Tea", "Lemonade", "Soda", "Coffee"
     let currentPoints: Int
     let onItemSelected: (RewardEligibleItem) -> Void
     let onCancel: () -> Void
@@ -275,6 +275,7 @@ struct RewardComboDrinkItemSelectionView: View {
         case "Milk Tea": return "tier_drinks_milk_tea_450"
         case "Lemonade": return "tier_drinks_lemonade_450"
         case "Soda": return "tier_drinks_lemonade_450" // Same tier as Lemonade
+        case "Coffee": return "tier_drinks_coffee_450"
         default: return nil
         }
     }

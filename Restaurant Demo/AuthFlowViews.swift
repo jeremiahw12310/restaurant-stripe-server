@@ -550,7 +550,8 @@ class EnterCodeHostingController: UIHostingController<EnterCodeContentView> {
     }
     
     @MainActor required dynamic init?(coder aDecoder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+        print("⚠️ EnterCodeHostingController init(coder:) is not supported.")
+        return nil
     }
     
     func updateAuthVM(_ newAuthVM: AuthenticationViewModel) {

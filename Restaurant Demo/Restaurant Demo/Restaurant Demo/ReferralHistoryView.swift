@@ -64,7 +64,8 @@ struct ReferralHistoryView: View {
         outboundListener = db.collection("referrals")
             .whereField("referrerUserId", isEqualTo: uid)
             .limit(to: 100)
-            .addSnapshotListener { snap, _ in
+            .addSnapshotListener { [weak self] snap, _ in
+                guard let self = self else { return }
                 guard let docs = snap?.documents else {
                     self.outbound = []
                     return
@@ -101,7 +102,8 @@ struct ReferralHistoryView: View {
         inboundListener = db.collection("referrals")
             .whereField("referredUserId", isEqualTo: uid)
             .limit(to: 100)
-            .addSnapshotListener { snap, _ in
+            .addSnapshotListener { [weak self] snap, _ in
+                guard let self = self else { return }
                 guard let docs = snap?.documents, !docs.isEmpty else {
                     self.inbound = []
                     return

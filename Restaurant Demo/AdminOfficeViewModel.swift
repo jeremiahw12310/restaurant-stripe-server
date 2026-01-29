@@ -198,7 +198,7 @@ class AdminOfficeViewModel: ObservableObject {
             request.httpMethod = "GET"
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             
-            URLSession.shared.dataTask(with: request) { data, response, networkError in
+            URLSession.configured.dataTask(with: request) { data, response, networkError in
                 timeoutWorkItem.cancel()
                 
                 DispatchQueue.main.async {
@@ -340,7 +340,7 @@ class AdminOfficeViewModel: ObservableObject {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             
-            URLSession.shared.dataTask(with: request) { data, response, networkError in
+            URLSession.configured.dataTask(with: request) { data, response, networkError in
                 DispatchQueue.main.async {
                     self.isCleaningUp = false
                     

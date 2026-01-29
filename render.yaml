@@ -9,7 +9,12 @@ services:
     autoDeploy: true
     scaling:
       minInstances: 1
-      maxInstances: 3
+      # maxInstances set to 1 to ensure rate limiting works correctly without Redis
+      # To scale to multiple instances, first configure Redis:
+      # 1. Create a Redis instance in Render Dashboard
+      # 2. Uncomment the REDIS_URL envVar below
+      # 3. Then increase maxInstances as needed
+      maxInstances: 1
       targetMemoryPercent: 80
       targetCPUPercent: 80
     envVars:
@@ -23,6 +28,18 @@ services:
         value: adc
       - key: GOOGLE_CLOUD_PROJECT
         value: dumplinghouseapp
+      # REDIS_URL - Required for distributed rate limiting when maxInstances > 1
+      # Without Redis, rate limits are per-instance only (users can bypass by hitting different instances)
+      # To enable multi-instance scaling:
+      # 1. Create a Redis instance in Render Dashboard
+      # 2. Uncomment these lines and update the service name:
+      # - key: REDIS_URL
+      #   fromService:
+      #     name: restaurant-redis
+      #     type: redis
+      #     property: connectionString
+      # SENTRY_DSN - Recommended for error tracking in production
+      # - key: SENTRY_DSN
+      #   sync: false
     healthCheckPath: /
-    # Firebase ADC Setup - No service account keys required 
-    # Force redeploy - Added admin notifications support (includeAdmins feature) 
+    # Firebase ADC Setup - No service account keys required

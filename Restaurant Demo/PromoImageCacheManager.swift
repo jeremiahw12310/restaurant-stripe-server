@@ -19,9 +19,13 @@ class PromoImageCacheManager {
     // Compression quality for cached images (0.7 = good quality with ~50% size reduction)
     private let compressionQuality: CGFloat = 0.7
     
+    // Cache size limits
+    private let maxCacheSize: Int64 = 50 * 1024 * 1024 // 50 MB
+    
     // In-memory cache for ultra-fast access
     private var memoryCache: [String: UIImage] = [:]
     private let memoryCacheLimit = 10 // Keep last 10 images in memory
+    private let memoryCacheQueue = DispatchQueue(label: "com.restaurantdemo.promoImageCache.memoryCache")
     
     private init() {
         // EMERGENCY KILL SWITCH: Check if caching should be disabled
@@ -44,11 +48,29 @@ class PromoImageCacheManager {
             
             // Check cache version - clear if incompatible
             validateCacheVersion()
+            
+            // Check and cleanup if cache is too large
+            cleanupIfNeeded()
+            
+            // Set up memory warning observer
+            setupMemoryWarningObserver()
         } catch {
             DebugLogger.debug("⚠️ CRITICAL: Promo cache initialization failed, disabling caching: \(error)", category: "Cache")
             // Auto-disable caching to prevent future crashes
             UserDefaults.standard.set(false, forKey: "promoImageCachingEnabled")
             clearCache()
+        }
+    }
+    
+    /// Set up observer for memory warnings to clear memory cache
+    private func setupMemoryWarningObserver() {
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.clearMemoryCache()
+            DebugLogger.debug("⚠️ Memory warning received - cleared promo image memory cache", category: "Cache")
         }
     }
     
@@ -73,8 +95,9 @@ class PromoImageCacheManager {
     func getCachedImage(for url: String) -> UIImage? {
         guard cachingEnabled else { return nil }
         
-        // Check memory cache first (fastest)
-        if let cachedImage = memoryCache[url] {
+        // Check memory cache first (fastest) - thread-safe access
+        let cachedImage = memoryCacheQueue.sync { memoryCache[url] }
+        if let cachedImage = cachedImage {
             return cachedImage
         }
         
@@ -134,7 +157,7 @@ class PromoImageCacheManager {
         }
         
         // Download image data
-        let task = URLSession.shared.dataTask(with: imageURL) { [weak self] data, response, error in
+        let task = URLSession.configured.dataTask(with: imageURL) { [weak self] data, response, error in
             guard let self = self else { return }
             
             if let error = error {
@@ -226,14 +249,14 @@ class PromoImageCacheManager {
     
     /// Clear memory cache only (for memory warnings)
     func clearMemoryCache() {
-        memoryCache.removeAll()
+        memoryCacheQueue.sync { memoryCache.removeAll() }
         DebugLogger.debug("🧹 Cleared promo image memory cache", category: "Cache")
     }
     
     /// Clear all cached images
     func clearCache() {
-        // Clear memory cache
-        memoryCache.removeAll()
+        // Clear memory cache - thread-safe
+        memoryCacheQueue.sync { memoryCache.removeAll() }
         
         // Clear disk cache
         do {
@@ -266,6 +289,43 @@ class PromoImageCacheManager {
         }
         
         return totalSize
+    }
+    
+    /// Check cache size and cleanup old images if needed (public for external triggers)
+    func cleanupIfNeeded() {
+        let currentSize = getCacheSize()
+        
+        if currentSize > maxCacheSize {
+            DebugLogger.debug("⚠️ Promo cache size (\(formatBytes(Int(currentSize)))) exceeds limit (\(formatBytes(Int(maxCacheSize))))", category: "Cache")
+            DebugLogger.debug("🧹 Cleaning up old promo images...", category: "Cache")
+            
+            // Get all cached files sorted by last access time
+            guard let files = try? fileManager.contentsOfDirectory(at: cacheDirectory, includingPropertiesForKeys: [.contentAccessDateKey, .fileSizeKey]) else {
+                return
+            }
+            
+            let sortedFiles = files.sorted { file1, file2 in
+                let date1 = (try? file1.resourceValues(forKeys: [.contentAccessDateKey]))?.contentAccessDate ?? Date.distantPast
+                let date2 = (try? file2.resourceValues(forKeys: [.contentAccessDateKey]))?.contentAccessDate ?? Date.distantPast
+                return date1 < date2 // Oldest first
+            }
+            
+            // Delete oldest files until we're under the limit
+            var deletedSize: Int64 = 0
+            var deletedCount = 0
+            
+            for file in sortedFiles {
+                guard currentSize - deletedSize > maxCacheSize * 8 / 10 else { break } // Keep at 80% of max
+                
+                if let fileSize = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
+                    try? fileManager.removeItem(at: file)
+                    deletedSize += Int64(fileSize)
+                    deletedCount += 1
+                }
+            }
+            
+            DebugLogger.debug("✅ Cleaned up \(deletedCount) old promo images, freed \(formatBytes(Int(deletedSize)))", category: "Cache")
+        }
     }
     
     // MARK: - Hero Image (First Carousel Image) Persistence
@@ -336,7 +396,7 @@ class PromoImageCacheManager {
         
         DebugLogger.debug("⬇️ [Hero] Downloading hero image...", category: "Cache")
         
-        URLSession.shared.dataTask(with: imageURL) { [weak self] data, _, error in
+        URLSession.configured.dataTask(with: imageURL) { [weak self] data, _, error in
             guard let self = self, let data = data, let image = UIImage(data: data) else {
                 DebugLogger.debug("⚠️ [Hero] Download failed: \(error?.localizedDescription ?? "Unknown error")", category: "Cache")
                 DispatchQueue.main.async { completion(nil) }
@@ -388,14 +448,16 @@ class PromoImageCacheManager {
     }
     
     private func addToMemoryCache(url: String, image: UIImage) {
-        // Add to memory cache
-        memoryCache[url] = image
-        
-        // Limit memory cache size
-        if memoryCache.count > memoryCacheLimit {
-            // Remove oldest entry (simple implementation, could be improved with LRU)
-            if let firstKey = memoryCache.keys.first {
-                memoryCache.removeValue(forKey: firstKey)
+        memoryCacheQueue.sync {
+            // Add to memory cache
+            memoryCache[url] = image
+            
+            // Limit memory cache size
+            if memoryCache.count > memoryCacheLimit {
+                // Remove oldest entry (simple implementation, could be improved with LRU)
+                if let firstKey = memoryCache.keys.first {
+                    memoryCache.removeValue(forKey: firstKey)
+                }
             }
         }
     }

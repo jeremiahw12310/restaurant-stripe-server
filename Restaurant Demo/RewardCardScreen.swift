@@ -458,19 +458,24 @@ struct RewardCardScreen: View {
         rewardListener = db.collection("redeemedRewards")
             .whereField("redemptionCode", isEqualTo: successData.redemptionCode)
             .limit(to: 1)
-            .addSnapshotListener { snapshot, error in
+            .addSnapshotListener { [weak self] snapshot, error in
+                guard let self = self else { return }
                 if let error = error {
                     DebugLogger.debug("❌ Reward listener error: \(error.localizedDescription)", category: "Rewards")
                     return
                 }
                 guard let doc = snapshot?.documents.first else { return }
                 let data = doc.data()
-                if let isUsed = data["isUsed"] as? Bool, isUsed {
-                    self.terminalState = .claimed
-                    self.showClaimedCongrats = true
-                }
-                if let isExpired = data["isExpired"] as? Bool, isExpired {
-                    self.terminalState = .expired
+                
+                // Ensure state updates happen on main thread
+                DispatchQueue.main.async {
+                    if let isUsed = data["isUsed"] as? Bool, isUsed {
+                        self.terminalState = .claimed
+                        self.showClaimedCongrats = true
+                    }
+                    if let isExpired = data["isExpired"] as? Bool, isExpired {
+                        self.terminalState = .expired
+                    }
                 }
             }
     }

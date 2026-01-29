@@ -865,7 +865,8 @@ struct ReferralView: View {
         outboundListener = db.collection("referrals")
             .whereField("referrerUserId", isEqualTo: uid)
             .limit(to: 100)
-            .addSnapshotListener { snap, _ in
+            .addSnapshotListener { [weak self] snap, _ in
+                guard let self = self else { return }
                 guard let docs = snap?.documents else {
                     self.outboundConnections = []
                     return
@@ -905,7 +906,8 @@ struct ReferralView: View {
         inboundListener = db.collection("referrals")
             .whereField("referredUserId", isEqualTo: uid)
             .limit(to: 1)
-            .addSnapshotListener { snap, _ in
+            .addSnapshotListener { [weak self] snap, _ in
+                guard let self = self else { return }
                 guard let doc = snap?.documents.first else {
                     self.inboundConnection = nil
                     return
@@ -935,7 +937,8 @@ struct ReferralView: View {
         }()
         let db = Firestore.firestore()
         userDocListener?.remove()
-        userDocListener = db.collection("users").document(uid).addSnapshotListener { snap, _ in
+        userDocListener = db.collection("users").document(uid).addSnapshotListener { [weak self] snap, _ in
+            guard let self = self else { return }
             let data = snap?.data() ?? [:]
             let referredById = (data["referredBy"] as? String) ?? ""
             let referralId = (data["referralId"] as? String) ?? ""
@@ -1012,8 +1015,7 @@ struct ReferralView: View {
             var req = URLRequest(url: url)
             req.httpMethod = "GET"
             req.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            URLSession.configured.dataTask(with: req) { [weak self] data, resp, error in
-                guard let self = self else { return }
+            URLSession.configured.dataTask(with: req) { data, resp, error in
                 if let error = error {
                     DebugLogger.debug("❌ ReferralView: Error fetching connections: \(error.localizedDescription)", category: "Referral")
                     return
@@ -1128,8 +1130,7 @@ struct ReferralView: View {
             req.addValue("application/json", forHTTPHeaderField: "Accept")
             req.httpBody = Data("{}".utf8)
 
-            URLSession.configured.dataTask(with: req) { [weak self] data, resp, err in
-                guard let self = self else { return }
+            URLSession.configured.dataTask(with: req) { data, resp, err in
                 DispatchQueue.main.async { self.isLoading = false }
                 if let err = err {
                     DispatchQueue.main.async { self.errorMessage = err.localizedDescription }
@@ -1214,8 +1215,7 @@ struct ReferralView: View {
             let body: [String: Any] = ["code": trimmed, "deviceId": deviceId]
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-            URLSession.configured.dataTask(with: req) { [weak self] data, resp, err in
-                guard let self = self else { return }
+            URLSession.configured.dataTask(with: req) { data, resp, err in
                 if let err = err {
                     DispatchQueue.main.async { self.acceptStatus = err.localizedDescription }
                     return

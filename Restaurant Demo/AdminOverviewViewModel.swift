@@ -46,7 +46,7 @@ class AdminOverviewViewModel: ObservableObject {
             request.httpMethod = "GET"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             guard let http = response as? HTTPURLResponse else {
                 errorMessage = "Unexpected response from server."
                 isLoading = false

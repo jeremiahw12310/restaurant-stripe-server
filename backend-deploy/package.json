@@ -6,6 +6,8 @@
     "start": "NODE_ENV=production FIREBASE_AUTH_TYPE=adc GOOGLE_CLOUD_PROJECT=dumplinghouseapp node server.js"
   },
   "dependencies": {
+    "@sentry/node": "^8.0.0",
+    "@sentry/profiling-node": "^8.0.0",
     "axios": "^1.10.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.0",

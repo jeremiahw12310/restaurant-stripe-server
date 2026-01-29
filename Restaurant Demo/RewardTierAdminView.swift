@@ -748,7 +748,7 @@ class RewardTierAdminViewModel: ObservableObject {
                 request.httpMethod = "GET"
                 request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await URLSession.configured.data(for: request)
                 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw NSError(domain: "RewardTierAdmin", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
@@ -792,7 +792,7 @@ class RewardTierAdminViewModel: ObservableObject {
             request.httpMethod = "DELETE"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw NSError(domain: "RewardTierAdmin", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
@@ -1068,7 +1068,7 @@ class AddItemToTierViewModel: ObservableObject {
             
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw NSError(domain: "AddItemToTier", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])

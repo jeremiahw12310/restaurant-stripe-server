@@ -25,6 +25,7 @@ class MenuImageCacheManager {
     // In-memory cache for ultra-fast access
     private var memoryCache: [String: UIImage] = [:]
     private let memoryCacheLimit = 30 // Keep last 30 images in memory
+    private let memoryCacheQueue = DispatchQueue(label: "com.restaurantdemo.menuImageCache.memoryCache")
     
     // Track download tasks for cancellation
     private var downloadTasks: [String: URLSessionDataTask] = [:]
@@ -63,11 +64,26 @@ class MenuImageCacheManager {
             
             // Check and cleanup if cache is too large
             cleanupIfNeeded()
+            
+            // Set up memory warning observer
+            setupMemoryWarningObserver()
         } catch {
             DebugLogger.debug("⚠️ CRITICAL: Cache initialization failed, disabling caching: \(error)", category: "Cache")
             // Auto-disable caching to prevent future crashes
             UserDefaults.standard.set(false, forKey: "menuImageCachingEnabled")
             clearCache()
+        }
+    }
+    
+    /// Set up observer for memory warnings to clear memory cache
+    private func setupMemoryWarningObserver() {
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.clearMemoryCache()
+            DebugLogger.debug("⚠️ Memory warning received - cleared menu image memory cache", category: "Cache")
         }
     }
     
@@ -92,8 +108,9 @@ class MenuImageCacheManager {
     func getCachedImage(for url: String) -> UIImage? {
         guard cachingEnabled else { return nil }
         
-        // Check memory cache first (fastest)
-        if let cachedImage = memoryCache[url] {
+        // Check memory cache first (fastest) - thread-safe access
+        let cachedImage = memoryCacheQueue.sync { memoryCache[url] }
+        if let cachedImage = cachedImage {
             return cachedImage
         }
         
@@ -140,7 +157,7 @@ class MenuImageCacheManager {
         }
         
         // Create task first
-        let task = URLSession.shared.dataTask(with: imageURL) { [weak self] data, response, error in
+        let task = URLSession.configured.dataTask(with: imageURL) { [weak self] data, response, error in
             guard let self = self else { return }
             
             // Remove from active downloads (thread-safe)
@@ -264,6 +281,7 @@ class MenuImageCacheManager {
         
         var loadedCount = 0
         let totalCount = urls.count
+        let countQueue = DispatchQueue(label: "com.dumplinghouse.menuImageCache.loadedCount")
         
         // Filter to only items that need updating
         let itemsToLoad = urls.filter { (url, metadata) in
@@ -282,8 +300,10 @@ class MenuImageCacheManager {
         func loadBatch(startIndex: Int) {
             let endIndex = min(startIndex + batchSize, itemsToLoad.count)
             guard startIndex < endIndex else {
-                DebugLogger.debug("✅ Preloading complete! Loaded \(loadedCount)/\(itemsToLoad.count) items", category: "Cache")
-                completion(loadedCount)
+                countQueue.sync {
+                    DebugLogger.debug("✅ Preloading complete! Loaded \(loadedCount)/\(itemsToLoad.count) items", category: "Cache")
+                    completion(loadedCount)
+                }
                 return
             }
             
@@ -294,7 +314,9 @@ class MenuImageCacheManager {
                 group.enter()
                 downloadAndCache(url: item.url, priority: .normal, metadata: item.metadata) { image in
                     if image != nil {
-                        loadedCount += 1
+                        countQueue.sync {
+                            loadedCount += 1
+                        }
                     }
                     group.leave()
                 }
@@ -322,7 +344,7 @@ class MenuImageCacheManager {
     
     /// Clear memory cache only (for memory warnings)
     func clearMemoryCache() {
-        memoryCache.removeAll()
+        memoryCacheQueue.sync { memoryCache.removeAll() }
         DebugLogger.debug("🧹 Cleared menu image memory cache", category: "Cache")
     }
     
@@ -331,8 +353,8 @@ class MenuImageCacheManager {
         // Cancel downloads
         cancelAllDownloads()
         
-        // Clear memory cache
-        memoryCache.removeAll()
+        // Clear memory cache - thread-safe
+        memoryCacheQueue.sync { memoryCache.removeAll() }
         
         // Clear disk cache
         do {
@@ -411,14 +433,16 @@ class MenuImageCacheManager {
     }
     
     private func addToMemoryCache(url: String, image: UIImage) {
-        memoryCache[url] = image
-        
-        // Limit memory cache size (LRU-style)
-        if memoryCache.count > memoryCacheLimit {
-            // Remove oldest entries
-            let toRemove = memoryCache.count - memoryCacheLimit
-            let keysToRemove = Array(memoryCache.keys.prefix(toRemove))
-            keysToRemove.forEach { memoryCache.removeValue(forKey: $0) }
+        memoryCacheQueue.sync {
+            memoryCache[url] = image
+            
+            // Limit memory cache size (LRU-style)
+            if memoryCache.count > memoryCacheLimit {
+                // Remove oldest entries
+                let toRemove = memoryCache.count - memoryCacheLimit
+                let keysToRemove = Array(memoryCache.keys.prefix(toRemove))
+                keysToRemove.forEach { memoryCache.removeValue(forKey: $0) }
+            }
         }
     }
     

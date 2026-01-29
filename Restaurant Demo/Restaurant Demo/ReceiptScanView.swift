@@ -129,6 +129,14 @@ struct ReceiptScanView: View {
                 }
             }
         }
+        .onChange(of: showCamera) { newValue in
+            if !newValue {
+                // Clean up when camera sheet is dismissed
+                interstitialTimeoutWorkItem?.cancel()
+                interstitialTimeoutWorkItem = nil
+                cancellables.removeAll()
+            }
+        }
     }
     
     private var loadingOverlay: some View {
@@ -2605,16 +2613,31 @@ func uploadReceiptImage(_ image: UIImage, completion: @escaping (Result<[String:
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         
         var body = Data()
+        func appendString(_ value: String) -> Bool {
+            guard let data = value.data(using: .utf8) else { return false }
+            body.append(data)
+            return true
+        }
         
         // Add the image part
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"image\"; filename=\"receipt.jpg\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+        guard appendString("--\(boundary)\r\n"),
+              appendString("Content-Disposition: form-data; name=\"image\"; filename=\"receipt.jpg\"\r\n"),
+              appendString("Content-Type: image/jpeg\r\n\r\n") else {
+            DebugLogger.debug("❌ Failed to encode multipart header", category: "ReceiptScan")
+            DispatchQueue.main.async {
+                completion(.failure(NSError(domain: "Encoding", code: 0)))
+            }
+            return
+        }
         body.append(imageData)
-        body.append("\r\n".data(using: .utf8)!)
-        
-        // Add the closing boundary
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        guard appendString("\r\n"),
+              appendString("--\(boundary)--\r\n") else {
+            DebugLogger.debug("❌ Failed to encode multipart footer", category: "ReceiptScan")
+            DispatchQueue.main.async {
+                completion(.failure(NSError(domain: "Encoding", code: 0)))
+            }
+            return
+        }
         
         // Set the content length
         request.setValue("\(body.count)", forHTTPHeaderField: "Content-Length")
@@ -2628,6 +2651,7 @@ func uploadReceiptImage(_ image: UIImage, completion: @escaping (Result<[String:
         config.timeoutIntervalForResource = 90
         let session = URLSession(configuration: config)
         session.uploadTask(with: request, from: body) { data, response, error in
+            defer { session.invalidateAndCancel() }
             if let error = error {
                 DebugLogger.debug("❌ Network error: \(error.localizedDescription)", category: "ReceiptScan")
                 DispatchQueue.main.async { completion(.failure(error)) }

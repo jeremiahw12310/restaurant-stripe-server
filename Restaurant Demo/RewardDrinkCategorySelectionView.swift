@@ -1,7 +1,7 @@
 import SwiftUI
 
 // MARK: - Reward Drink Category Selection View
-/// Allows user to select a drink category (Fruit Tea, Milk Tea, Lemonade, Soda) for Full Combo
+/// Allows user to select a drink category (Fruit Tea, Milk Tea, Lemonade, Soda, Coffee) for Full Combo
 struct RewardDrinkCategorySelectionView: View {
     let reward: RewardOption
     let currentPoints: Int
@@ -15,7 +15,8 @@ struct RewardDrinkCategorySelectionView: View {
         ("Fruit Tea", "🍑", Color(red: 1.0, green: 0.5, blue: 0.5)),
         ("Milk Tea", "🧋", Color(red: 0.6, green: 0.4, blue: 0.2)),
         ("Lemonade", "🍋", Color(red: 1.0, green: 0.9, blue: 0.0)),
-        ("Soda", "🥤", Color(red: 0.0, green: 0.7, blue: 1.0))
+        ("Soda", "🥤", Color(red: 0.0, green: 0.7, blue: 1.0)),
+        ("Coffee", "☕️", Color(red: 0.35, green: 0.22, blue: 0.12))
     ]
     
     var body: some View {

@@ -267,7 +267,7 @@ class UserViewModel: ObservableObject {
             req.addValue("application/json", forHTTPHeaderField: "Content-Type")
             let body: [String: Any] = ["referredUserId": uid]
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-            URLSession.shared.dataTask(with: req) { data, resp, _ in
+            URLSession.configured.dataTask(with: req) { data, resp, _ in
                 guard let http = resp as? HTTPURLResponse else { return }
                 if http.statusCode >= 200 && http.statusCode < 300,
                    let data = data,
@@ -287,7 +287,8 @@ class UserViewModel: ObservableObject {
         referrerAwardsListener = db.collection("referrals")
             .whereField("referrerUserId", isEqualTo: userId)
             .whereField("status", isEqualTo: "awarded")
-            .addSnapshotListener { snapshot, _ in
+            .addSnapshotListener { [weak self] snapshot, _ in
+                guard let self = self else { return }
                 guard let changes = snapshot?.documentChanges else { return }
                 for change in changes where change.type == .added || change.type == .modified {
                     let doc = change.document
@@ -455,7 +456,7 @@ class UserViewModel: ObservableObject {
         
         DebugLogger.debug("🖼️ Loading image from URL: \(url)", category: "User")
         
-        URLSession.shared.dataTask(with: url) { data, response, error in
+        URLSession.configured.dataTask(with: url) { data, response, error in
             DispatchQueue.main.async {
                 if let error = error {
                     DebugLogger.debug("❌ Error loading image: \(error.localizedDescription)", category: "User")
@@ -1039,7 +1040,7 @@ class UserViewModel: ObservableObject {
             req.addValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = Data("{}".utf8)
             
-            URLSession.shared.dataTask(with: req) { data, resp, err in
+            URLSession.configured.dataTask(with: req) { data, resp, err in
                 if let err = err {
                     DebugLogger.debug("❌ Welcome claim network error: \(err.localizedDescription)", category: "User")
                     DispatchQueue.main.async { completion(false, nil) }
@@ -1211,7 +1212,7 @@ class UserViewModel: ObservableObject {
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
             
-            URLSession.shared.dataTask(with: request) { data, response, error in
+            URLSession.configured.dataTask(with: request) { data, response, error in
                 DispatchQueue.main.async {
                     if let error = error {
                         DebugLogger.debug("❌ Delete account request failed: \(error.localizedDescription)", category: "User")
@@ -1290,7 +1291,7 @@ class UserViewModel: ObservableObject {
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = Data("{}".utf8)
             
-            URLSession.shared.dataTask(with: request) { data, response, error in
+            URLSession.configured.dataTask(with: request) { data, response, error in
                 if let error = error {
                     DebugLogger.debug("❌ Archive request failed: \(error.localizedDescription)", category: "User")
                     DispatchQueue.main.async { completion(false) }

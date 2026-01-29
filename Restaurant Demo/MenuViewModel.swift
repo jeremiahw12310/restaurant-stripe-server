@@ -1382,7 +1382,7 @@ class MenuViewModel: ObservableObject {
         
         guard let url = URL(string: downloadURL) else { return }
         
-        URLSession.shared.dataTask(with: url) { _, _, _ in
+        URLSession.configured.dataTask(with: url) { _, _, _ in
             // Silent test - no logging
         }.resume()
     }
@@ -2878,7 +2878,7 @@ class MenuViewModel: ObservableObject {
         request.timeoutInterval = 10
         request.httpMethod = "HEAD" // Just check if the resource exists
         
-        URLSession.shared.dataTask(with: request) { _, response, error in
+        URLSession.configured.dataTask(with: request) { _, response, error in
             DispatchQueue.main.async {
                 if let error = error {
                     DebugLogger.debug("❌ Network error: \(error.localizedDescription)", category: "Menu")

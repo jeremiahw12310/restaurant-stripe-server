@@ -505,6 +505,41 @@ app.get('/', (req, res) => {
   });
 });
 
+// App version check endpoint (public, no auth required)
+// Returns the minimum required app version to force updates
+app.get('/app-version', (req, res) => {
+  try {
+    // Get minimum required version from environment variable or use default
+    // Format: "1.0.0" (major.minor.patch)
+    const minimumRequiredVersion = process.env.MINIMUM_APP_VERSION || '1.0.0';
+    
+    // Optional: Get current App Store version (if you want to display it)
+    const currentAppStoreVersion = process.env.CURRENT_APP_STORE_VERSION || null;
+    
+    // Optional: Custom update message
+    const updateMessage = process.env.APP_UPDATE_MESSAGE || null;
+    
+    // Force update flag (set to false to allow graceful degradation)
+    const forceUpdate = process.env.FORCE_APP_UPDATE !== 'false'; // Defaults to true
+    
+    res.json({
+      minimumRequiredVersion,
+      currentAppStoreVersion,
+      updateMessage,
+      forceUpdate
+    });
+  } catch (error) {
+    console.error('❌ Error in /app-version endpoint:', error);
+    // Return a safe default that won't lock users out
+    res.json({
+      minimumRequiredVersion: '0.0.0',
+      currentAppStoreVersion: null,
+      updateMessage: null,
+      forceUpdate: false
+    });
+  }
+});
+
 // Generate personalized combo endpoint
 app.post('/generate-combo', requireFirebaseAuth, aiPerUserLimiter, aiPerIpLimiter, async (req, res) => {
   try {

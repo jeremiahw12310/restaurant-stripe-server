@@ -183,7 +183,7 @@ struct ContentView: View {
             req.addValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = Data("{}".utf8)
             
-            URLSession.shared.dataTask(with: req) { data, resp, _ in
+            URLSession.configured.dataTask(with: req) { data, resp, _ in
                 guard let http = resp as? HTTPURLResponse,
                       http.statusCode >= 200 && http.statusCode < 300,
                       let data = data,

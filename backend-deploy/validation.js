@@ -123,6 +123,65 @@ const redeemRewardSchema = Joi.object({
   selectedDrinkItemName: Joi.string().max(200).allow('', null).optional()
 });
 
+/**
+ * Dumpling Hero post generation schema
+ * POST /generate-dumpling-hero-post
+ */
+const dumplingHeroPostSchema = Joi.object({
+  prompt: Joi.string().trim().max(2000).allow('', null).optional()
+    .messages({
+      'string.max': 'Prompt cannot exceed 2000 characters'
+    }),
+  menuItems: Joi.array().items(
+    Joi.object().unknown(true)
+  ).max(100).optional()
+});
+
+/**
+ * Post context schema for Dumpling Hero comment endpoints
+ */
+const postContextSchema = Joi.object({
+  content: Joi.string().max(5000).allow('', null).optional(),
+  authorName: Joi.string().max(100).allow('', null).optional(),
+  postType: Joi.string().max(50).allow('', null).optional(),
+  imageURLs: Joi.array().items(Joi.string().uri().max(2000)).max(10).optional(),
+  attachedMenuItem: Joi.object({
+    description: Joi.string().max(500).allow('', null).optional(),
+    name: Joi.string().max(200).allow('', null).optional(),
+    price: Joi.number().allow(null).optional()
+  }).unknown(true).allow(null).optional(),
+  poll: Joi.object({
+    question: Joi.string().max(500).allow('', null).optional(),
+    options: Joi.array().items(Joi.string().max(200)).max(10).optional()
+  }).unknown(true).allow(null).optional()
+}).unknown(true).allow(null).optional();
+
+/**
+ * Dumpling Hero comment generation schema
+ * POST /generate-dumpling-hero-comment
+ */
+const dumplingHeroCommentSchema = Joi.object({
+  prompt: Joi.string().trim().max(2000).allow('', null).optional()
+    .messages({
+      'string.max': 'Prompt cannot exceed 2000 characters'
+    }),
+  replyingTo: Joi.string().max(500).allow('', null).optional(),
+  postContext: postContextSchema
+});
+
+/**
+ * Dumpling Hero comment preview/simple schema
+ * POST /preview-dumpling-hero-comment
+ * POST /generate-dumpling-hero-comment-simple
+ */
+const dumplingHeroCommentPreviewSchema = Joi.object({
+  prompt: Joi.string().trim().max(2000).allow('', null).optional()
+    .messages({
+      'string.max': 'Prompt cannot exceed 2000 characters'
+    }),
+  postContext: postContextSchema
+});
+
 // =============================================================================
 // Validation Middleware
 // =============================================================================
@@ -142,7 +201,8 @@ function validate(schema) {
 
     if (error) {
       const messages = error.details.map(d => d.message).join(', ');
-      console.log('❌ Validation failed:', messages);
+      // Note: Using console.log here as logger may not be available in this module
+      // The structured logger in server.js will capture the 400 response
       return res.status(400).json({
         errorCode: 'VALIDATION_ERROR',
         error: `Validation failed: ${messages}`
@@ -207,6 +267,9 @@ module.exports = {
   referralAcceptSchema,
   adminUserUpdateSchema,
   redeemRewardSchema,
+  dumplingHeroPostSchema,
+  dumplingHeroCommentSchema,
+  dumplingHeroCommentPreviewSchema,
   
   // Middleware
   validate,

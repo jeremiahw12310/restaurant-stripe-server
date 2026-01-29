@@ -754,7 +754,7 @@ struct GiftedRewardDetailView: View {
             let jsonData = try JSONEncoder().encode(request)
             urlRequest.httpBody = jsonData
             
-            let (data, response) = try await URLSession.shared.data(for: urlRequest)
+            let (data, response) = try await URLSession.configured.data(for: urlRequest)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw NetworkError.invalidResponse

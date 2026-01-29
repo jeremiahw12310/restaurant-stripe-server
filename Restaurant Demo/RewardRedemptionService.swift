@@ -70,6 +70,12 @@ class RewardRedemptionService: ObservableObject {
                 }
                 
                 return .success(tierResponse.eligibleItems)
+            } else if httpResponse.statusCode == 401 {
+                DebugLogger.debug("❌ Unauthorized fetching reward tier items", category: "Rewards")
+                throw NetworkError.unauthorized
+            } else if httpResponse.statusCode == 403 {
+                DebugLogger.debug("❌ Forbidden fetching reward tier items", category: "Rewards")
+                throw NetworkError.serverError("Forbidden")
             } else {
                 let errorData = try JSONSerialization.jsonObject(with: data) as? [String: Any]
                 let errorMessage = errorData?["error"] as? String ?? "Unknown error occurred"
@@ -207,6 +213,22 @@ class RewardRedemptionService: ObservableObject {
                 
                 return .success(redemptionResponse)
                 
+            } else if httpResponse.statusCode == 401 {
+                await MainActor.run {
+                    isLoading = false
+                    self.errorMessage = NetworkError.unauthorized.localizedDescription
+                }
+                
+                DebugLogger.debug("❌ Redemption failed: unauthorized", category: "Rewards")
+                throw NetworkError.unauthorized
+            } else if httpResponse.statusCode == 403 {
+                await MainActor.run {
+                    isLoading = false
+                    self.errorMessage = "Forbidden"
+                }
+                
+                DebugLogger.debug("❌ Redemption failed: forbidden", category: "Rewards")
+                throw NetworkError.serverError("Forbidden")
             } else {
                 // Handle error response
                 let errorData = try JSONSerialization.jsonObject(with: data) as? [String: Any]

@@ -344,7 +344,7 @@ class RewardsViewModel: ObservableObject {
             request.httpMethod = "GET"
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw NSError(domain: "RewardsViewModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
@@ -440,7 +440,7 @@ class RewardsViewModel: ObservableObject {
                 DebugLogger.debug("💰 Requesting refund for expired reward code: \(code)", category: "Rewards")
             }
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw NSError(domain: "RewardsViewModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])

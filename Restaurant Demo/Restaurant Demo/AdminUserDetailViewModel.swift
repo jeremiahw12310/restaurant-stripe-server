@@ -341,7 +341,7 @@ class AdminUserDetailViewModel: ObservableObject {
                 DebugLogger.debug("📤 Sending admin user update request to: \(url.absoluteString)", category: "Admin")
                 DebugLogger.debug("📦 Request body: userId=\(userId), points=\(pointsInt), isAdmin=\(isAdminFlag), isVerified=\(isVerifiedFlag)", category: "Admin")
                 
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await URLSession.configured.data(for: request)
                 guard let http = response as? HTTPURLResponse else {
                     let message = "Unexpected response from server (not HTTP)"
                     DebugLogger.debug("❌ \(message)", category: "Admin")
@@ -503,7 +503,7 @@ class AdminUserDetailViewModel: ObservableObject {
             let body: [String: Any] = ["targetUserId": self.userId]
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-            URLSession.shared.dataTask(with: request) { data, response, error in
+            URLSession.configured.dataTask(with: request) { data, response, error in
                 if let error = error {
                     DebugLogger.debug("❌ Referral check request failed: \(error.localizedDescription)", category: "Admin")
                     DispatchQueue.main.async {
@@ -628,7 +628,7 @@ class AdminUserDetailViewModel: ObservableObject {
                 }
                 request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await URLSession.configured.data(for: request)
                 guard let http = response as? HTTPURLResponse else {
                     await MainActor.run {
                         self.isBanning = false
@@ -698,7 +698,7 @@ class AdminUserDetailViewModel: ObservableObject {
                 let body = ["phone": userSummary.phoneNumber]
                 request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await URLSession.configured.data(for: request)
                 guard let http = response as? HTTPURLResponse else {
                     await MainActor.run {
                         self.isBanning = false

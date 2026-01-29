@@ -30,8 +30,14 @@ struct PerformanceConfig {
 
 // MARK: - Backend Configuration
 struct Config {
-    // Environment switching
+    // Environment switching - automatically selects based on build configuration
+    // Release builds always use production; DEBUG builds default to production but can be changed
+    // To use local server during development: change .production to .localNetwork below
+    #if DEBUG
+    static let currentEnvironment: AppEnvironment = .production  // Change to .localNetwork for local testing
+    #else
     static let currentEnvironment: AppEnvironment = .production
+    #endif
     
     // Backend URLs for different environments
     static var backendURL: String {
@@ -69,10 +75,18 @@ extension Config {
     // Whitelisted Order Online URL for Community link policy
     static var orderOnlineURL: URL {
         // Default to backend base + "/order"; update if a dedicated ordering domain is used
-        guard let url = URL(string: backendURL + "/order") else {
-            fatalError("Invalid backend URL configuration: \(backendURL)/order")
+        if let url = URL(string: backendURL + "/order") {
+            return url
         }
-        return url
+        if let fallbackURL = URL(string: productionBackendURL + "/order") {
+            #if DEBUG
+            print("⚠️ Invalid backend URL configuration: \(backendURL)/order. Falling back to production /order.")
+            #endif
+            return fallbackURL
+        }
+        // This should never happen - both backendURL and productionBackendURL are hardcoded valid URLs
+        // Using fatalError instead of force unwrap for better debugging context
+        fatalError("Config error: Unable to construct any valid URL for orderOnlineURL. Check backendURL configuration: '\(backendURL)'")
     }
 }
 

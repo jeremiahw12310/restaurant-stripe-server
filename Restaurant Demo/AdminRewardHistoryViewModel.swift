@@ -161,7 +161,7 @@ class AdminRewardHistoryViewModel: ObservableObject {
             request.httpMethod = "GET"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             guard let http = response as? HTTPURLResponse,
                   (200..<300).contains(http.statusCode) else {
                 isLoadingAllTimeSummary = false
@@ -206,7 +206,7 @@ class AdminRewardHistoryViewModel: ObservableObject {
             request.httpMethod = "GET"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             guard let http = response as? HTTPURLResponse else {
                 errorMessage = "Unexpected response from server."
                 isLoadingMonths = false
@@ -301,7 +301,7 @@ class AdminRewardHistoryViewModel: ObservableObject {
             request.httpMethod = "GET"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             guard let http = response as? HTTPURLResponse else {
                 errorMessage = "Unexpected response from server."
                 isLoadingRewards = false
@@ -380,7 +380,7 @@ class AdminRewardHistoryViewModel: ObservableObject {
             request.httpMethod = "GET"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             guard let http = response as? HTTPURLResponse,
                   (200..<300).contains(http.statusCode) else {
                 isLoadingMore = false

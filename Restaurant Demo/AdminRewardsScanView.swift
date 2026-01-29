@@ -775,7 +775,7 @@ final class AdminRewardsScanViewModel: ObservableObject {
             let body = ["redemptionCode": code]
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             let http = response as? HTTPURLResponse
             guard let statusCode = http?.statusCode else {
                 throw NSError(domain: "AdminRewardsScan", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid server response."])
@@ -828,7 +828,7 @@ final class AdminRewardsScanViewModel: ObservableObject {
             let body = ["redemptionCode": code]
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             let http = response as? HTTPURLResponse
             guard let statusCode = http?.statusCode else {
                 throw NSError(domain: "AdminRewardsScan", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid server response."])

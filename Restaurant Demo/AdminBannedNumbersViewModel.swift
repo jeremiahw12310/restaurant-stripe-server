@@ -81,7 +81,7 @@ class AdminBannedNumbersViewModel: ObservableObject {
             request.httpMethod = "GET"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             guard let http = response as? HTTPURLResponse else {
                 errorMessage = "Unexpected response from server."
                 isLoading = false
@@ -130,7 +130,7 @@ class AdminBannedNumbersViewModel: ObservableObject {
             request.httpMethod = "GET"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             guard let http = response as? HTTPURLResponse,
                   (200..<300).contains(http.statusCode) else {
                 isLoadingMore = false
@@ -195,7 +195,7 @@ class AdminBannedNumbersViewModel: ObservableObject {
             }
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             guard let http = response as? HTTPURLResponse else {
                 banPhoneError = "Unexpected response from server"
                 isBanningPhone = false
@@ -265,7 +265,7 @@ class AdminBannedNumbersViewModel: ObservableObject {
                 let body = ["phone": phone]
                 request.httpBody = try JSONSerialization.data(withJSONObject: body)
                 
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await URLSession.configured.data(for: request)
                 guard let http = response as? HTTPURLResponse else {
                     await MainActor.run {
                         self.isUnbanning = false

@@ -68,7 +68,7 @@ class AuthenticationViewModel: ObservableObject {
                     return
                 }
                 
-                let (data, response) = try await URLSession.shared.data(for: URLRequest(url: url))
+                let (data, response) = try await URLSession.configured.data(for: URLRequest(url: url))
                 guard let http = response as? HTTPURLResponse else {
                     // Network error or invalid response - FAIL CLOSED
                     await MainActor.run {
@@ -263,7 +263,7 @@ class AuthenticationViewModel: ObservableObject {
                 return false
             }
             
-            let (data, response) = try await URLSession.shared.data(for: URLRequest(url: url))
+            let (data, response) = try await URLSession.configured.data(for: URLRequest(url: url))
             guard let http = response as? HTTPURLResponse,
                   (200..<300).contains(http.statusCode),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -385,7 +385,7 @@ class AuthenticationViewModel: ObservableObject {
             ]
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
             
-            URLSession.shared.dataTask(with: request) { data, response, error in
+            URLSession.configured.dataTask(with: request) { data, response, error in
                 if let error = error {
                     DebugLogger.debug("⚠️ Orphan cleanup request failed: \(error.localizedDescription)", category: "Auth")
                     // Don't block account creation
@@ -524,7 +524,7 @@ class AuthenticationViewModel: ObservableObject {
             DeviceFingerprint.addToRequest(&req)
             let body: [String: Any] = ["code": code.uppercased(), "deviceId": UIDevice.current.identifierForVendor?.uuidString ?? ""]
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-            URLSession.shared.dataTask(with: req) { data, resp, error in
+            URLSession.configured.dataTask(with: req) { data, resp, error in
                 if let error = error {
                     DebugLogger.debug("⚠️ Signup referral request failed: \(error.localizedDescription)", category: "Auth")
                     DispatchQueue.main.async { completion() }
@@ -598,7 +598,7 @@ class AuthenticationViewModel: ObservableObject {
             req.addValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = Data("{}".utf8)
             
-            URLSession.shared.dataTask(with: req) { data, resp, error in
+            URLSession.configured.dataTask(with: req) { data, resp, error in
                 if let error = error {
                     DebugLogger.debug("⚠️ Failed to preload referral code: \(error.localizedDescription)", category: "Auth")
                     return

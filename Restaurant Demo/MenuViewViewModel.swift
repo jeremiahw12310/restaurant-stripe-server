@@ -16,6 +16,9 @@ class MenuViewViewModel: ObservableObject {
     private var isComboReady = false
     private var isInterstitialDone = false
     
+    // Failsafe timeout to dismiss interstitial if request hangs
+    private var comboTimeoutWorkItem: DispatchWorkItem?
+    
     // Track previous recommendations (last 3)
     private var previousRecommendations: [PreviousCombo] = []
     
@@ -35,6 +38,17 @@ class MenuViewViewModel: ObservableObject {
         isInterstitialDone = false
         requestEarlyCut = false
         error = nil
+        
+        // Start failsafe timeout to dismiss interstitial if request hangs
+        comboTimeoutWorkItem?.cancel()
+        let timeoutItem = DispatchWorkItem { [weak self] in
+            guard let self = self, self.showComboInterstitial else { return }
+            DebugLogger.debug("⏰ Combo generation failsafe timeout fired - dismissing interstitial", category: "Menu")
+            self.showComboInterstitial = false
+            self.error = "Request timed out. Please try again."
+        }
+        comboTimeoutWorkItem = timeoutItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 35.0, execute: timeoutItem)
         
         let userName = userVM.firstName.isEmpty ? "Guest" : userVM.firstName
         // Create dietary preferences with current values (may be defaults if not set)
@@ -62,6 +76,10 @@ class MenuViewViewModel: ObservableObject {
         .receive(on: DispatchQueue.main)
         .sink(
             receiveCompletion: { [weak self] completion in
+                // Cancel failsafe timeout since we got a response
+                self?.comboTimeoutWorkItem?.cancel()
+                self?.comboTimeoutWorkItem = nil
+                
                 if case .failure(let error) = completion {
                     DebugLogger.debug("❌ Combo generation failed: \(error)", category: "Menu")
                     self?.error = error.localizedDescription
@@ -70,6 +88,10 @@ class MenuViewViewModel: ObservableObject {
                 }
             },
             receiveValue: { [weak self] combo in
+                // Cancel failsafe timeout since we got a response
+                self?.comboTimeoutWorkItem?.cancel()
+                self?.comboTimeoutWorkItem = nil
+                
                 DebugLogger.debug("✅ Combo generated successfully", category: "Menu")
                 DebugLogger.debug("🍽️ Combo items: \(combo.items.map { $0.id })", category: "Menu")
                 DebugLogger.debug("💰 Total price: $\(combo.totalPrice)", category: "Menu")

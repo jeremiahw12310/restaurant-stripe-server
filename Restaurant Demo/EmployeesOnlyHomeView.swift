@@ -340,14 +340,14 @@ func uploadRewardImage(_ image: UIImage, completion: @escaping (Result<[String: 
     let boundary = UUID().uuidString
     request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
     var body = Data()
-    body.append("--\(boundary)\r\n".data(using: .utf8)!)
-    body.append("Content-Disposition: form-data; name=\"image\"; filename=\"reward.jpg\"\r\n".data(using: .utf8)!)
-    body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+    body.appendString("--\(boundary)\r\n")
+    body.appendString("Content-Disposition: form-data; name=\"image\"; filename=\"reward.jpg\"\r\n")
+    body.appendString("Content-Type: image/jpeg\r\n\r\n")
     body.append(imageData)
-    body.append("\r\n".data(using: .utf8)!)
-    body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+    body.appendString("\r\n")
+    body.appendString("--\(boundary)--\r\n")
     request.setValue("\(body.count)", forHTTPHeaderField: "Content-Length")
-    URLSession.shared.uploadTask(with: request, from: body) { data, response, error in
+    URLSession.configured.uploadTask(with: request, from: body) { data, response, error in
         if let error = error {
             DispatchQueue.main.async { completion(.failure(error)) }
             return
@@ -405,4 +405,13 @@ func extractCodeFromImage(_ image: UIImage, completion: @escaping (Result<String
 
 #Preview {
     EmployeesOnlyHomeView()
+}
+
+// MARK: - Data Extension Helper
+extension Data {
+    mutating func appendString(_ string: String) {
+        if let data = string.data(using: .utf8) {
+            self.append(data)
+        }
+    }
 }

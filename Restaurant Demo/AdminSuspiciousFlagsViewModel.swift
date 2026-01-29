@@ -147,7 +147,7 @@ class AdminSuspiciousFlagsViewModel: ObservableObject {
             request.httpMethod = "GET"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             guard let http = response as? HTTPURLResponse else {
                 errorMessage = "Unexpected response from server."
                 isLoading = false
@@ -211,7 +211,7 @@ class AdminSuspiciousFlagsViewModel: ObservableObject {
             request.httpMethod = "GET"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             guard let http = response as? HTTPURLResponse,
                   (200..<300).contains(http.statusCode) else {
                 isLoadingMore = false
@@ -272,7 +272,7 @@ class AdminSuspiciousFlagsViewModel: ObservableObject {
             }
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.configured.data(for: request)
             guard let http = response as? HTTPURLResponse else {
                 reviewError = "Unexpected response from server"
                 isReviewing = false
