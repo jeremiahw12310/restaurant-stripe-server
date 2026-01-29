@@ -3320,10 +3320,12 @@ EXTRACTION RULES:
 - taxAmount: The TAX amount as a number (e.g. 1.60) or null if not visible.
 - totalAmount: The TOTAL amount as a number (should match orderTotal) or null if not visible.
 - tipAmount: The TIP/GRATUITY amount as a number (e.g. 4.81) or null if not visible.
+- feeAmount: Any CONVENIENCE FEE, SERVICE FEE, DELIVERY FEE, or other additional fees as a number (e.g. 1.00) or null if not visible. Look for fees labeled as "Conv Fee", "Convenience Fee", "Service Fee", "Delivery Fee", or similar charges between tip and total.
 - subtotalLineVisible: true only if the Subtotal line (label + digits) is clearly visible. Otherwise false.
 - taxLineVisible: true only if the Tax line (label + digits) is clearly visible. Otherwise false.
 - totalLineVisible: true only if the Total line (label + digits) is clearly visible. Otherwise false.
 - tipLineVisible: true only if the Tip/Gratuity line (label + digits) is clearly visible. Otherwise false.
+- feeLineVisible: true only if a fee line (Conv Fee, Convenience Fee, Service Fee, Delivery Fee, etc. with label + digits) is clearly visible. Otherwise false.
 
 VISIBILITY & TAMPERING FLAGS:
 - You MUST also return the following boolean flags describing the visibility and tampering status of each key field:
@@ -3350,7 +3352,7 @@ IMPORTANT:
 - SAFETY FIRST: It's better to reject a receipt and ask for a clearer photo than to guess and return incorrect information. If you are not highly confident about any of the key fields, treat the receipt as invalid and return an error message instead of guessing.
 
 Respond ONLY as a JSON object with this exact shape:
-{"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "...", "subtotalAmount": ..., "taxAmount": ..., "totalAmount": ..., "tipAmount": ..., "subtotalLineVisible": true/false, "taxLineVisible": true/false, "totalLineVisible": true/false, "tipLineVisible": true/false, "totalVisibleAndClear": true/false, "orderNumberVisibleAndClear": true/false, "dateVisibleAndClear": true/false, "timeVisibleAndClear": true/false, "keyFieldsTampered": true/false, "tamperingReason": "...", "orderNumberInBlackBox": true/false, "orderNumberDirectlyUnderNashville": true/false, "paidOnlineReceipt": true/false, "orderNumberFromPaidOnlineSection": true/false} 
+{"orderNumber": "...", "orderTotal": ..., "orderDate": "...", "orderTime": "...", "subtotalAmount": ..., "taxAmount": ..., "totalAmount": ..., "tipAmount": ..., "feeAmount": ..., "subtotalLineVisible": true/false, "taxLineVisible": true/false, "totalLineVisible": true/false, "tipLineVisible": true/false, "feeLineVisible": true/false, "totalVisibleAndClear": true/false, "orderNumberVisibleAndClear": true/false, "dateVisibleAndClear": true/false, "timeVisibleAndClear": true/false, "keyFieldsTampered": true/false, "tamperingReason": "...", "orderNumberInBlackBox": true/false, "orderNumberDirectlyUnderNashville": true/false, "paidOnlineReceipt": true/false, "orderNumberFromPaidOnlineSection": true/false} 
 or {"error": "error message"}.
 If a field is missing, use null.`;
 
@@ -3443,6 +3445,7 @@ If a field is missing, use null.`;
         taxAmount: normalizeMoney(d.taxAmount),
         totalAmount: normalizeMoney(d.totalAmount),
         tipAmount: normalizeMoney(d.tipAmount),
+        feeAmount: normalizeMoney(d.feeAmount),
       });
       const norm1 = normalizeParsedReceipt(data1);
       const norm2 = normalizeParsedReceipt(data2);
@@ -3456,10 +3459,12 @@ If a field is missing, use null.`;
         norm1.taxAmount === norm2.taxAmount &&
         norm1.totalAmount === norm2.totalAmount &&
         norm1.tipAmount === norm2.tipAmount &&
+        norm1.feeAmount === norm2.feeAmount &&
         norm1.subtotalLineVisible === norm2.subtotalLineVisible &&
         norm1.taxLineVisible === norm2.taxLineVisible &&
         norm1.totalLineVisible === norm2.totalLineVisible &&
-        norm1.tipLineVisible === norm2.tipLineVisible;
+        norm1.tipLineVisible === norm2.tipLineVisible &&
+        norm1.feeLineVisible === norm2.feeLineVisible;
 
       if (!responsesMatch) {
         await logFailureAndCheckLockout(uid, "DOUBLE_PARSE_MISMATCH", db, ipAddress);
@@ -3494,7 +3499,7 @@ If a field is missing, use null.`;
       }
 
       // Consistency check: subtotal + tax must equal total (within a small rounding tolerance),
-      // and totalAmount must match orderTotal.
+      // and totalAmount must match orderTotal. Account for tips and fees.
       const subtotal = parseFloat(data.subtotalAmount);
       const tax = parseFloat(data.taxAmount);
       const totalAmt = parseFloat(data.totalAmount);
@@ -3502,27 +3507,55 @@ If a field is missing, use null.`;
       const tipAmount = data.tipAmount !== null && data.tipAmount !== undefined
         ? parseFloat(data.tipAmount)
         : null;
+      const feeAmount = data.feeAmount !== null && data.feeAmount !== undefined
+        ? parseFloat(data.feeAmount)
+        : null;
       if ([subtotal, tax, totalAmt, orderTotalAmt].some(Number.isNaN)) {
         await logFailureAndCheckLockout(uid, "TOTAL_INVALID", db, ipAddress);
         return sendError(res, 400, "TOTAL_INVALID", "Could not validate totals — please rescan with Subtotal/Tax/Total visible.");
       }
 
-      const baseTotalMatches = Math.abs((subtotal + tax) - totalAmt) <= 0.02;
       const tipIsUsable = data.tipLineVisible === true && tipAmount !== null && !Number.isNaN(tipAmount);
+      const feeIsUsable = data.feeLineVisible === true && feeAmount !== null && !Number.isNaN(feeAmount);
+
+      // Check multiple combinations to handle different receipt formats:
+      // 1. subtotal + tax = total (no tip, no fee)
+      const baseTotalMatches = Math.abs((subtotal + tax) - totalAmt) <= 0.02;
+      // 2. subtotal + tax + tip = total (tip, no fee)
       const tipTotalMatches = tipIsUsable ? Math.abs((subtotal + tax + tipAmount) - totalAmt) <= 0.02 : false;
+      // 3. subtotal + tax + fee = total (fee, no tip)
+      const feeTotalMatches = feeIsUsable ? Math.abs((subtotal + tax + feeAmount) - totalAmt) <= 0.02 : false;
+      // 4. subtotal + tax + tip + fee = total (both tip and fee)
+      const tipAndFeeTotalMatches = (tipIsUsable && feeIsUsable) 
+        ? Math.abs((subtotal + tax + tipAmount + feeAmount) - totalAmt) <= 0.02 
+        : false;
+
       const totalMatchesOrderTotal = Math.abs(totalAmt - orderTotalAmt) <= 0.01;
       // Also allow totalAmount + tip to equal orderTotal (when "Total" is pre-tip and "Grand Total" is post-tip)
       const totalWithTipMatchesOrderTotal = tipIsUsable 
         ? Math.abs((totalAmt + tipAmount) - orderTotalAmt) <= 0.02 
         : false;
+      // Also allow totalAmount + fee to equal orderTotal
+      const totalWithFeeMatchesOrderTotal = feeIsUsable 
+        ? Math.abs((totalAmt + feeAmount) - orderTotalAmt) <= 0.02 
+        : false;
+      // Also allow totalAmount + tip + fee to equal orderTotal
+      const totalWithTipAndFeeMatchesOrderTotal = (tipIsUsable && feeIsUsable)
+        ? Math.abs((totalAmt + tipAmount + feeAmount) - orderTotalAmt) <= 0.02
+        : false;
 
       // Debug logging for totals reconciliation
       logger.info('💰 Totals reconciliation check:', {
-        subtotal, tax, totalAmt, orderTotalAmt, tipAmount,
-        baseTotalMatches, tipTotalMatches, totalMatchesOrderTotal, totalWithTipMatchesOrderTotal
+        subtotal, tax, totalAmt, orderTotalAmt, tipAmount, feeAmount,
+        baseTotalMatches, tipTotalMatches, feeTotalMatches, tipAndFeeTotalMatches,
+        totalMatchesOrderTotal, totalWithTipMatchesOrderTotal, totalWithFeeMatchesOrderTotal, totalWithTipAndFeeMatchesOrderTotal
       });
 
-      if ((!baseTotalMatches && !tipTotalMatches) || (!totalMatchesOrderTotal && !totalWithTipMatchesOrderTotal)) {
+      // At least one total calculation must match AND orderTotal must match
+      const anyTotalMatches = baseTotalMatches || tipTotalMatches || feeTotalMatches || tipAndFeeTotalMatches;
+      const orderTotalMatches = totalMatchesOrderTotal || totalWithTipMatchesOrderTotal || totalWithFeeMatchesOrderTotal || totalWithTipAndFeeMatchesOrderTotal;
+
+      if (!anyTotalMatches || !orderTotalMatches) {
         await logFailureAndCheckLockout(uid, "TOTAL_INCONSISTENT", db, ipAddress);
         return sendError(res, 400, "TOTAL_INCONSISTENT", "Totals don't reconcile — please rescan with Subtotal/Tax/Total clearly visible.");
       }
