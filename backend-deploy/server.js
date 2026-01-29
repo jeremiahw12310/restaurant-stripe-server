@@ -8,13 +8,44 @@ const { randomUUID } = require('crypto');
 const pino = require('pino');
 const pinoHttp = require('pino-http');
 const rateLimit = require('express-rate-limit');
-const RedisStore = require('rate-limit-redis');
+const { RedisStore } = require('rate-limit-redis');
 const Redis = require('ioredis');
 const { OpenAI } = require('openai');
 const { DateTime } = require('luxon');
 
+// Initialize structured logger early so all initialization code can use it
+const logger = pino({
+  level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug')
+});
+
+// Initialize Sentry (error tracking) - only if DSN is configured
+let Sentry = null;
+if (process.env.SENTRY_DSN) {
+  try {
+    Sentry = require('@sentry/node');
+    const { nodeProfilingIntegration } = require('@sentry/profiling-node');
+    
+    Sentry.init({
+      dsn: process.env.SENTRY_DSN,
+      environment: process.env.NODE_ENV || 'development',
+      tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+      profilesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+      integrations: [
+        nodeProfilingIntegration(),
+      ],
+      release: process.env.SENTRY_RELEASE || undefined,
+    });
+    logger.info('✅ Sentry initialized for error tracking');
+  } catch (error) {
+    logger.warn('⚠️ Failed to initialize Sentry:', error.message);
+    Sentry = null;
+  }
+} else {
+  logger.info('ℹ️ Sentry not configured (SENTRY_DSN not set)');
+}
+
 // Input validation schemas and middleware
-const { validate, chatSchema, comboSchema, referralAcceptSchema, adminUserUpdateSchema, redeemRewardSchema } = require('./validation');
+const { validate, chatSchema, comboSchema, referralAcceptSchema, adminUserUpdateSchema, redeemRewardSchema, dumplingHeroPostSchema, dumplingHeroCommentSchema, dumplingHeroCommentPreviewSchema } = require('./validation');
 
 // OpenAI timeout helper - wraps API calls with 30-second timeout to prevent hanging requests
 const OPENAI_TIMEOUT_MS = 30000;
@@ -47,32 +78,32 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
     const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
     
     // Log only project identifier (safe to expose)
-    console.log('🔍 Service Account loaded for project:', serviceAccount.project_id);
+    logger.info('🔍 Service Account loaded for project:', serviceAccount.project_id);
     
     const credential = admin.credential.cert(serviceAccount);
     admin.initializeApp({ credential });
     firebaseInitialized = true;
-    console.log('✅ Firebase Admin initialized with service account key');
+    logger.info('✅ Firebase Admin initialized with service account key');
     
     // Test if credential can generate access token
     credential.getAccessToken().then(token => {
-      console.log('✅ Service account can generate access tokens');
+      logger.info('✅ Service account can generate access tokens');
     }).catch(err => {
-      console.error('❌ Service account CANNOT generate access tokens:', err.message);
+      logger.error('❌ Service account CANNOT generate access tokens:', err.message);
     });
   } catch (error) {
-    console.error('❌ Error initializing Firebase Admin with service account key:', error);
+    logger.error('❌ Error initializing Firebase Admin with service account key:', error);
   }
 } else if (process.env.FIREBASE_AUTH_TYPE === 'adc' || process.env.GOOGLE_CLOUD_PROJECT) {
   try {
     admin.initializeApp({ projectId: process.env.GOOGLE_CLOUD_PROJECT || 'dumplinghouseapp' });
     firebaseInitialized = true;
-    console.log('✅ Firebase Admin initialized with project ID for ADC');
+    logger.info('✅ Firebase Admin initialized with project ID for ADC');
   } catch (error) {
-    console.error('❌ Error initializing Firebase Admin with ADC:', error);
+    logger.error('❌ Error initializing Firebase Admin with ADC:', error);
   }
 } else {
-  console.warn('⚠️ No Firebase authentication method found - Firebase features will not work');
+  logger.warn('⚠️ No Firebase authentication method found - Firebase features will not work');
 }
 
 const path = require('path');
@@ -80,9 +111,6 @@ const fsPromises = require('fs').promises;
 
 const app = express();
 const upload = multer({ dest: 'uploads/', limits: { fileSize: 10 * 1024 * 1024 } });
-const logger = pino({
-  level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug')
-});
 
 app.use(pinoHttp({
   logger,
@@ -98,25 +126,174 @@ app.use((req, res, next) => {
   next();
 });
 
+// Sentry request tracing middleware (if Sentry is configured)
+if (Sentry) {
+  app.use(Sentry.Handlers.requestHandler());
+  app.use(Sentry.Handlers.tracingHandler());
+}
+
 const redisUrl = process.env.REDIS_URL;
-const redisClient = redisUrl ? new Redis(redisUrl, { enableAutoPipelining: true }) : null;
-if (redisClient) {
-  redisClient.on('error', (err) => console.error('❌ Redis error:', err));
+let redisClient = null;
+let redisConnected = false;
+
+// Redis connection with retry logic
+if (redisUrl) {
+  redisClient = new Redis(redisUrl, { 
+    enableAutoPipelining: true,
+    retryStrategy: (times) => {
+      const delay = Math.min(times * 50, 2000);
+      return delay;
+    },
+    maxRetriesPerRequest: 3
+  });
+  
+  redisClient.on('connect', () => {
+    redisConnected = true;
+    logger.info('✅ Redis connected');
+  });
+  
+  redisClient.on('ready', () => {
+    redisConnected = true;
+  });
+  
+  redisClient.on('error', (err) => {
+    redisConnected = false;
+    logError(err, null, { service: 'redis', operation: 'connection' });
+  });
+  
+  redisClient.on('close', () => {
+    redisConnected = false;
+    logger.warn('⚠️ Redis connection closed');
+  });
+  
+  redisClient.on('reconnecting', () => {
+    logger.info('🔄 Redis reconnecting...');
+  });
+} else {
+  logger.info('ℹ️ Redis not configured (REDIS_URL not set) - using in-memory rate limiting');
+}
+
+// Redis health check function
+async function checkRedisHealth() {
+  if (!redisClient) {
+    return { status: 'not_configured', connected: false };
+  }
+  
+  try {
+    const result = await Promise.race([
+      redisClient.ping(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Redis ping timeout')), 1000))
+    ]);
+    return { status: 'connected', connected: true, response: result };
+  } catch (error) {
+    return { status: 'disconnected', connected: false, error: error.message };
+  }
+}
+
+// Firebase health check function
+async function checkFirebaseHealth() {
+  if (!admin.apps.length) {
+    return { status: 'not_initialized', connected: false };
+  }
+  
+  try {
+    const db = admin.firestore();
+    // Simple read operation to test connectivity
+    const testRef = db.collection('_health').doc('test');
+    await Promise.race([
+      testRef.get(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 2000))
+    ]);
+    return { status: 'connected', connected: true };
+  } catch (error) {
+    // Don't fail health check if collection doesn't exist - that's expected
+    if (error.code === 7 || error.message.includes('timeout')) {
+      return { status: 'timeout', connected: false, error: error.message };
+    }
+    return { status: 'connected', connected: true }; // Assume connected if we can reach Firestore
+  }
 }
 
 function validateEnvironment() {
   const missing = [];
+  const recommended = [];
+  const warnings = [];
+  
+  // Required environment variables
   if (!process.env.OPENAI_API_KEY) missing.push('OPENAI_API_KEY');
   if (!firebaseInitialized && !admin.apps.length) missing.push('FIREBASE_AUTH');
 
-  if (missing.length === 0) return;
-
-  const message = `❌ Missing required configuration: ${missing.join(', ')}`;
-  if (process.env.NODE_ENV === 'production') {
-    console.error(message);
-    process.exit(1);
+  // Recommended environment variables
+  if (!process.env.REDIS_URL) {
+    recommended.push('REDIS_URL');
+    warnings.push('⚠️  Redis not configured - rate limiting will use in-memory storage (not scalable across instances)');
   }
-  console.warn(message);
+  if (!process.env.SENTRY_DSN) {
+    recommended.push('SENTRY_DSN');
+    warnings.push('⚠️  Sentry not configured - errors will not be tracked in external service');
+  }
+  if (!process.env.ALLOWED_ORIGINS) {
+    warnings.push('ℹ️  ALLOWED_ORIGINS not set - using default origins');
+  }
+
+  // Log warnings for recommended variables
+  if (warnings.length > 0) {
+    warnings.forEach(warning => logger.warn(warning));
+  }
+
+  // Log recommended variables
+  if (recommended.length > 0 && process.env.NODE_ENV === 'production') {
+    logger.warn(`💡 Recommended environment variables not set: ${recommended.join(', ')}`);
+    logger.warn('   See documentation for setup instructions');
+  }
+
+  // Exit if required variables are missing
+  if (missing.length > 0) {
+    const message = `❌ Missing required configuration: ${missing.join(', ')}`;
+    if (process.env.NODE_ENV === 'production') {
+      logger.error(message);
+      process.exit(1);
+    }
+    logger.warn(message);
+  }
+}
+
+// Structured error logging helper
+function logError(error, req = null, context = {}) {
+  const errorContext = {
+    ...context,
+    requestId: req?.id || null,
+    userId: req?.auth?.uid || null,
+    endpoint: req?.path || req?.url || null,
+    method: req?.method || null,
+    errorMessage: error?.message || String(error),
+    errorStack: error?.stack || null,
+  };
+
+  // Log with Pino
+  logger.error({ err: error, ...errorContext }, 'Error occurred');
+
+  // Send to Sentry if configured
+  if (Sentry) {
+    Sentry.withScope((scope) => {
+      if (errorContext.requestId) {
+        scope.setTag('requestId', errorContext.requestId);
+      }
+      if (errorContext.userId) {
+        scope.setUser({ id: errorContext.userId });
+      }
+      if (errorContext.endpoint) {
+        scope.setTag('endpoint', errorContext.endpoint);
+      }
+      if (errorContext.method) {
+        scope.setTag('method', errorContext.method);
+      }
+      Object.keys(context).forEach(key => {
+        scope.setContext(key, context[key]);
+      });
+      Sentry.captureException(error);
+    });
+  }
 }
 
 // Security headers - protect against common web vulnerabilities
@@ -152,6 +329,27 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Serve static files from public folder (privacy policy, terms, etc.)
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
+// Metrics tracking (must be before routes)
+let metrics = {
+  requests: 0,
+  errors: 0,
+  rateLimitHits: 0,
+  startTime: Date.now()
+};
+
+// Middleware to track metrics
+app.use((req, res, next) => {
+  metrics.requests++;
+  const originalSend = res.send;
+  res.send = function(data) {
+    if (res.statusCode >= 400) {
+      metrics.errors++;
+    }
+    return originalSend.call(this, data);
+  };
+  next();
+});
+
 // =============================================================================
 // Auth + rate limiting helpers (cost protection)
 // =============================================================================
@@ -178,7 +376,7 @@ async function requireFirebaseAuth(req, res, next) {
     req.auth = { uid: decoded.uid, decoded };
     return next();
   } catch (e) {
-    console.warn('❌ Auth failed:', e?.message || e);
+    logError(e, req, { operation: 'firebase_auth' });
     return res.status(401).json({ errorCode: 'UNAUTHENTICATED', error: 'Invalid auth token' });
   }
 }
@@ -200,7 +398,7 @@ async function requireAdminAuth(req, res, next) {
     req.auth = { uid, decoded, isAdmin: true };
     return next();
   } catch (e) {
-    console.warn('❌ Admin auth failed:', e?.message || e);
+    logError(e, req, { operation: 'admin_auth' });
     return res.status(401).json({ errorCode: 'UNAUTHENTICATED', error: 'Invalid auth token' });
   }
 }
@@ -211,10 +409,17 @@ function normalizeRateLimitOptions({ windowMs, max }) {
   return { m, w };
 }
 
+// Global registry for all in-memory rate limiter buckets (for periodic cleanup)
+const rateLimiterBuckets = [];
+const MAX_BUCKETS_PER_LIMITER = 10000; // Hard limit to prevent unbounded growth
+
 function createInMemoryRateLimiter({ keyFn, windowMs, max, errorCode }) {
   const buckets = new Map(); // key -> { count, resetAt }
   const { m, w } = normalizeRateLimitOptions({ windowMs, max });
   let lastCleanupAt = 0;
+  
+  // Register this limiter's buckets for global cleanup
+  rateLimiterBuckets.push({ buckets, windowMs: w });
 
   return function rateLimitMiddleware(req, res, next) {
     if (!m || m <= 0) return next();
@@ -222,6 +427,7 @@ function createInMemoryRateLimiter({ keyFn, windowMs, max, errorCode }) {
     if (!key) return next();
     const now = Date.now();
 
+    // Periodic cleanup of stale entries (per-limiter)
     if (now - lastCleanupAt > w) {
       for (const [bucketKey, bucket] of buckets.entries()) {
         if (!bucket || bucket.resetAt <= now) {
@@ -229,6 +435,18 @@ function createInMemoryRateLimiter({ keyFn, windowMs, max, errorCode }) {
         }
       }
       lastCleanupAt = now;
+    }
+    
+    // Hard limit: if too many unique keys, evict oldest entries
+    if (buckets.size >= MAX_BUCKETS_PER_LIMITER) {
+      // Evict 10% of oldest entries to make room
+      const toEvict = Math.ceil(MAX_BUCKETS_PER_LIMITER * 0.1);
+      const entries = Array.from(buckets.entries());
+      entries.sort((a, b) => (a[1]?.resetAt || 0) - (b[1]?.resetAt || 0));
+      for (let i = 0; i < toEvict && i < entries.length; i++) {
+        buckets.delete(entries[i][0]);
+      }
+      logger.warn(`⚠️ Rate limiter bucket limit reached, evicted ${toEvict} oldest entries`);
     }
 
     const existing = buckets.get(key);
@@ -239,6 +457,7 @@ function createInMemoryRateLimiter({ keyFn, windowMs, max, errorCode }) {
 
     existing.count += 1;
     if (existing.count > m) {
+      metrics.rateLimitHits++;
       const retryAfterSeconds = Math.max(1, Math.ceil((existing.resetAt - now) / 1000));
       res.set('Retry-After', String(retryAfterSeconds));
       return res.status(429).json({
@@ -251,6 +470,23 @@ function createInMemoryRateLimiter({ keyFn, windowMs, max, errorCode }) {
     return next();
   };
 }
+
+// Periodic cleanup of all rate limiter buckets (runs every 60 seconds)
+setInterval(() => {
+  const now = Date.now();
+  let totalCleaned = 0;
+  for (const { buckets } of rateLimiterBuckets) {
+    for (const [key, bucket] of buckets.entries()) {
+      if (!bucket || bucket.resetAt <= now) {
+        buckets.delete(key);
+        totalCleaned++;
+      }
+    }
+  }
+  if (totalCleaned > 0) {
+    logger.info(`🧹 Periodic cleanup: removed ${totalCleaned} expired rate limit entries`);
+  }
+}, 60_000);
 
 function createRateLimiter({ keyFn, windowMs, max, errorCode }) {
   const { m, w } = normalizeRateLimitOptions({ windowMs, max });
@@ -279,6 +515,7 @@ function createRateLimiter({ keyFn, windowMs, max, errorCode }) {
       sendCommand: (...args) => redisClient.call(...args)
     }),
     handler: (req, res) => {
+      metrics.rateLimitHits++;
       const resetTime = req.rateLimit?.resetTime;
       const retryAfterSeconds = resetTime
         ? Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
@@ -321,8 +558,8 @@ async function enforceDailyQuota({ db, uid, endpointKey, limit }) {
 // This function validates AI-generated combos against user dietary restrictions
 // and removes any items that violate those restrictions (Plan B safety net)
 function validateDietaryRestrictions(items, dietaryPreferences, allMenuItems) {
-  console.log('🛡️ Starting dietary validation for', items.length, 'items');
-  console.log('🔍 Dietary preferences:', JSON.stringify(dietaryPreferences));
+  logger.info('🛡️ Starting dietary validation for', items.length, 'items');
+  logger.info('🔍 Dietary preferences:', JSON.stringify(dietaryPreferences));
   
   // Define trigger words for each restriction type
   const restrictions = {
@@ -345,7 +582,7 @@ function validateDietaryRestrictions(items, dietaryPreferences, allMenuItems) {
     if (dietaryPreferences.isVegetarian) {
       for (const word of restrictions.vegetarian) {
         if (itemNameLower.includes(word)) {
-          console.log(`🚫 REMOVED: "${item.id}" - contains "${word}" (vegetarian restriction)`);
+          logger.info(`🚫 REMOVED: "${item.id}" - contains "${word}" (vegetarian restriction)`);
           removedItems.push(item);
           return false;
         }
@@ -362,12 +599,12 @@ function validateDietaryRestrictions(items, dietaryPreferences, allMenuItems) {
       if (canSubstitute) {
         // Item can use substitutes, keep it but flag for note
         milkSubstituteNeeded = true;
-        console.log(`✅ KEPT: "${item.id}" - can use milk substitute (oat/almond/coconut milk)`);
+        logger.info(`✅ KEPT: "${item.id}" - can use milk substitute (oat/almond/coconut milk)`);
       } else {
         // Check if item contains dairy that can't be substituted
         for (const word of restrictions.lactose) {
           if (itemNameLower.includes(word)) {
-            console.log(`🚫 REMOVED: "${item.id}" - contains "${word}" (lactose intolerance)`);
+            logger.info(`🚫 REMOVED: "${item.id}" - contains "${word}" (lactose intolerance)`);
             removedItems.push(item);
             return false;
           }
@@ -379,7 +616,7 @@ function validateDietaryRestrictions(items, dietaryPreferences, allMenuItems) {
     if (dietaryPreferences.doesntEatPork) {
       for (const word of restrictions.noPork) {
         if (itemNameLower.includes(word)) {
-          console.log(`🚫 REMOVED: "${item.id}" - contains "${word}" (doesn't eat pork)`);
+          logger.info(`🚫 REMOVED: "${item.id}" - contains "${word}" (doesn't eat pork)`);
           removedItems.push(item);
           return false;
         }
@@ -390,7 +627,7 @@ function validateDietaryRestrictions(items, dietaryPreferences, allMenuItems) {
     if (dietaryPreferences.hasPeanutAllergy) {
       for (const word of restrictions.peanutAllergy) {
         if (itemNameLower.includes(word)) {
-          console.log(`🚫 REMOVED: "${item.id}" - contains "${word}" (peanut allergy)`);
+          logger.info(`🚫 REMOVED: "${item.id}" - contains "${word}" (peanut allergy)`);
           removedItems.push(item);
           return false;
         }
@@ -401,7 +638,7 @@ function validateDietaryRestrictions(items, dietaryPreferences, allMenuItems) {
     if (dietaryPreferences.dislikesSpicyFood) {
       for (const word of restrictions.noSpicy) {
         if (itemNameLower.includes(word)) {
-          console.log(`🚫 REMOVED: "${item.id}" - contains "${word}" (dislikes spicy food)`);
+          logger.info(`🚫 REMOVED: "${item.id}" - contains "${word}" (dislikes spicy food)`);
           removedItems.push(item);
           return false;
         }
@@ -431,9 +668,9 @@ function validateDietaryRestrictions(items, dietaryPreferences, allMenuItems) {
     milkSubstituteNote = '(We can make your drink with oat milk, almond milk, or coconut milk instead of regular milk!)';
   }
   
-  console.log(`✅ Validation complete: ${validatedItems.length}/${items.length} items passed`);
+  logger.info(`✅ Validation complete: ${validatedItems.length}/${items.length} items passed`);
   if (removedItems.length > 0) {
-    console.log(`⚠️ Safety system caught ${removedItems.length} dietary violation(s)`);
+    logger.info(`⚠️ Safety system caught ${removedItems.length} dietary violation(s)`);
   }
   
   return {
@@ -489,7 +726,7 @@ app.post('/referrals/create', requireFirebaseAuth, referralPerUserLimiter, refer
   try {
     // Check if Firebase is initialized
     if (!admin.apps.length) {
-      console.error('❌ Firebase not initialized');
+      logger.error('❌ Firebase not initialized');
       return res.status(503).json({ error: 'Firebase not configured' });
     }
     const uid = req.auth.uid;
@@ -526,7 +763,7 @@ app.post('/referrals/create', requireFirebaseAuth, referralPerUserLimiter, refer
       directUrl: directUrl // Direct deep link
     });
   } catch (error) {
-    console.error('Error creating referral code:', error);
+    logger.error('Error creating referral code:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -549,7 +786,7 @@ app.post('/referrals/accept', requireFirebaseAuth, referralPerUserLimiter, refer
       try {
         deviceInfo = JSON.parse(fingerprintHeader);
       } catch (e) {
-        console.warn('⚠️ Failed to parse device fingerprint:', e);
+        logger.warn('⚠️ Failed to parse device fingerprint:', e);
       }
     }
     
@@ -557,7 +794,7 @@ app.post('/referrals/accept', requireFirebaseAuth, referralPerUserLimiter, refer
     if (deviceInfo) {
       const service = new SuspiciousBehaviorService(db);
       service.recordDeviceFingerprint(uid, deviceInfo, ipAddress).catch(err => {
-        console.error('❌ Error recording device fingerprint (non-blocking):', err);
+        logger.error('❌ Error recording device fingerprint (non-blocking):', err);
       });
     }
     const userRef = db.collection('users').doc(uid);
@@ -613,7 +850,7 @@ app.post('/referrals/accept', requireFirebaseAuth, referralPerUserLimiter, refer
       const pairDoc = await db.collection('referralPairs').doc(pairId).get();
       
       if (pairDoc.exists) {
-        console.log(`🚫 Referral blocked - phone pair already exists: ${pairId.substring(0, 16)}...`);
+        logger.info(`🚫 Referral blocked - phone pair already exists: ${pairId.substring(0, 16)}...`);
         return res.status(400).json({ 
           error: 'referral_already_used',
           message: 'This referral relationship has already been used previously'
@@ -632,7 +869,7 @@ app.post('/referrals/accept', requireFirebaseAuth, referralPerUserLimiter, refer
         .get();
       
       if (referrerReferralsSnap.size >= MAX_REFERRALS_PER_USER) {
-        console.log(`⚠️ Referral cap reached for user ${referrerId}: ${referrerReferralsSnap.size} referrals`);
+        logger.info(`⚠️ Referral cap reached for user ${referrerId}: ${referrerReferralsSnap.size} referrals`);
         return res.status(400).json({ 
           error: 'referral_cap_reached',
           message: `Maximum referral limit reached (${MAX_REFERRALS_PER_USER} referrals)`
@@ -644,7 +881,7 @@ app.post('/referrals/accept', requireFirebaseAuth, referralPerUserLimiter, refer
         const referrerHashDoc = await db.collection('abusePreventionHashes').doc(referrerPhoneHash).get();
         const referredHashes = referrerHashDoc.exists ? (referrerHashDoc.data().referredHashes || []) : [];
         if (referredHashes.length >= MAX_REFERRALS_PER_USER) {
-          console.log(`⚠️ Lifetime referral cap reached for referrer phone hash: ${referredHashes.length} referrals`);
+          logger.info(`⚠️ Lifetime referral cap reached for referrer phone hash: ${referredHashes.length} referrals`);
           return res.status(400).json({ 
             error: 'referral_cap_reached',
             message: `Maximum referral limit reached (${MAX_REFERRALS_PER_USER} referrals)`
@@ -702,18 +939,18 @@ app.post('/referrals/accept', requireFirebaseAuth, referralPerUserLimiter, refer
         }, { merge: true })
       ]);
       
-      console.log(`✅ Referral pair recorded: ${pairId.substring(0, 16)}...`);
+      logger.info(`✅ Referral pair recorded: ${pairId.substring(0, 16)}...`);
     }
 
     // Check if user already has enough points for immediate award
     if (currentUserPoints >= 50) {
-      console.log(`✅ User ${uid} already has ${currentUserPoints} points, awarding referral bonus immediately`);
+      logger.info(`✅ User ${uid} already has ${currentUserPoints} points, awarding referral bonus immediately`);
       // Award points immediately using the shared helper function
       const awardResult = await awardReferralPoints(db, referralRef.id, referrerId, uid);
       if (awardResult.success) {
-        console.log(`🎉 Referral ${referralRef.id} awarded immediately! Referrer: +${awardResult.referrerNewPoints !== null ? 50 : 0}, Referred: +50`);
+        logger.info(`🎉 Referral ${referralRef.id} awarded immediately! Referrer: +${awardResult.referrerNewPoints !== null ? 50 : 0}, Referred: +50`);
       } else {
-        console.warn(`⚠️ Failed to award referral immediately: ${awardResult.error}`);
+        logger.warn(`⚠️ Failed to award referral immediately: ${awardResult.error}`);
         // Don't fail the accept request - the award-check endpoint will handle it later
       }
     }
@@ -798,7 +1035,7 @@ app.post('/referrals/accept', requireFirebaseAuth, referralPerUserLimiter, refer
         }
       }
     } catch (detectionError) {
-      console.error('❌ Error in referral pattern detection (non-blocking):', detectionError);
+      logger.error('❌ Error in referral pattern detection (non-blocking):', detectionError);
     }
 
     res.json({
@@ -809,7 +1046,7 @@ app.post('/referrals/accept', requireFirebaseAuth, referralPerUserLimiter, refer
       referredFirstName
     });
   } catch (error) {
-    console.error('Error accepting referral:', error);
+    logger.error('Error accepting referral:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -870,7 +1107,7 @@ app.get('/referrals/mine', requireFirebaseAuth, generalPerUserLimiter, generalPe
       inbound
     });
   } catch (error) {
-    console.error('Error fetching referrals:', error);
+    logger.error('Error fetching referrals:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -903,10 +1140,10 @@ async function sendPushNotificationToToken(fcmToken, title, body, data = {}) {
     };
 
     const response = await admin.messaging().send(message);
-    console.log(`✅ FCM push sent successfully:`, response);
+    logger.info(`✅ FCM push sent successfully:`, response);
     return { success: true };
   } catch (error) {
-    console.warn(`❌ FCM push failed:`, error.message || error);
+    logger.warn(`❌ FCM push failed:`, error.message || error);
     return { success: false, error: error.message || 'Unknown error' };
   }
 }
@@ -966,14 +1203,14 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
       };
     }
     
-    console.log(`✅ User ${referredUserId} has ${referredUserPoints} points, eligible for referral bonus!`);
+    logger.info(`✅ User ${referredUserId} has ${referredUserPoints} points, eligible for referral bonus!`);
     
     // Get the referrer's document
     const referrerUserRef = db.collection('users').doc(referrerId);
     const referrerUserDoc = await referrerUserRef.get();
     
     if (!referrerUserDoc.exists) {
-      console.warn(`⚠️ Referrer ${referrerId} not found, proceeding with referred user award only`);
+      logger.warn(`⚠️ Referrer ${referrerId} not found, proceeding with referred user award only`);
     }
     
     const referrerUserData = referrerUserDoc.exists ? referrerUserDoc.data() : null;
@@ -1084,7 +1321,7 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
       });
     });
     
-    console.log(`🎉 Referral ${referralId} awarded! Referrer: +${referrerNewPoints !== null ? REFERRAL_BONUS : 0}, Referred: +${REFERRAL_BONUS}`);
+    logger.info(`🎉 Referral ${referralId} awarded! Referrer: +${referrerNewPoints !== null ? REFERRAL_BONUS : 0}, Referred: +${REFERRAL_BONUS}`);
     
     // Create Firestore notification documents for both users
     const notificationPromises = [];
@@ -1137,11 +1374,11 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
           `${referredName} reached 50 points! You earned +${REFERRAL_BONUS} bonus points.`,
           { type: 'referral_awarded', role: 'referrer', referralId }
         ).then(result => {
-          console.log(`📱 Referrer push result:`, result);
+          logger.info(`📱 Referrer push result:`, result);
         })
       );
     } else {
-      console.log(`ℹ️ Referrer ${referrerId} has no FCM token, skipping push`);
+      logger.info(`ℹ️ Referrer ${referrerId} has no FCM token, skipping push`);
     }
     
     // Push to referred user
@@ -1153,21 +1390,21 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
           `You reached 50 points! You and ${referrerName} each earned +${REFERRAL_BONUS} bonus points.`,
           { type: 'referral_awarded', role: 'referred', referralId }
         ).then(result => {
-          console.log(`📱 Referred user push result:`, result);
+          logger.info(`📱 Referred user push result:`, result);
         })
       );
     } else {
-      console.log(`ℹ️ Referred user ${referredUserId} has no FCM token, skipping push`);
+      logger.info(`ℹ️ Referred user ${referredUserId} has no FCM token, skipping push`);
     }
     
     // Don't await push notifications - let them complete in background
     Promise.all(pushPromises).catch(err => {
-      console.warn('⚠️ Some push notifications failed:', err);
+      logError(err, null, { operation: 'push_notifications', referralId });
     });
     
     // Don't await notification documents - let them complete in background
     Promise.all(notificationPromises).catch(err => {
-      console.warn('⚠️ Failed to create notification documents:', err);
+      logError(err, null, { operation: 'notification_documents', referralId });
     });
     
     // Check for suspicious referral patterns (async, don't block response)
@@ -1180,7 +1417,7 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
         pointsReached: referredUserPoints
       });
     } catch (detectionError) {
-      console.error('❌ Error in referral pattern detection (non-blocking):', detectionError);
+      logger.error('❌ Error in referral pattern detection (non-blocking):', detectionError);
     }
     
     // Update referralPairs to mark bonus as awarded (async, don't block response)
@@ -1193,10 +1430,10 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
           bonusAwarded: true,
           bonusAwardedAt: admin.firestore.FieldValue.serverTimestamp()
         });
-        console.log(`✅ Referral pair ${pairId.substring(0, 16)}... marked as bonus awarded`);
+        logger.info(`✅ Referral pair ${pairId.substring(0, 16)}... marked as bonus awarded`);
       }
     } catch (pairUpdateError) {
-      console.warn('⚠️ Failed to update referral pair (non-blocking):', pairUpdateError);
+      logger.warn('⚠️ Failed to update referral pair (non-blocking):', pairUpdateError);
     }
     
     return {
@@ -1208,7 +1445,7 @@ async function awardReferralPoints(db, referralId, referrerId, referredUserId) {
     if (error.message === 'ALREADY_AWARDED') {
       return { success: false, error: 'ALREADY_AWARDED' };
     }
-    console.error('❌ Error in awardReferralPoints:', error);
+    logger.error('❌ Error in awardReferralPoints:', error);
     return { success: false, error: error.message || 'Unknown error' };
   }
 }
@@ -1248,10 +1485,10 @@ app.post('/referrals/award-check', requireFirebaseAuth, generalPerUserLimiter, g
         return res.status(403).json({ error: 'Only admins can check other users' });
       }
       uid = targetUserId; // Use target user for referral check
-      console.log(`🔧 Admin ${authenticatedUid} checking referral for user ${uid}`);
+      logger.info(`🔧 Admin ${authenticatedUid} checking referral for user ${uid}`);
     }
 
-    console.log(`🎯 Referral award-check for user: ${uid}`);
+    logger.info(`🎯 Referral award-check for user: ${uid}`);
 
     const REFERRAL_BONUS = 50;
 
@@ -1262,7 +1499,7 @@ app.post('/referrals/award-check', requireFirebaseAuth, generalPerUserLimiter, g
       .get();
 
     if (referralSnap.empty) {
-      console.log(`ℹ️ User ${uid} has no referral relationship`);
+      logger.info(`ℹ️ User ${uid} has no referral relationship`);
       return res.json({ status: 'not_eligible', reason: 'no_referral' });
     }
 
@@ -1271,17 +1508,17 @@ app.post('/referrals/award-check', requireFirebaseAuth, generalPerUserLimiter, g
     const referralData = referralDoc.data();
     const referrerId = referralData.referrerUserId;
 
-    console.log(`📋 Found referral ${referralId}: referrer=${referrerId}, status=${referralData.status}`);
+    logger.info(`📋 Found referral ${referralId}: referrer=${referrerId}, status=${referralData.status}`);
 
     // Check if already awarded
     if (referralData.status === 'awarded') {
-      console.log(`ℹ️ Referral ${referralId} already awarded`);
+      logger.info(`ℹ️ Referral ${referralId} already awarded`);
       return res.json({ status: 'already_awarded', referralId });
     }
 
     // Tombstoned referral (referrer or referred deleted); do not award
     if (referralData.status === 'cancelled' || !referrerId) {
-      console.log(`ℹ️ Referral ${referralId} cancelled or referrer deleted, skipping award`);
+      logger.info(`ℹ️ Referral ${referralId} cancelled or referrer deleted, skipping award`);
       return res.json({ status: 'not_eligible', reason: 'referral_cancelled' });
     }
 
@@ -1298,7 +1535,7 @@ app.post('/referrals/award-check', requireFirebaseAuth, generalPerUserLimiter, g
 
     // Check if referred user has reached the 50-point threshold
     if (referredUserPoints < 50) {
-      console.log(`ℹ️ User ${uid} has ${referredUserPoints} points, needs 50 for referral bonus`);
+      logger.info(`ℹ️ User ${uid} has ${referredUserPoints} points, needs 50 for referral bonus`);
       return res.json({ 
         status: 'not_eligible', 
         reason: 'threshold_not_met',
@@ -1338,7 +1575,7 @@ app.post('/referrals/award-check', requireFirebaseAuth, generalPerUserLimiter, g
     if (error.message === 'ALREADY_AWARDED') {
       return res.json({ status: 'already_awarded' });
     }
-    console.error('❌ Error in /referrals/award-check:', error);
+    logger.error('❌ Error in /referrals/award-check:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1398,15 +1635,158 @@ const comboInsights = []; // Track combo patterns for insights, not restrictions
 const MAX_INSIGHTS = 100;
 const userComboPreferences = new Map(); // Track user preferences for personalization
 
-// Health check endpoint
-app.get('/', (req, res) => {
+// Helper function to safely add insights with size limit enforcement
+function addComboInsight(insight) {
+  comboInsights.push(insight);
+  if (comboInsights.length > MAX_INSIGHTS) {
+    comboInsights.shift(); // Remove oldest entry to maintain size limit
+  }
+}
+
+// Size limit for user combo preferences Map (LRU eviction)
+const MAX_USER_PREFERENCES = 1000;
+function setUserComboPreference(userId, preference) {
+  // If at capacity, remove oldest entry (first key in insertion order)
+  if (userComboPreferences.size >= MAX_USER_PREFERENCES && !userComboPreferences.has(userId)) {
+    const firstKey = userComboPreferences.keys().next().value;
+    userComboPreferences.delete(firstKey);
+  }
+  userComboPreferences.set(userId, preference);
+}
+
+// Health check endpoint (basic - fast response)
+app.get('/', async (req, res) => {
+  const redisHealth = await checkRedisHealth();
+  const firebaseHealth = await checkFirebaseHealth();
+  
   res.json({ 
     status: 'Server is running!', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
     server: 'BACKEND server.js with gpt-4o-mini',
-    firebaseConfigured: !!admin.apps.length,
-    openaiConfigured: !!process.env.OPENAI_API_KEY
+    services: {
+      firebase: {
+        configured: !!admin.apps.length,
+        connected: firebaseHealth.connected
+      },
+      redis: {
+        configured: !!redisClient,
+        connected: redisHealth.connected,
+        status: redisHealth.status
+      },
+      openai: {
+        configured: !!process.env.OPENAI_API_KEY
+      },
+      sentry: {
+        configured: !!Sentry
+      }
+    }
+  });
+});
+
+// Detailed health check endpoint (for monitoring services)
+app.get('/health/detailed', async (req, res) => {
+  const startTime = Date.now();
+  const redisHealth = await checkRedisHealth();
+  const firebaseHealth = await checkFirebaseHealth();
+  const responseTime = Date.now() - startTime;
+  
+  const overallStatus = (
+    firebaseHealth.connected && 
+    (redisHealth.connected || !redisClient) && 
+    !!process.env.OPENAI_API_KEY
+  ) ? 'healthy' : 'degraded';
+  
+  const statusCode = overallStatus === 'healthy' ? 200 : 503;
+  
+  res.status(statusCode).json({
+    status: overallStatus,
+    timestamp: new Date().toISOString(),
+    responseTimeMs: responseTime,
+    environment: process.env.NODE_ENV || 'development',
+    services: {
+      firebase: {
+        configured: !!admin.apps.length,
+        connected: firebaseHealth.connected,
+        status: firebaseHealth.status,
+        error: firebaseHealth.error || null
+      },
+      redis: {
+        configured: !!redisClient,
+        connected: redisHealth.connected,
+        status: redisHealth.status,
+        error: redisHealth.error || null
+      },
+      openai: {
+        configured: !!process.env.OPENAI_API_KEY
+      },
+      sentry: {
+        configured: !!Sentry
+      }
+    },
+    uptime: process.uptime(),
+    memory: {
+      used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+      total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+      rss: Math.round(process.memoryUsage().rss / 1024 / 1024)
+    }
+  });
+});
+
+// Status endpoint for uptime monitoring (fast, simple)
+app.get('/status', async (req, res) => {
+  const redisHealth = await checkRedisHealth();
+  const firebaseHealth = await checkFirebaseHealth();
+  
+  const isHealthy = (
+    firebaseHealth.connected && 
+    (redisHealth.connected || !redisClient) && 
+    !!process.env.OPENAI_API_KEY
+  );
+  
+  res.status(isHealthy ? 200 : 503).json({
+    status: isHealthy ? 'ok' : 'degraded',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/metrics', async (req, res) => {
+  const redisHealth = await checkRedisHealth();
+  const uptime = process.uptime();
+  
+  res.json({
+    timestamp: new Date().toISOString(),
+    uptime: {
+      seconds: Math.floor(uptime),
+      formatted: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m ${Math.floor(uptime % 60)}s`
+    },
+    requests: {
+      total: metrics.requests,
+      errors: metrics.errors,
+      rateLimitHits: metrics.rateLimitHits,
+      perSecond: metrics.requests / uptime
+    },
+    services: {
+      redis: {
+        configured: !!redisClient,
+        connected: redisHealth.connected,
+        status: redisHealth.status
+      },
+      firebase: {
+        configured: !!admin.apps.length
+      },
+      openai: {
+        configured: !!process.env.OPENAI_API_KEY
+      },
+      sentry: {
+        configured: !!Sentry
+      }
+    },
+    memory: {
+      used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+      total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+      rss: Math.round(process.memoryUsage().rss / 1024 / 1024)
+    }
   });
 });
 
@@ -1434,7 +1814,7 @@ app.get('/app-version', (req, res) => {
       forceUpdate
     });
   } catch (error) {
-    console.error('❌ Error in /app-version endpoint:', error);
+    logger.error('❌ Error in /app-version endpoint:', error);
     // Return a safe default that won't lock users out
     res.json({
       minimumRequiredVersion: '0.0.0',
@@ -1482,8 +1862,8 @@ const submitReceiptLimiter = createRateLimiter({
 
 app.post('/generate-combo', requireFirebaseAuth, comboPerUserLimiter, comboPerIpLimiter, validate(comboSchema), async (req, res) => {
   try {
-    console.log('🤖 Received personalized combo request');
-    console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+    logger.info('🤖 Received personalized combo request');
+    logger.info('📥 Request body:', JSON.stringify(req.body, null, 2));
     
     // Enforce a daily quota to prevent runaway OpenAI spend.
     if (admin.apps.length) {
@@ -1547,11 +1927,11 @@ app.post('/generate-combo', requireFirebaseAuth, comboPerUserLimiter, comboPerIp
           
           cleanedItems.push(cleanedItem);
         } else {
-          console.log(`🔄 Skipping duplicate: ${item.id} (${item.price})`);
+          logger.info(`🔄 Skipping duplicate: ${item.id} (${item.price})`);
         }
       });
       
-      console.log(`✅ Deduplicated ${items.length} items to ${cleanedItems.length} unique items`);
+      logger.info(`✅ Deduplicated ${items.length} items to ${cleanedItems.length} unique items`);
       return cleanedItems;
     }
     
@@ -1624,7 +2004,7 @@ app.post('/generate-combo', requireFirebaseAuth, comboPerUserLimiter, comboPerIp
                  fullText.includes('strawberry') || fullText.includes('grape') ||
                  (fullText.includes('mint') && (fullText.includes('lychee') || fullText.includes('peach')))) {
           category = 'Lemonade/Soda';
-          console.log(`🍋 Categorized as Lemonade/Soda: ${item.id}`);
+          logger.info(`🍋 Categorized as Lemonade/Soda: ${item.id}`);
         }
         // Other drinks - items that don't fit other categories but are clearly drinks
         else if (fullText.includes('tea') || fullText.includes('slush') || 
@@ -1639,7 +2019,7 @@ app.post('/generate-combo', requireFirebaseAuth, comboPerUserLimiter, comboPerIp
         };
         
         categorizedItems.push(categorizedItem);
-        console.log(`✅ Categorized: ${item.id} -> ${category}`);
+        logger.info(`✅ Categorized: ${item.id} -> ${category}`);
       });
       
       return categorizedItems;
@@ -1647,7 +2027,7 @@ app.post('/generate-combo', requireFirebaseAuth, comboPerUserLimiter, comboPerIp
     
     // If no menu items provided, try to fetch from Firebase
     if (!allMenuItems || allMenuItems.length === 0) {
-      console.log('🔍 No menu items in request, trying to fetch from Firestore...');
+      logger.info('🔍 No menu items in request, trying to fetch from Firestore...');
       
       if (admin.apps.length) {
         try {
@@ -1658,7 +2038,7 @@ app.post('/generate-combo', requireFirebaseAuth, comboPerUserLimiter, comboPerIp
           
           for (const categoryDoc of categoriesSnapshot.docs) {
             const categoryId = categoryDoc.id;
-            console.log(`🔍 Processing category: ${categoryId}`);
+            logger.info(`🔍 Processing category: ${categoryId}`);
             
             // Get all items in this category
             const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
@@ -1676,24 +2056,24 @@ app.post('/generate-combo', requireFirebaseAuth, comboPerUserLimiter, comboPerIp
                   category: categoryId
                 };
                 allMenuItems.push(menuItem);
-                console.log(`✅ Added item: ${menuItem.id} (${categoryId})`);
+                logger.info(`✅ Added item: ${menuItem.id} (${categoryId})`);
               } catch (error) {
-                console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
+                logger.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
               }
             }
           }
           
-          console.log(`✅ Successfully fetched ${allMenuItems.length} menu items from Firestore`);
+          logger.info(`✅ Successfully fetched ${allMenuItems.length} menu items from Firestore`);
         } catch (error) {
-          console.error('❌ Error fetching from Firestore:', error);
-          console.log('🔄 Firebase fetch failed, will use menu items from request if available');
+          logger.error('❌ Error fetching from Firestore:', error);
+          logger.info('🔄 Firebase fetch failed, will use menu items from request if available');
         }
       } else {
-        console.log('⚠️ Firebase not configured, will use menu items from request if available');
+        logger.info('⚠️ Firebase not configured, will use menu items from request if available');
         
         // Categorize items from request if they don't have categories
         if (allMenuItems.length > 0) {
-          console.log('🔍 Categorizing menu items from request...');
+          logger.info('🔍 Categorizing menu items from request...');
           allMenuItems = categorizeFromDescriptions(allMenuItems);
         }
       }
@@ -1701,7 +2081,7 @@ app.post('/generate-combo', requireFirebaseAuth, comboPerUserLimiter, comboPerIp
     
     // If still no menu items, return error
     if (!allMenuItems || allMenuItems.length === 0) {
-      console.error('❌ No menu items available');
+      logger.error('❌ No menu items available');
       return res.status(500).json({ 
         error: 'No menu items available',
         details: 'Unable to fetch menu from Firebase or request'
@@ -1709,18 +2089,18 @@ app.post('/generate-combo', requireFirebaseAuth, comboPerUserLimiter, comboPerIp
     }
     
     // Clean and deduplicate menu items
-    console.log(`🔍 Cleaning and deduplicating ${allMenuItems.length} menu items...`);
+    logger.info(`🔍 Cleaning and deduplicating ${allMenuItems.length} menu items...`);
     allMenuItems = deduplicateAndCleanMenuItems(allMenuItems);
     
     // Categorize items if they don't have categories
     if (allMenuItems.length > 0 && !allMenuItems[0].category) {
-      console.log('🔍 Categorizing menu items...');
+      logger.info('🔍 Categorizing menu items...');
       allMenuItems = categorizeFromDescriptions(allMenuItems);
     }
     
-    console.log(`🔍 Final menu items count: ${allMenuItems.length}`);
-    console.log(`🔍 Menu items:`, allMenuItems.map(item => `${item.id} (${item.category})`));
-    console.log(`🔍 Dietary preferences:`, dietaryPreferences);
+    logger.info(`🔍 Final menu items count: ${allMenuItems.length}`);
+    logger.info(`🔍 Menu items:`, allMenuItems.map(item => `${item.id} (${item.category})`));
+    logger.info(`🔍 Dietary preferences:`, dietaryPreferences);
     
 
     
@@ -1870,7 +2250,7 @@ IMPORTANT: Try not to use these past suggestions for better variety. Choose diff
     }
     
     const drinkTypeText = `DRINK PREFERENCE: Please include a ${selectedDrinkType} in this combo.`;
-    console.log(`🥤 Selected Drink Type: ${selectedDrinkType} - ${preferenceReason}`);
+    logger.info(`🥤 Selected Drink Type: ${selectedDrinkType} - ${preferenceReason}`);
     
     // Appetizer/Soup randomizer
     const appetizerSoupOptions = ['Appetizer', 'Soup', 'Both'];
@@ -1957,11 +2337,11 @@ Respond in this exact JSON format:
 
 Calculate the total price accurately. Keep the response warm and personal.`;
 
-    console.log('🤖 Sending request to OpenAI...');
-    console.log('🔍 Exploration Strategy:', currentStrategy);
-    console.log('🔍 Variety Guideline:', varietyGuideline);
-    console.log('🥤 Selected Drink Type:', selectedDrinkType);
-    console.log('🥗 Selected Appetizer/Soup Type:', randomAppetizerSoup);
+    logger.info('🤖 Sending request to OpenAI...');
+    logger.info('🔍 Exploration Strategy:', currentStrategy);
+    logger.info('🔍 Variety Guideline:', varietyGuideline);
+    logger.info('🥤 Selected Drink Type:', selectedDrinkType);
+    logger.info('🥗 Selected Appetizer/Soup Type:', randomAppetizerSoup);
     
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const completion = await openaiWithTimeout(openai, {
@@ -1980,10 +2360,10 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       max_tokens: 500
     });
 
-    console.log('✅ Received response from OpenAI');
+    logger.info('✅ Received response from OpenAI');
     
     const aiResponse = completion.choices[0].message.content;
-    console.log('🤖 AI Response:', aiResponse);
+    logger.info('🤖 AI Response:', aiResponse);
     
     try {
       const parsedResponse = JSON.parse(aiResponse);
@@ -2001,10 +2381,10 @@ Calculate the total price accurately. Keep the response warm and personal.`;
         throw new Error('Invalid response structure: missing or invalid totalPrice');
       }
       
-      console.log('✅ Successfully parsed and validated AI response');
+      logger.info('✅ Successfully parsed and validated AI response');
       
       // 🛡️ PLAN B: Dietary Restriction Safety Validation System
-      console.log('🛡️ Running dietary restriction safety validation...');
+      logger.info('🛡️ Running dietary restriction safety validation...');
       const validationResult = validateDietaryRestrictions(
         parsedResponse.items, 
         normalizedDietaryPreferences, 
@@ -2017,8 +2397,8 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       
       // Add warning if items were removed
       if (validationResult.wasModified) {
-        console.log(`⚠️ AI DIETARY VIOLATION CAUGHT: Removed ${validationResult.removedCount} item(s)`);
-        console.log(`   Removed items: ${validationResult.removedItems.map(item => item.id).join(', ')}`);
+        logger.info(`⚠️ AI DIETARY VIOLATION CAUGHT: Removed ${validationResult.removedCount} item(s)`);
+        logger.info(`   Removed items: ${validationResult.removedItems.map(item => item.id).join(', ')}`);
       }
       
       // Add milk substitute note if applicable
@@ -2043,8 +2423,8 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       });
       
     } catch (parseError) {
-      console.error('❌ Error parsing AI response:', parseError);
-      console.error('Raw AI response:', aiResponse);
+      logger.error('❌ Error parsing AI response:', parseError);
+      logger.error('Raw AI response:', aiResponse);
       
       // Fallback response
       res.json({
@@ -2069,7 +2449,7 @@ Calculate the total price accurately. Keep the response warm and personal.`;
     }
     
   } catch (error) {
-    console.error('❌ Error in generate-combo:', error);
+    logger.error('❌ Error in generate-combo:', error);
     res.status(500).json({ 
       error: 'Failed to generate combo',
       details: error.message 
@@ -2079,7 +2459,7 @@ Calculate the total price accurately. Keep the response warm and personal.`;
 
 // Check if OpenAI API key is configured
 if (!process.env.OPENAI_API_KEY) {
-  console.error('❌ OPENAI_API_KEY environment variable is not set!');
+  logger.error('❌ OPENAI_API_KEY environment variable is not set!');
   app.get('/analyze-receipt', (req, res) => {
     res.status(500).json({ 
       error: 'Server configuration error: OPENAI_API_KEY not set',
@@ -2124,7 +2504,7 @@ if (!process.env.OPENAI_API_KEY) {
           receiptScanLockoutUntil: admin.firestore.FieldValue.delete(),
           receiptScanLockoutCount: admin.firestore.FieldValue.delete()
         });
-        console.log(`✅ Cleared receipt scan lockout for admin user ${userId}`);
+        logger.info(`✅ Cleared receipt scan lockout for admin user ${userId}`);
       }
       return { allowed: true };
     }
@@ -2236,7 +2616,7 @@ if (!process.env.OPENAI_API_KEY) {
         snapshot.docs.forEach(doc => batch.delete(doc.ref));
         return batch.commit();
       })
-      .catch(err => console.error('Error cleaning up old scan attempts:', err));
+      .catch(err => logger.error('Error cleaning up old scan attempts:', err));
   }
 
   function getProgressiveLockoutDuration(lockoutCount) {
@@ -2293,7 +2673,7 @@ if (!process.env.OPENAI_API_KEY) {
         receiptScanLockoutCount: currentLockoutCount + 1
       });
       
-      console.log(`🔒 Applied receipt scan lockout for user ${userId}: ${currentLockoutCount + 1} lockout(s), until ${lockoutUntil.toISOString()}`);
+      logger.info(`🔒 Applied receipt scan lockout for user ${userId}: ${currentLockoutCount + 1} lockout(s), until ${lockoutUntil.toISOString()}`);
     }
   }
 
@@ -2306,14 +2686,14 @@ if (!process.env.OPENAI_API_KEY) {
 
   app.post('/analyze-receipt', requireFirebaseAuth, receiptAnalyzePerUserLimiter, receiptAnalyzePerIpLimiter, upload.single('image'), async (req, res) => {
     try {
-      console.log('📥 Received receipt analysis request');
+      logger.info('📥 Received receipt analysis request');
       
       if (!req.file) {
-        console.log('❌ No image file received');
+        logger.info('❌ No image file received');
         return sendError(res, 400, "NO_IMAGE", "No image file provided");
       }
       
-      console.log('📁 Image file received:', req.file.originalname, 'Size:', req.file.size);
+      logger.info('📁 Image file received:', req.file.originalname, 'Size:', req.file.size);
       
       const imagePath = req.file.path;
       const imageData = await fsPromises.readFile(imagePath, { encoding: 'base64' });
@@ -2388,8 +2768,8 @@ Respond ONLY as a JSON object with this exact shape:
 or {"error": "error message"}.
 If a field is missing, use null.`;
 
-      console.log('🤖 Sending request to OpenAI for FIRST validation...');
-      console.log('📊 API Call 1 - Starting at:', new Date().toISOString());
+      logger.info('🤖 Sending request to OpenAI for FIRST validation...');
+      logger.info('📊 API Call 1 - Starting at:', new Date().toISOString());
       
       // First OpenAI call (with timeout)
       const response1 = await openaiWithTimeout(openai, {
@@ -2407,11 +2787,11 @@ If a field is missing, use null.`;
         temperature: 0.1
       });
 
-      console.log('✅ First OpenAI response received');
-      console.log('📊 API Call 1 - Completed at:', new Date().toISOString());
+      logger.info('✅ First OpenAI response received');
+      logger.info('📊 API Call 1 - Completed at:', new Date().toISOString());
       
-      console.log('🤖 Sending request to OpenAI for SECOND validation...');
-      console.log('📊 API Call 2 - Starting at:', new Date().toISOString());
+      logger.info('🤖 Sending request to OpenAI for SECOND validation...');
+      logger.info('📊 API Call 2 - Starting at:', new Date().toISOString());
       
       // Second OpenAI call (with timeout)
       const response2 = await openaiWithTimeout(openai, {
@@ -2429,46 +2809,46 @@ If a field is missing, use null.`;
         temperature: 0.1
       });
 
-      console.log('✅ Second OpenAI response received');
-      console.log('📊 API Call 2 - Completed at:', new Date().toISOString());
+      logger.info('✅ Second OpenAI response received');
+      logger.info('📊 API Call 2 - Completed at:', new Date().toISOString());
       
       // Clean up the uploaded file
-      fs.unlinkSync(imagePath);
+      await fsPromises.unlink(imagePath).catch(err => logger.error('Failed to delete file:', err));
 
       // Parse first response
       const text1 = response1.choices[0].message.content;
-      console.log('📝 Raw OpenAI response 1:', text1);
+      logger.info('📝 Raw OpenAI response 1:', text1);
       
       const jsonMatch1 = text1.match(/\{[\s\S]*\}/);
       if (!jsonMatch1) {
-        console.log('❌ Could not extract JSON from first response');
+        logger.info('❌ Could not extract JSON from first response');
         return sendError(res, 422, "AI_JSON_EXTRACT_FAILED", "Could not extract JSON from first response", { raw: text1 });
       }
       
       const data1 = JSON.parse(jsonMatch1[0]);
-      console.log('✅ Parsed JSON data 1:', data1);
+      logger.info('✅ Parsed JSON data 1:', data1);
       
       // Parse second response
       const text2 = response2.choices[0].message.content;
-      console.log('📝 Raw OpenAI response 2:', text2);
+      logger.info('📝 Raw OpenAI response 2:', text2);
       
       const jsonMatch2 = text2.match(/\{[\s\S]*\}/);
       if (!jsonMatch2) {
-        console.log('❌ Could not extract JSON from second response');
+        logger.info('❌ Could not extract JSON from second response');
         return sendError(res, 422, "AI_JSON_EXTRACT_FAILED", "Could not extract JSON from second response", { raw: text2 });
       }
       
       const data2 = JSON.parse(jsonMatch2[0]);
-      console.log('✅ Parsed JSON data 2:', data2);
+      logger.info('✅ Parsed JSON data 2:', data2);
       
       // Check if either response contains an error
       if (data1.error) {
-        console.log('❌ First validation failed:', data1.error);
+        logger.info('❌ First validation failed:', data1.error);
         return sendError(res, 400, "AI_VALIDATION_FAILED", data1.error);
       }
       
       if (data2.error) {
-        console.log('❌ Second validation failed:', data2.error);
+        logger.info('❌ Second validation failed:', data2.error);
         return sendError(res, 400, "AI_VALIDATION_FAILED", data2.error);
       }
 
@@ -2505,9 +2885,9 @@ If a field is missing, use null.`;
       const norm2 = normalizeParsedReceipt(data2);
       
       // Compare the two responses
-      console.log('🔍 COMPARING TWO VALIDATIONS:');
-      console.log('   Response 1 - Order Number:', norm1.orderNumber, 'Total:', norm1.orderTotal, 'Date:', norm1.orderDate, 'Time:', norm1.orderTime);
-      console.log('   Response 2 - Order Number:', norm2.orderNumber, 'Total:', norm2.orderTotal, 'Date:', norm2.orderDate, 'Time:', norm2.orderTime);
+      logger.info('🔍 COMPARING TWO VALIDATIONS:');
+      logger.info('   Response 1 - Order Number:', norm1.orderNumber, 'Total:', norm1.orderTotal, 'Date:', norm1.orderDate, 'Time:', norm1.orderTime);
+      logger.info('   Response 2 - Order Number:', norm2.orderNumber, 'Total:', norm2.orderTotal, 'Date:', norm2.orderDate, 'Time:', norm2.orderTime);
       
       // Check if responses match
       const responsesMatch = 
@@ -2518,16 +2898,16 @@ If a field is missing, use null.`;
         norm1.orderDate === norm2.orderDate &&
         norm1.orderTime === norm2.orderTime;
       
-      console.log('🔍 COMPARISON DETAILS:');
-      console.log('   Order Number Match:', norm1.orderNumber === norm2.orderNumber, `(${norm1.orderNumber} vs ${norm2.orderNumber})`);
-      console.log('   Order Total Match:', norm1.orderTotal === norm2.orderTotal, `(${norm1.orderTotal} vs ${norm2.orderTotal})`);
-      console.log('   Order Date Match:', norm1.orderDate === norm2.orderDate, `(${norm1.orderDate} vs ${norm2.orderDate})`);
-      console.log('   Order Time Match:', norm1.orderTime === norm2.orderTime, `(${norm1.orderTime} vs ${norm2.orderTime})`);
-      console.log('   Overall Match:', responsesMatch);
+      logger.info('🔍 COMPARISON DETAILS:');
+      logger.info('   Order Number Match:', norm1.orderNumber === norm2.orderNumber, `(${norm1.orderNumber} vs ${norm2.orderNumber})`);
+      logger.info('   Order Total Match:', norm1.orderTotal === norm2.orderTotal, `(${norm1.orderTotal} vs ${norm2.orderTotal})`);
+      logger.info('   Order Date Match:', norm1.orderDate === norm2.orderDate, `(${norm1.orderDate} vs ${norm2.orderDate})`);
+      logger.info('   Order Time Match:', norm1.orderTime === norm2.orderTime, `(${norm1.orderTime} vs ${norm2.orderTime})`);
+      logger.info('   Overall Match:', responsesMatch);
       
       if (!responsesMatch) {
-        console.log('❌ VALIDATION MISMATCH - Responses do not match');
-        console.log('   This indicates unclear or ambiguous receipt data');
+        logger.info('❌ VALIDATION MISMATCH - Responses do not match');
+        logger.info('   This indicates unclear or ambiguous receipt data');
         return sendError(
           res,
           400,
@@ -2536,7 +2916,7 @@ If a field is missing, use null.`;
         );
       }
       
-      console.log('✅ VALIDATION MATCH - Both responses are identical');
+      logger.info('✅ VALIDATION MATCH - Both responses are identical');
       
       // Use the validated data (both are the same)
       const data = norm1;
@@ -2548,7 +2928,7 @@ If a field is missing, use null.`;
       
       // Validate that we have the required fields
       if (!data.orderNumber || !data.orderTotal || !data.orderDate || !data.orderTime) {
-        console.log('❌ Missing required fields in receipt data');
+        logger.info('❌ Missing required fields in receipt data');
         return sendError(res, 400, "MISSING_FIELDS", "Could not extract all required fields from receipt");
       }
 
@@ -2583,7 +2963,7 @@ If a field is missing, use null.`;
         keyFieldsTampered === true ||
         !orderNumberSourceIsValid
       ) {
-        console.log('❌ Receipt rejected due to obscured/tampered key fields or invalid order number source', {
+        logger.info('❌ Receipt rejected due to obscured/tampered key fields or invalid order number source', {
           totalVisibleAndClear,
           orderNumberVisibleAndClear,
           dateVisibleAndClear,
@@ -2612,67 +2992,67 @@ If a field is missing, use null.`;
       
       // Validate order number format (must be 3 digits or less and not exceed 400)
       const orderNumberStr = data.orderNumber.toString();
-      console.log('🔍 Validating order number:', orderNumberStr);
+      logger.info('🔍 Validating order number:', orderNumberStr);
       
       if (orderNumberStr.length > 3) {
-        console.log('❌ Order number too long:', orderNumberStr);
+        logger.info('❌ Order number too long:', orderNumberStr);
         return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number format - must be 3 digits or less");
       }
       
       const orderNumber = parseInt(data.orderNumber);
-      console.log('🔍 Parsed order number:', orderNumber);
+      logger.info('🔍 Parsed order number:', orderNumber);
       
       if (isNaN(orderNumber)) {
-        console.log('❌ Order number is not a valid number:', data.orderNumber);
+        logger.info('❌ Order number is not a valid number:', data.orderNumber);
         return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number - must be a valid number");
       }
       
       if (orderNumber < 1) {
-        console.log('❌ Order number too small:', orderNumber);
+        logger.info('❌ Order number too small:', orderNumber);
         return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number - must be at least 1");
       }
       
       if (orderNumber > 400) {
-        console.log('❌ Order number too large (over 400):', orderNumber);
+        logger.info('❌ Order number too large (over 400):', orderNumber);
         return sendError(res, 400, "ORDER_NUMBER_INVALID", "Invalid order number - must be 400 or less");
       }
       
-      console.log('✅ Order number validation passed:', orderNumber);
+      logger.info('✅ Order number validation passed:', orderNumber);
       
       // Validate date format (must be MM/DD; accept MM-DD but normalized above)
       const dateRegex = /^\d{2}\/\d{2}$/;
       if (!dateRegex.test(data.orderDate)) {
-        console.log('❌ Invalid date format:', data.orderDate);
+        logger.info('❌ Invalid date format:', data.orderDate);
         return sendError(res, 400, "DATE_FORMAT_INVALID", "Invalid date format - must be MM/DD (or MM-DD on receipt)");
       }
       
       // Validate time format (must be HH:MM)
       const timeRegex = /^\d{2}:\d{2}$/;
       if (!timeRegex.test(data.orderTime)) {
-        console.log('❌ Invalid time format:', data.orderTime);
+        logger.info('❌ Invalid time format:', data.orderTime);
         return sendError(res, 400, "TIME_FORMAT_INVALID", "Invalid time format - must be HH:MM");
       }
       
       // Validate time is reasonable (00:00 to 23:59)
       const [hours, minutes] = data.orderTime.split(':').map(Number);
       if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
-        console.log('❌ Invalid time values:', data.orderTime);
+        logger.info('❌ Invalid time values:', data.orderTime);
         return sendError(res, 400, "TIME_FORMAT_INVALID", "Invalid time - must be between 00:00 and 23:59");
       }
       
-      console.log('✅ Time validation passed:', data.orderTime);
+      logger.info('✅ Time validation passed:', data.orderTime);
       
       // Additional server-side validation to double-check extracted data
-      console.log('🔍 DOUBLE-CHECKING EXTRACTED DATA:');
-      console.log('   Order Number:', data.orderNumber);
-      console.log('   Order Total:', data.orderTotal);
-      console.log('   Order Date:', data.orderDate);
-      console.log('   Order Time:', data.orderTime);
+      logger.info('🔍 DOUBLE-CHECKING EXTRACTED DATA:');
+      logger.info('   Order Number:', data.orderNumber);
+      logger.info('   Order Total:', data.orderTotal);
+      logger.info('   Order Date:', data.orderDate);
+      logger.info('   Order Time:', data.orderTime);
       
       // Validate order total is a reasonable amount (between $1 and $500)
       const orderTotal = parseFloat(data.orderTotal);
       if (isNaN(orderTotal) || orderTotal < 1 || orderTotal > 500) {
-        console.log('❌ Order total validation failed:', data.orderTotal);
+        logger.info('❌ Order total validation failed:', data.orderTotal);
         return sendError(res, 400, "TOTAL_INVALID", "Invalid order total - must be a reasonable amount between $1 and $500");
       }
       
@@ -2698,12 +3078,12 @@ If a field is missing, use null.`;
             const userData = userDoc.data() || {};
             if (userData.oldReceiptTestingEnabled === true) {
               allowOldReceiptForAdmin = true;
-              console.log('⚠️ Old-receipt test mode active for user:', uid, 'isAdmin:', userData.isAdmin === true);
+              logger.info('⚠️ Old-receipt test mode active for user:', uid, 'isAdmin:', userData.isAdmin === true);
             }
           }
         }
       } catch (err) {
-        console.warn('⚠️ Failed to evaluate admin old-receipt test override:', err.message || err);
+        logger.warn('⚠️ Failed to evaluate admin old-receipt test override:', err.message || err);
       }
 
       const receiptDateThisYear = new Date(currentDate.getFullYear(), month - 1, day, h, m, 0, 0);
@@ -2719,31 +3099,31 @@ If a field is missing, use null.`;
         if (allowOldReceiptForAdmin) {
           receiptDate = receiptDatePrevYear;
           hoursDiff = hoursDiffPrevYear;
-          console.log('⚠️ Old-receipt test mode: treating future-date receipt as previous year:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
+          logger.info('⚠️ Old-receipt test mode: treating future-date receipt as previous year:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
         } else if (hoursDiffPrevYear >= 0 && hoursDiffPrevYear <= 48) {
           receiptDate = receiptDatePrevYear;
           hoursDiff = hoursDiffPrevYear;
-          console.log('🗓️ Year-boundary adjustment applied for receipt date:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
+          logger.info('🗓️ Year-boundary adjustment applied for receipt date:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
         } else {
-          console.log('❌ Receipt date appears to be in the future:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiffThisYear);
+          logger.info('❌ Receipt date appears to be in the future:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiffThisYear);
           return sendError(res, 400, "FUTURE_DATE", "Invalid receipt date - receipt appears to be dated in the future");
         }
       }
 
       const daysDiff = hoursDiff / 24;
       if (allowOldReceiptForAdmin) {
-        console.log('⚠️ Old-receipt test mode daysDiff:', daysDiff);
+        logger.info('⚠️ Old-receipt test mode daysDiff:', daysDiff);
       }
 
       if (hoursDiff > 48 && !allowOldReceiptForAdmin) {
-        console.log('❌ Receipt date too old:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
+        logger.info('❌ Receipt date too old:', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
         return sendError(res, 400, "EXPIRED_48H", "Receipt expired - receipts must be scanned within 48 hours of purchase");
       }
       
-      console.log('✅ All validations passed - data integrity confirmed');
+      logger.info('✅ All validations passed - data integrity confirmed');
       
       // DUPLICATE DETECTION SYSTEM
-      console.log('🔍 CHECKING FOR DUPLICATE RECEIPTS...');
+      logger.info('🔍 CHECKING FOR DUPLICATE RECEIPTS...');
       
       try {
         // Query Firestore for existing receipts with matching criteria
@@ -2782,8 +3162,8 @@ If a field is missing, use null.`;
         for (const query of duplicateQueries) {
           const snapshot = await query.limit(1).get();
           if (!snapshot.empty) {
-            console.log('❌ DUPLICATE RECEIPT DETECTED');
-            console.log('   Matching criteria found in existing receipt');
+            logger.info('❌ DUPLICATE RECEIPT DETECTED');
+            logger.info('   Matching criteria found in existing receipt');
             duplicateFound = true;
             break;
           }
@@ -2799,7 +3179,7 @@ If a field is missing, use null.`;
           );
         }
         
-        console.log('✅ No duplicates found - receipt is unique');
+        logger.info('✅ No duplicates found - receipt is unique');
 
         // Persist this validated receipt so future scans can be checked reliably
         try {
@@ -2810,22 +3190,22 @@ If a field is missing, use null.`;
             orderTotal: orderTotal,
             createdAt: admin.firestore.FieldValue.serverTimestamp()
           });
-          console.log('💾 Saved receipt to receipts collection for future duplicate checks');
+          logger.info('💾 Saved receipt to receipts collection for future duplicate checks');
         } catch (saveError) {
-          console.log('❌ Error saving receipt record:', saveError.message);
+          logger.info('❌ Error saving receipt record:', saveError.message);
           // For safety, do NOT award points if we cannot persist the receipt
           return sendError(res, 500, "SERVER_SAVE_FAILED", "Server error while saving receipt - please try again with a clear photo");
         }
         
       } catch (duplicateError) {
-        console.log('❌ Error checking for duplicates:', duplicateError.message);
+        logger.info('❌ Error checking for duplicates:', duplicateError.message);
         // For safety, do NOT award points if we cannot verify duplicates
         return sendError(res, 500, "SERVER_DUPLICATE_CHECK_FAILED", "Server error while verifying receipt uniqueness - please try again with a clear photo");
       }
       
       res.json(data);
     } catch (err) {
-      console.error('❌ Error processing receipt:', err);
+      logger.error('❌ Error processing receipt:', err);
       return sendError(res, 500, "SERVER_ERROR", err.message || "Server error");
     }
   });
@@ -2835,16 +3215,16 @@ If a field is missing, use null.`;
   // It does NOT rely on the client to update points, improving integrity.
   app.post('/submit-receipt', requireFirebaseAuth, submitReceiptLimiter, upload.single('image'), async (req, res) => {
     try {
-      console.log('📥 Received receipt SUBMISSION request');
+      logger.info('📥 Received receipt SUBMISSION request');
 
       const uid = req.auth.uid;
 
       if (!req.file) {
-        console.log('❌ No image file received');
+        logger.info('❌ No image file received');
         return sendError(res, 400, "NO_IMAGE", "No image file provided");
       }
 
-      console.log('📁 Image file received:', req.file.originalname, 'Size:', req.file.size);
+      logger.info('📁 Image file received:', req.file.originalname, 'Size:', req.file.size);
 
       const imagePath = req.file.path;
       const imageData = await fsPromises.readFile(imagePath, { encoding: 'base64' });
@@ -2862,7 +3242,7 @@ If a field is missing, use null.`;
         try {
           deviceInfo = JSON.parse(fingerprintHeader);
         } catch (e) {
-          console.warn('⚠️ Failed to parse device fingerprint:', e);
+          logger.warn('⚠️ Failed to parse device fingerprint:', e);
         }
       }
       
@@ -2870,21 +3250,21 @@ If a field is missing, use null.`;
       if (deviceInfo) {
         const service = new SuspiciousBehaviorService(db);
         service.recordDeviceFingerprint(uid, deviceInfo, ipAddress).catch(err => {
-          console.error('❌ Error recording device fingerprint (non-blocking):', err);
+          logger.error('❌ Error recording device fingerprint (non-blocking):', err);
         });
       }
 
       // Check rate limit BEFORE making OpenAI API calls (cost savings)
       const rateLimitCheck = await checkReceiptScanRateLimit(uid, db);
       if (!rateLimitCheck.allowed) {
-        console.log(`🚫 Rate limit triggered for user ${uid}`);
+        logger.info(`🚫 Rate limit triggered for user ${uid}`);
         return sendError(res, 429, "RATE_LIMITED", "Too many failed scan attempts. Please wait a while and try again.");
       }
 
       // Enforce daily successful receipt scan cap BEFORE OpenAI calls (cost savings)
       const dailyLimitCheck = await checkDailyReceiptSuccessLimit(uid, db, userTimeZone);
       if (!dailyLimitCheck.allowed) {
-        console.log(`🚫 Daily receipt scan cap reached for user ${uid} (${dailyLimitCheck.count}/${dailyLimitCheck.limit}) day=${dailyLimitCheck.dayKey} tz=${dailyLimitCheck.timeZone}`);
+        logger.info(`🚫 Daily receipt scan cap reached for user ${uid} (${dailyLimitCheck.count}/${dailyLimitCheck.limit}) day=${dailyLimitCheck.dayKey} tz=${dailyLimitCheck.timeZone}`);
         // Log this as a non-lockout failure for observability (do NOT apply progressive lockout)
         logReceiptScanAttempt(uid, false, "DAILY_LIMIT_REACHED", db, ipAddress).catch(() => {});
         return sendError(
@@ -2974,7 +3354,7 @@ Respond ONLY as a JSON object with this exact shape:
 or {"error": "error message"}.
 If a field is missing, use null.`;
 
-      console.log('🤖 Sending request to OpenAI for FIRST validation (submit-receipt)...');
+      logger.info('🤖 Sending request to OpenAI for FIRST validation (submit-receipt)...');
       const response1 = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
         messages: [
@@ -2990,7 +3370,7 @@ If a field is missing, use null.`;
         temperature: 0.1
       });
 
-      console.log('🤖 Sending request to OpenAI for SECOND validation (submit-receipt)...');
+      logger.info('🤖 Sending request to OpenAI for SECOND validation (submit-receipt)...');
       const response2 = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
         messages: [
@@ -3007,7 +3387,7 @@ If a field is missing, use null.`;
       });
 
       // Clean up the uploaded file
-      fs.unlinkSync(imagePath);
+      await fsPromises.unlink(imagePath).catch(err => logger.error('Failed to delete file:', err));
 
       const extractJson = (text) => {
         const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -3137,7 +3517,7 @@ If a field is missing, use null.`;
         : false;
 
       // Debug logging for totals reconciliation
-      console.log('💰 Totals reconciliation check:', {
+      logger.info('💰 Totals reconciliation check:', {
         subtotal, tax, totalAmt, orderTotalAmt, tipAmount,
         baseTotalMatches, tipTotalMatches, totalMatchesOrderTotal, totalWithTipMatchesOrderTotal
       });
@@ -3255,7 +3635,7 @@ If a field is missing, use null.`;
           }
         }
       } catch (err) {
-        console.warn('⚠️ Failed to evaluate admin old-receipt test override (submit-receipt):', err.message || err);
+        logger.warn('⚠️ Failed to evaluate admin old-receipt test override (submit-receipt):', err.message || err);
       }
 
       const receiptDateThisYear = new Date(currentDate.getFullYear(), month - 1, day, h, m, 0, 0);
@@ -3269,11 +3649,11 @@ If a field is missing, use null.`;
         if (allowOldReceiptForAdmin) {
           receiptDate = receiptDatePrevYear;
           hoursDiff = hoursDiffPrevYear;
-          console.log('⚠️ Old-receipt test mode: treating future-date receipt as previous year (submit-receipt):', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
+          logger.info('⚠️ Old-receipt test mode: treating future-date receipt as previous year (submit-receipt):', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
         } else if (hoursDiffPrevYear >= 0 && hoursDiffPrevYear <= 48) {
           receiptDate = receiptDatePrevYear;
           hoursDiff = hoursDiffPrevYear;
-          console.log('🗓️ Year-boundary adjustment applied (submit-receipt):', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
+          logger.info('🗓️ Year-boundary adjustment applied (submit-receipt):', data.orderDate, data.orderTime, 'hoursDiff:', hoursDiff);
         } else {
           await logFailureAndCheckLockout(uid, "FUTURE_DATE", db, ipAddress);
           return sendError(res, 400, "FUTURE_DATE", "Invalid receipt date - receipt appears to be dated in the future");
@@ -3282,7 +3662,7 @@ If a field is missing, use null.`;
 
       const daysDiff = hoursDiff / 24;
       if (allowOldReceiptForAdmin) {
-        console.log('⚠️ Old-receipt test mode active (submit-receipt):', uid, 'daysDiff:', daysDiff);
+        logger.info('⚠️ Old-receipt test mode active (submit-receipt):', uid, 'daysDiff:', daysDiff);
       }
       if (hoursDiff > 48 && !allowOldReceiptForAdmin) {
         await logFailureAndCheckLockout(uid, "EXPIRED_48H", db, ipAddress);
@@ -3490,7 +3870,7 @@ If a field is missing, use null.`;
               });
             }
           } catch (detectionError) {
-            console.error('❌ Error flagging repeated duplicate receipts (non-blocking):', detectionError);
+            logger.error('❌ Error flagging repeated duplicate receipts (non-blocking):', detectionError);
           }
           
           return sendError(
@@ -3502,7 +3882,7 @@ If a field is missing, use null.`;
           );
         }
         if (e && e.code === "DAILY_RECEIPT_LIMIT_REACHED") {
-          console.log(`🚫 Daily receipt scan cap reached in transaction for user ${uid} day=${userLocalDayKey} tz=${userTimeZone}`);
+          logger.info(`🚫 Daily receipt scan cap reached in transaction for user ${uid} day=${userLocalDayKey} tz=${userTimeZone}`);
           logReceiptScanAttempt(uid, false, "DAILY_LIMIT_REACHED", db, ipAddress).catch(() => {});
           return sendError(
             res,
@@ -3515,7 +3895,7 @@ If a field is missing, use null.`;
         if (e && e.code === "USER_NOT_FOUND") {
           return sendError(res, 404, "USER_NOT_FOUND", "User not found");
         }
-        console.error('❌ submit-receipt transaction failed:', e);
+        logger.error('❌ submit-receipt transaction failed:', e);
         await logFailureAndCheckLockout(uid, "SERVER_AWARD_FAILED", db, ipAddress);
         return sendError(res, 500, "SERVER_AWARD_FAILED", "Server error while awarding points - please try again");
       }
@@ -3523,7 +3903,7 @@ If a field is missing, use null.`;
       // Check if user crossed 50-point threshold and award referral if eligible
       // Note: currentPoints and newPointsBalance are set inside the transaction
       if (currentPoints < 50 && newPointsBalance >= 50) {
-        console.log(`✅ User ${uid} crossed 50-point threshold via receipt scan (${currentPoints} → ${newPointsBalance}), checking referral...`);
+        logger.info(`✅ User ${uid} crossed 50-point threshold via receipt scan (${currentPoints} → ${newPointsBalance}), checking referral...`);
         try {
           const referralSnap = await db.collection('referrals')
             .where('referredUserId', '==', uid)
@@ -3538,14 +3918,14 @@ If a field is missing, use null.`;
             if (referralData.status === 'pending') {
               const awardResult = await awardReferralPoints(db, referralId, referralData.referrerUserId, uid);
               if (awardResult.success) {
-                console.log(`🎉 Referral ${referralId} awarded via receipt scan! Referrer: +${awardResult.referrerNewPoints !== null ? 50 : 0}, Referred: +50`);
+                logger.info(`🎉 Referral ${referralId} awarded via receipt scan! Referrer: +${awardResult.referrerNewPoints !== null ? 50 : 0}, Referred: +50`);
               } else {
-                console.warn(`⚠️ Failed to award referral via receipt scan: ${awardResult.error}`);
+                logger.warn(`⚠️ Failed to award referral via receipt scan: ${awardResult.error}`);
               }
             }
           }
         } catch (referralError) {
-          console.error('❌ Error checking referral after receipt scan (non-blocking):', referralError);
+          logger.error('❌ Error checking referral after receipt scan (non-blocking):', referralError);
           // Don't fail the receipt submission if referral check fails
         }
       }
@@ -3589,7 +3969,7 @@ If a field is missing, use null.`;
           });
         }
       } catch (detectionError) {
-        console.error('❌ Error in receipt pattern detection (non-blocking):', detectionError);
+        logger.error('❌ Error in receipt pattern detection (non-blocking):', detectionError);
       }
 
       return res.json({
@@ -3606,13 +3986,13 @@ If a field is missing, use null.`;
         newLifetimePoints
       });
     } catch (err) {
-      console.error('❌ Error processing submit-receipt:', err);
+      logger.error('❌ Error processing submit-receipt:', err);
       // Try to log failure if we have a user ID and db is available
       if (uid && typeof db !== 'undefined') {
         try {
           await logFailureAndCheckLockout(uid, "SERVER_ERROR", db, ipAddress);
         } catch (logErr) {
-          console.error('Failed to log receipt scan attempt:', logErr);
+          logger.error('Failed to log receipt scan attempt:', logErr);
         }
       }
       return sendError(res, 500, "SERVER_ERROR", err.message || "Server error");
@@ -3650,7 +4030,7 @@ If a field is missing, use null.`;
         const hashDoc = await hashRef.get();
         
         if (hashDoc.exists && hashDoc.data().hasReceivedWelcomePoints === true) {
-          console.log(`🚫 Welcome points blocked for ${uid} - phone hash previously claimed`);
+          logger.info(`🚫 Welcome points blocked for ${uid} - phone hash previously claimed`);
           // Update the user document to mark as claimed (for UI consistency)
           await userRef.update({ hasReceivedWelcomePoints: true, isNewUser: false });
           return res.status(200).json({ 
@@ -3714,7 +4094,7 @@ If a field is missing, use null.`;
           lastAccountCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
           accountCreationCount: admin.firestore.FieldValue.increment(1)
         }, { merge: true });
-        console.log(`✅ Welcome points granted and hash recorded for ${uid}`);
+        logger.info(`✅ Welcome points granted and hash recorded for ${uid}`);
       }
 
       return res.json({
@@ -3726,7 +4106,7 @@ If a field is missing, use null.`;
       });
     } catch (err) {
       if (err && err.code === "USER_NOT_FOUND") return sendError(res, 404, "USER_NOT_FOUND", "User not found");
-      console.error('❌ Error in /welcome/claim:', err);
+      logger.error('❌ Error in /welcome/claim:', err);
       return sendError(res, 500, "SERVER_ERROR", "Failed to claim welcome points");
     }
   });
@@ -3747,7 +4127,7 @@ If a field is missing, use null.`;
 
   app.post('/chat', requireFirebaseAuth, chatPerUserLimiter, chatPerIpLimiter, validate(chatSchema), async (req, res) => {
     try {
-      console.log('💬 Received chat request');
+      logger.info('💬 Received chat request');
       
       const { message, conversation_history, userFirstName, userPreferences, userPoints } = req.body;
       // Validation middleware ensures message exists and meets length requirements
@@ -3767,14 +4147,14 @@ If a field is missing, use null.`;
         });
       }
 
-      console.log('📝 User message (truncated):', String(message).substring(0, 200));
-      console.log('👤 User first name:', userFirstName || 'Not provided');
-      console.log('⚙️ User preferences:', userPreferences || 'Not provided');
-      console.log('🏅 User points:', typeof userPoints === 'number' ? userPoints : 'Not provided');
+      logger.info('📝 User message (truncated):', String(message).substring(0, 200));
+      logger.info('👤 User first name:', userFirstName || 'Not provided');
+      logger.info('⚙️ User preferences:', userPreferences || 'Not provided');
+      logger.info('🏅 User points:', typeof userPoints === 'number' ? userPoints : 'Not provided');
       
       // Debug mode: Return full prompt information when user sends "9327"
       if (process.env.ENABLE_CHAT_DEBUG === 'true' && message === "9327") {
-        console.log('🔍 Debug mode activated - returning full prompt information');
+        logger.info('🔍 Debug mode activated - returning full prompt information');
         
         // Build user preferences context for the debug output
         let userPreferencesContext = '';
@@ -4281,8 +4661,8 @@ LOYALTY/REWARDS CONTEXT:
       // Add current user message
       messages.push({ role: 'user', content: message });
 
-      console.log('🤖 Sending request to OpenAI...');
-      console.log('📋 System prompt preview:', systemPrompt.substring(0, 200) + '...');
+      logger.info('🤖 Sending request to OpenAI...');
+      logger.info('📋 System prompt preview:', systemPrompt.substring(0, 200) + '...');
       
       const response = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
@@ -4291,14 +4671,14 @@ LOYALTY/REWARDS CONTEXT:
         temperature: 0.7
       });
 
-      console.log('✅ OpenAI response received');
+      logger.info('✅ OpenAI response received');
       
       const botResponse = response.choices[0].message.content;
-      console.log('🤖 Bot response:', botResponse);
+      logger.info('🤖 Bot response:', botResponse);
       
       res.json({ response: botResponse });
     } catch (err) {
-      console.error('❌ Error processing chat:', err);
+      logger.error('❌ Error processing chat:', err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -4306,7 +4686,7 @@ LOYALTY/REWARDS CONTEXT:
   // Fetch complete menu from Firestore endpoint
   app.get('/firestore-menu', requireAdminAuth, async (req, res) => {
     try {
-      console.log('🔍 Fetching complete menu from Firestore...');
+      logger.info('🔍 Fetching complete menu from Firestore...');
       
       if (!admin.apps.length) {
         return res.status(500).json({ 
@@ -4322,7 +4702,7 @@ LOYALTY/REWARDS CONTEXT:
       
       for (const categoryDoc of categoriesSnapshot.docs) {
         const categoryId = categoryDoc.id;
-        console.log(`🔍 Processing category: ${categoryId}`);
+        logger.info(`🔍 Processing category: ${categoryId}`);
         
         // Get all items in this category
         const itemsSnapshot = await db.collection('menu').doc(categoryId).collection('items').get();
@@ -4342,14 +4722,14 @@ LOYALTY/REWARDS CONTEXT:
               category: categoryId
             };
             allMenuItems.push(menuItem);
-            console.log(`✅ Added item: ${menuItem.id} (${categoryId})`);
+            logger.info(`✅ Added item: ${menuItem.id} (${categoryId})`);
           } catch (error) {
-            console.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
+            logger.error(`❌ Error processing item ${itemDoc.id} in category ${categoryId}:`, error);
           }
         }
       }
       
-      console.log(`✅ Fetched ${allMenuItems.length} menu items from Firestore`);
+      logger.info(`✅ Fetched ${allMenuItems.length} menu items from Firestore`);
       
       res.json({
         success: true,
@@ -4359,7 +4739,7 @@ LOYALTY/REWARDS CONTEXT:
       });
       
     } catch (error) {
-      console.error('❌ Error fetching menu from Firestore:', error);
+      logger.error('❌ Error fetching menu from Firestore:', error);
       res.status(500).json({ 
         error: 'Failed to fetch menu from Firestore',
         details: error.message 
@@ -4382,10 +4762,10 @@ LOYALTY/REWARDS CONTEXT:
   });
 
   // Dumpling Hero Post Generation endpoint
-  app.post('/generate-dumpling-hero-post', requireFirebaseAuth, heroPerUserLimiter, heroPerIpLimiter, async (req, res) => {
+  app.post('/generate-dumpling-hero-post', requireFirebaseAuth, validate(dumplingHeroPostSchema), heroPerUserLimiter, heroPerIpLimiter, async (req, res) => {
     try {
-      console.log('🤖 Received Dumpling Hero post generation request');
-      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      logger.info('🤖 Received Dumpling Hero post generation request');
+      logger.info('📥 Request body:', JSON.stringify(req.body, null, 2));
       
       const { prompt, menuItems } = req.body;
 
@@ -4510,7 +4890,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
         userMessage = instruction;
       }
 
-      console.log('🤖 Sending request to OpenAI for Dumpling Hero post...');
+      logger.info('🤖 Sending request to OpenAI for Dumpling Hero post...');
       
       const response = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
@@ -4522,10 +4902,10 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
         temperature: 0.8
       });
 
-      console.log('✅ Received Dumpling Hero post from OpenAI');
+      logger.info('✅ Received Dumpling Hero post from OpenAI');
       
       const generatedContent = response.choices[0].message.content;
-      console.log('📝 Generated content:', generatedContent);
+      logger.info('📝 Generated content:', generatedContent);
       
       // Try to parse the JSON response
       let parsedResponse;
@@ -4543,7 +4923,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
           };
         }
       } catch (parseError) {
-        console.log('⚠️ Could not parse JSON response, using raw text');
+        logger.info('⚠️ Could not parse JSON response, using raw text');
         parsedResponse = {
           postText: generatedContent,
           suggestedMenuItem: null,
@@ -4557,7 +4937,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       });
       
     } catch (error) {
-      console.error('❌ Error generating Dumpling Hero post:', error);
+      logger.error('❌ Error generating Dumpling Hero post:', error);
       res.status(500).json({ 
         error: 'Failed to generate Dumpling Hero post',
         details: error.message 
@@ -4566,10 +4946,10 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
   });
 
   // Dumpling Hero Comment Generation endpoint
-  app.post('/generate-dumpling-hero-comment', requireFirebaseAuth, heroPerUserLimiter, heroPerIpLimiter, async (req, res) => {
+  app.post('/generate-dumpling-hero-comment', requireFirebaseAuth, validate(dumplingHeroCommentSchema), heroPerUserLimiter, heroPerIpLimiter, async (req, res) => {
     try {
-      console.log('🤖 Received Dumpling Hero comment generation request');
-      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      logger.info('🤖 Received Dumpling Hero comment generation request');
+      logger.info('📥 Request body:', JSON.stringify(req.body, null, 2));
       
       const { prompt, replyingTo, postContext } = req.body;
 
@@ -4590,23 +4970,23 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       }
       
       // Debug logging for post context
-      console.log('🔍 Post Context Analysis:');
+      logger.info('🔍 Post Context Analysis:');
       if (postContext && Object.keys(postContext).length > 0) {
-        console.log('✅ Post context received:');
-        console.log('   - Content:', postContext.content);
-        console.log('   - Author:', postContext.authorName);
-        console.log('   - Type:', postContext.postType);
-        console.log('   - Images:', postContext.imageURLs?.length || 0);
-        console.log('   - Has Menu Item:', !!postContext.attachedMenuItem);
-        console.log('   - Has Poll:', !!postContext.poll);
+        logger.info('✅ Post context received:');
+        logger.info('   - Content:', postContext.content);
+        logger.info('   - Author:', postContext.authorName);
+        logger.info('   - Type:', postContext.postType);
+        logger.info('   - Images:', postContext.imageURLs?.length || 0);
+        logger.info('   - Has Menu Item:', !!postContext.attachedMenuItem);
+        logger.info('   - Has Poll:', !!postContext.poll);
         if (postContext.attachedMenuItem) {
-          console.log('   - Menu Item:', postContext.attachedMenuItem.description);
+          logger.info('   - Menu Item:', postContext.attachedMenuItem.description);
         }
         if (postContext.poll) {
-          console.log('   - Poll Question:', postContext.poll.question);
+          logger.info('   - Poll Question:', postContext.poll.question);
         }
       } else {
-        console.log('❌ No post context received or empty context');
+        logger.info('❌ No post context received or empty context');
       }
       
       if (!process.env.OPENAI_API_KEY) {
@@ -4770,11 +5150,11 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
         userMessage += instruction;
       }
 
-      console.log('🤖 Sending request to OpenAI for Dumpling Hero comment...');
-      console.log('📤 Final user message being sent to OpenAI:');
-      console.log('---START OF MESSAGE---');
-      console.log(userMessage);
-      console.log('---END OF MESSAGE---');
+      logger.info('🤖 Sending request to OpenAI for Dumpling Hero comment...');
+      logger.info('📤 Final user message being sent to OpenAI:');
+      logger.info('---START OF MESSAGE---');
+      logger.info(userMessage);
+      logger.info('---END OF MESSAGE---');
       
       const response = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
@@ -4786,10 +5166,10 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
         temperature: 0.8
       });
 
-      console.log('✅ Received Dumpling Hero comment from OpenAI');
+      logger.info('✅ Received Dumpling Hero comment from OpenAI');
       
       const generatedContent = response.choices[0].message.content;
-      console.log('📝 Generated content:', generatedContent);
+      logger.info('📝 Generated content:', generatedContent);
       
       // Try to parse the JSON response
       let parsedResponse;
@@ -4805,7 +5185,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
           };
         }
       } catch (parseError) {
-        console.log('⚠️ Could not parse JSON response, using raw text');
+        logger.info('⚠️ Could not parse JSON response, using raw text');
         parsedResponse = {
           commentText: generatedContent
         };
@@ -4817,7 +5197,7 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
       });
       
     } catch (error) {
-      console.error('❌ Error generating Dumpling Hero comment:', error);
+      logger.error('❌ Error generating Dumpling Hero comment:', error);
       res.status(500).json({ 
         error: 'Failed to generate Dumpling Hero comment',
         details: error.message 
@@ -4839,10 +5219,10 @@ If a specific prompt is provided, use it as inspiration but maintain the Dumplin
     errorCode: 'HERO_RATE_LIMITED'
   });
 
-  app.post('/preview-dumpling-hero-comment', requireFirebaseAuth, heroPreviewPerUserLimiter, heroPreviewPerIpLimiter, async (req, res) => {
+  app.post('/preview-dumpling-hero-comment', requireFirebaseAuth, validate(dumplingHeroCommentPreviewSchema), heroPreviewPerUserLimiter, heroPreviewPerIpLimiter, async (req, res) => {
     try {
-      console.log('🤖 Received Dumpling Hero comment preview request');
-      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      logger.info('🤖 Received Dumpling Hero comment preview request');
+      logger.info('📥 Request body:', JSON.stringify(req.body, null, 2));
       
       const { prompt, postContext } = req.body;
 
@@ -4942,11 +5322,11 @@ IMPORTANT:
       
       // Add post context if available
       if (postContext && Object.keys(postContext).length > 0) {
-        console.log('🔍 Post Context Analysis for Preview Endpoint:');
-        console.log('✅ Post context received:');
-        console.log('   - Content:', postContext.content);
-        console.log('   - Author:', postContext.authorName);
-        console.log('   - Type:', postContext.postType);
+        logger.info('🔍 Post Context Analysis for Preview Endpoint:');
+        logger.info('✅ Post context received:');
+        logger.info('   - Content:', postContext.content);
+        logger.info('   - Author:', postContext.authorName);
+        logger.info('   - Type:', postContext.postType);
         
         userMessage += "POST CONTEXT:\n";
         userMessage += `- Content: "${postContext.content}"\n`;
@@ -5031,9 +5411,9 @@ IMPORTANT:
         }
       }
 
-      console.log('🤖 Sending request to OpenAI for Dumpling Hero comment preview...');
-      console.log('📝 User message being sent to ChatGPT:');
-      console.log(userMessage);
+      logger.info('🤖 Sending request to OpenAI for Dumpling Hero comment preview...');
+      logger.info('📝 User message being sent to ChatGPT:');
+      logger.info(userMessage);
       
       const response = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
@@ -5045,10 +5425,10 @@ IMPORTANT:
         temperature: 0.8
       });
 
-      console.log('✅ Received Dumpling Hero comment preview from OpenAI');
+      logger.info('✅ Received Dumpling Hero comment preview from OpenAI');
       
       const generatedContent = response.choices[0].message.content;
-      console.log('📝 Generated content:', generatedContent);
+      logger.info('📝 Generated content:', generatedContent);
       
       // Try to parse the JSON response
       let parsedResponse;
@@ -5064,7 +5444,7 @@ IMPORTANT:
           };
         }
       } catch (parseError) {
-        console.log('⚠️ Could not parse JSON response, using raw text');
+        logger.info('⚠️ Could not parse JSON response, using raw text');
         parsedResponse = {
           commentText: generatedContent
         };
@@ -5076,7 +5456,7 @@ IMPORTANT:
       });
       
     } catch (error) {
-      console.error('❌ Error generating Dumpling Hero comment preview:', error);
+      logger.error('❌ Error generating Dumpling Hero comment preview:', error);
       res.status(500).json({ 
         error: 'Failed to generate Dumpling Hero comment preview',
         details: error.message 
@@ -5085,10 +5465,10 @@ IMPORTANT:
   });
 
   // Simple Dumpling Hero Comment Generation endpoint (for external use)
-  app.post('/generate-dumpling-hero-comment-simple', requireFirebaseAuth, heroPerUserLimiter, heroPerIpLimiter, async (req, res) => {
+  app.post('/generate-dumpling-hero-comment-simple', requireFirebaseAuth, validate(dumplingHeroCommentPreviewSchema), heroPerUserLimiter, heroPerIpLimiter, async (req, res) => {
     try {
-      console.log('🤖 Received simple Dumpling Hero comment generation request');
-      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      logger.info('🤖 Received simple Dumpling Hero comment generation request');
+      logger.info('📥 Request body:', JSON.stringify(req.body, null, 2));
       
       const { prompt, postContext } = req.body;
 
@@ -5187,11 +5567,11 @@ IMPORTANT:
       
       // Add post context if available
       if (postContext && Object.keys(postContext).length > 0) {
-        console.log('🔍 Post Context Analysis for Simple Endpoint:');
-        console.log('✅ Post context received:');
-        console.log('   - Content:', postContext.content);
-        console.log('   - Author:', postContext.authorName);
-        console.log('   - Type:', postContext.postType);
+        logger.info('🔍 Post Context Analysis for Simple Endpoint:');
+        logger.info('✅ Post context received:');
+        logger.info('   - Content:', postContext.content);
+        logger.info('   - Author:', postContext.authorName);
+        logger.info('   - Type:', postContext.postType);
         
         userMessage += "POST CONTEXT:\n";
         userMessage += `- Content: "${postContext.content}"\n`;
@@ -5276,9 +5656,9 @@ IMPORTANT:
         }
       }
 
-      console.log('🤖 Sending request to OpenAI for simple Dumpling Hero comment...');
-      console.log('📝 User message being sent to ChatGPT:');
-      console.log(userMessage);
+      logger.info('🤖 Sending request to OpenAI for simple Dumpling Hero comment...');
+      logger.info('📝 User message being sent to ChatGPT:');
+      logger.info(userMessage);
       
       const response = await openaiWithTimeout(openai, {
         model: "gpt-4o-mini",
@@ -5290,10 +5670,10 @@ IMPORTANT:
         temperature: 0.8
       });
 
-      console.log('✅ Received simple Dumpling Hero comment from OpenAI');
+      logger.info('✅ Received simple Dumpling Hero comment from OpenAI');
       
       const generatedContent = response.choices[0].message.content;
-      console.log('📝 Generated content:', generatedContent);
+      logger.info('📝 Generated content:', generatedContent);
       
       // Try to parse the JSON response
       let parsedResponse;
@@ -5309,7 +5689,7 @@ IMPORTANT:
           };
         }
       } catch (parseError) {
-        console.log('⚠️ Could not parse JSON response, using raw text');
+        logger.info('⚠️ Could not parse JSON response, using raw text');
         parsedResponse = {
           commentText: generatedContent
         };
@@ -5318,7 +5698,7 @@ IMPORTANT:
       res.json(parsedResponse);
       
     } catch (error) {
-      console.error('❌ Error generating simple Dumpling Hero comment:', error);
+      logger.error('❌ Error generating simple Dumpling Hero comment:', error);
       res.status(500).json({ 
         error: 'Failed to generate Dumpling Hero comment',
         details: error.message 
@@ -5338,7 +5718,7 @@ IMPORTANT:
         return res.status(400).json({ error: 'Invalid pointsRequired parameter' });
       }
       
-      console.log(`🎁 Fetching eligible items for ${pointsRequired} point tier`);
+      logger.info(`🎁 Fetching eligible items for ${pointsRequired} point tier`);
       
       const db = admin.firestore();
       
@@ -5349,7 +5729,7 @@ IMPORTANT:
         .get();
       
       if (snapshot.empty) {
-        console.log(`📭 No configured items for ${pointsRequired} point tier`);
+        logger.info(`📭 No configured items for ${pointsRequired} point tier`);
         return res.json({
           pointsRequired,
           tierName: null,
@@ -5360,7 +5740,7 @@ IMPORTANT:
       const tierDoc = snapshot.docs[0];
       const tierData = tierDoc.data();
       
-      console.log(`✅ Found ${(tierData.eligibleItems || []).length} eligible items for tier`);
+      logger.info(`✅ Found ${(tierData.eligibleItems || []).length} eligible items for tier`);
       
       res.json({
         pointsRequired: tierData.pointsRequired,
@@ -5369,7 +5749,7 @@ IMPORTANT:
       });
       
     } catch (error) {
-      console.error('❌ Error fetching reward tier items:', error);
+      logger.error('❌ Error fetching reward tier items:', error);
       res.status(500).json({ 
         error: 'Failed to fetch reward tier items',
         details: error.message 
@@ -5385,13 +5765,13 @@ IMPORTANT:
         return res.status(400).json({ error: 'tierId is required' });
       }
       
-      console.log(`🎁 Fetching eligible items for tier ${tierId}`);
+      logger.info(`🎁 Fetching eligible items for tier ${tierId}`);
       
       const db = admin.firestore();
       const tierDoc = await db.collection('rewardTierItems').doc(tierId).get();
       
       if (!tierDoc.exists) {
-        console.log(`📭 No configured items for tier ${tierId}`);
+        logger.info(`📭 No configured items for tier ${tierId}`);
         return res.json({
           tierId,
           pointsRequired: null,
@@ -5401,7 +5781,7 @@ IMPORTANT:
       }
       
       const tierData = tierDoc.data();
-      console.log(`✅ Found ${(tierData.eligibleItems || []).length} eligible items for tier`);
+      logger.info(`✅ Found ${(tierData.eligibleItems || []).length} eligible items for tier`);
       
       res.json({
         tierId,
@@ -5411,7 +5791,7 @@ IMPORTANT:
       });
       
     } catch (error) {
-      console.error('❌ Error fetching reward tier items by ID:', error);
+      logger.error('❌ Error fetching reward tier items by ID:', error);
       res.status(500).json({ 
         error: 'Failed to fetch reward tier items',
         details: error.message 
@@ -5423,8 +5803,8 @@ IMPORTANT:
   app.post('/redeem-reward', requireFirebaseAuth, validate(redeemRewardSchema), async (req, res) => {
     let pointsRequiredNumber = null;
     try {
-      console.log('🎁 Received reward redemption request');
-      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      logger.info('🎁 Received reward redemption request');
+      logger.info('📥 Request body:', JSON.stringify(req.body, null, 2));
       
       const { 
         userId: requestedUserId, 
@@ -5452,7 +5832,7 @@ IMPORTANT:
       
       pointsRequiredNumber = Number(pointsRequired);
       if (!rewardTitle || !pointsRequiredNumber) {
-        console.log('❌ Missing required fields for reward redemption');
+        logger.info('❌ Missing required fields for reward redemption');
         return res.status(400).json({ 
           error: 'Missing required fields: rewardTitle, pointsRequired',
           received: { rewardTitle: !!rewardTitle, pointsRequired: !!pointsRequiredNumber }
@@ -5494,7 +5874,7 @@ IMPORTANT:
           }
         }
         
-        console.log(`👤 User ${userId} has ${currentPoints} points, needs ${pointsRequiredNumber} for reward`);
+        logger.info(`👤 User ${userId} has ${currentPoints} points, needs ${pointsRequiredNumber} for reward`);
         
         if (currentPoints < pointsRequiredNumber) {
           const error = new Error('INSUFFICIENT_POINTS');
@@ -5504,7 +5884,7 @@ IMPORTANT:
         }
         
         const redemptionCode = Math.floor(10000000 + Math.random() * 90000000).toString();
-        console.log(`🔢 Generated redemption code: ${redemptionCode}`);
+        logger.info(`🔢 Generated redemption code: ${redemptionCode}`);
         
         const newPointsBalance = currentPoints - pointsRequiredNumber;
         
@@ -5626,15 +6006,15 @@ IMPORTANT:
             message: 'Reward redeemed successfully! Show the code to your cashier.'
           };
       
-      console.log(`✅ Reward redeemed successfully!`);
-      console.log(`🔢 Redemption code: ${responseData.redemptionCode}`);
-      console.log(`💰 Points deducted: ${responseData.pointsDeducted}`);
-      console.log(`💳 New balance: ${responseData.newPointsBalance}`);
+      logger.info(`✅ Reward redeemed successfully!`);
+      logger.info(`🔢 Redemption code: ${responseData.redemptionCode}`);
+      logger.info(`💰 Points deducted: ${responseData.pointsDeducted}`);
+      logger.info(`💳 New balance: ${responseData.newPointsBalance}`);
       
       res.json(responseData);
       
     } catch (error) {
-      console.error('❌ Error redeeming reward:', error);
+      logger.error('❌ Error redeeming reward:', error);
       if (error.code === 'INSUFFICIENT_POINTS') {
         return res.status(400).json({
           error: 'Insufficient points for redemption',
@@ -5687,7 +6067,7 @@ IMPORTANT:
 
       return { uid, userData };
     } catch (err) {
-      console.error('❌ Admin auth check failed:', err);
+      logger.error('❌ Admin auth check failed:', err);
       res.status(401).json({ error: 'Failed to verify admin credentials' });
       return null;
     }
@@ -5721,7 +6101,7 @@ IMPORTANT:
 
       return { uid, userData };
     } catch (err) {
-      console.error('❌ Staff auth check failed:', err);
+      logger.error('❌ Staff auth check failed:', err);
       res.status(401).json({ error: 'Failed to verify staff credentials' });
       return null;
     }
@@ -5740,7 +6120,7 @@ IMPORTANT:
       const decoded = await admin.auth().verifyIdToken(token);
       return { uid: decoded.uid, decoded };
     } catch (err) {
-      console.error('❌ User auth check failed:', err);
+      logger.error('❌ User auth check failed:', err);
       res.status(401).json({ error: 'Failed to verify credentials' });
       return null;
     }
@@ -5795,7 +6175,7 @@ IMPORTANT:
 
       return res.json({ ok: true, hasFcmToken: true });
     } catch (error) {
-      console.error('❌ Error in /me/fcmToken:', error);
+      logger.error('❌ Error in /me/fcmToken:', error);
       return res.status(500).json({ error: 'Failed to store FCM token' });
     }
   });
@@ -5845,7 +6225,7 @@ IMPORTANT:
         }
       });
     } catch (error) {
-      console.error('❌ Error in /admin/debug/firebase:', error);
+      logger.error('❌ Error in /admin/debug/firebase:', error);
       return res.status(500).json({ error: 'Failed to fetch Firebase debug info' });
     }
   });
@@ -5916,7 +6296,7 @@ IMPORTANT:
         samples
       });
     } catch (error) {
-      console.error('❌ Error in /admin/debug/pushTargets:', error);
+      logger.error('❌ Error in /admin/debug/pushTargets:', error);
       return res.status(500).json({ error: 'Failed to fetch push target debug info' });
     }
   });
@@ -6036,7 +6416,7 @@ IMPORTANT:
         hasMore: !reachedEnd
       });
     } catch (error) {
-      console.error('❌ Error listing admin users:', error);
+      logger.error('❌ Error listing admin users:', error);
       res.status(500).json({ error: 'Failed to list users' });
     }
   });
@@ -6054,16 +6434,16 @@ IMPORTANT:
    */
   app.post('/admin/users/update', validate(adminUserUpdateSchema), async (req, res) => {
     try {
-      console.log('📥 Received admin user update request');
-      console.log('📦 Request body:', JSON.stringify(req.body, null, 2));
+      logger.info('📥 Received admin user update request');
+      logger.info('📦 Request body:', JSON.stringify(req.body, null, 2));
       
       const adminContext = await requireAdmin(req, res);
       if (!adminContext) {
-        console.log('❌ Admin authentication failed');
+        logger.info('❌ Admin authentication failed');
         return; // requireAdmin already sent the response
       }
 
-      console.log('✅ Admin authenticated:', adminContext.uid);
+      logger.info('✅ Admin authenticated:', adminContext.uid);
 
       const {
         userId,
@@ -6076,14 +6456,14 @@ IMPORTANT:
 
       const pointsInt = Number(points);
       if (!Number.isInteger(pointsInt) || pointsInt < 0) {
-        console.log('❌ Invalid points value:', points);
+        logger.info('❌ Invalid points value:', points);
         return res.status(400).json({ 
           errorCode: 'INVALID_REQUEST',
           error: 'points must be a non-negative integer' 
         });
       }
 
-      console.log(`🔄 Updating user ${userId}: points=${pointsInt}, isAdmin=${isAdminFlag}, isVerified=${isVerifiedFlag}`);
+      logger.info(`🔄 Updating user ${userId}: points=${pointsInt}, isAdmin=${isAdminFlag}, isVerified=${isVerifiedFlag}`);
 
       const db = admin.firestore();
       const result = await db.runTransaction(async (transaction) => {
@@ -6112,7 +6492,7 @@ IMPORTANT:
           phone: typeof phone === 'string' ? phone : (userData.phone || '')
         };
 
-        console.log('📝 Update data:', JSON.stringify(updateData, null, 2));
+        logger.info('📝 Update data:', JSON.stringify(updateData, null, 2));
 
         transaction.update(userRef, updateData);
 
@@ -6162,11 +6542,11 @@ IMPORTANT:
         };
       });
 
-      console.log('✅ User update successful:', JSON.stringify(result, null, 2));
+      logger.info('✅ User update successful:', JSON.stringify(result, null, 2));
       return res.json({ success: true, ...result });
     } catch (error) {
-      console.error('❌ Error updating admin user:', error);
-      console.error('❌ Error stack:', error.stack);
+      logger.error('❌ Error updating admin user:', error);
+      logger.error('❌ Error stack:', error.stack);
       
       if (error.code === 'USER_NOT_FOUND') {
         return res.status(404).json({ 
@@ -6237,7 +6617,7 @@ IMPORTANT:
         receiptScanLockoutCount: admin.firestore.FieldValue.delete()
       });
 
-      console.log(`✅ Admin ${adminContext.uid} cleared lockout for user ${userId}`);
+      logger.info(`✅ Admin ${adminContext.uid} cleared lockout for user ${userId}`);
 
       return res.json({
         success: true,
@@ -6246,7 +6626,7 @@ IMPORTANT:
           : `No lockout found for user ${userId} (already clear)`
       });
     } catch (error) {
-      console.error('❌ Error clearing lockout:', error);
+      logger.error('❌ Error clearing lockout:', error);
       return res.status(500).json({
         errorCode: 'INTERNAL_ERROR',
         error: `Failed to clear lockout: ${error.message || 'Unknown error'}`
@@ -6273,7 +6653,7 @@ IMPORTANT:
       const db = admin.firestore();
       const auth = admin.auth();
       
-      console.log('🧹 Starting orphaned accounts cleanup...');
+      logger.info('🧹 Starting orphaned accounts cleanup...');
       
       let checkedCount = 0;
       let deletedCount = 0;
@@ -6309,10 +6689,10 @@ IMPORTANT:
             // If getUser fails with user-not-found, it's an orphaned document
             if (error.code === 'auth/user-not-found') {
               orphanedUIDs.push(uid);
-              console.log(`🔍 Found orphaned account: ${uid}`);
+              logger.info(`🔍 Found orphaned account: ${uid}`);
             } else {
               // Other errors (permissions, etc.) - log but don't treat as orphaned
-              console.warn(`⚠️ Error checking user ${uid}: ${error.code}`);
+              logger.warn(`⚠️ Error checking user ${uid}: ${error.code}`);
             }
           }
         }
@@ -6338,13 +6718,13 @@ IMPORTANT:
         try {
           await batch.commit();
           deletedCount += batchUIDs.length;
-          console.log(`✅ Deleted batch of ${batchUIDs.length} orphaned accounts`);
+          logger.info(`✅ Deleted batch of ${batchUIDs.length} orphaned accounts`);
         } catch (error) {
-          console.error(`❌ Error deleting batch: ${error.message}`);
+          logger.error(`❌ Error deleting batch: ${error.message}`);
         }
       }
       
-      console.log(`✅ Cleanup complete: Deleted ${deletedCount} orphaned accounts out of ${checkedCount} checked`);
+      logger.info(`✅ Cleanup complete: Deleted ${deletedCount} orphaned accounts out of ${checkedCount} checked`);
       
       return res.json({
         deletedCount,
@@ -6352,7 +6732,7 @@ IMPORTANT:
         message: `Cleaned up ${deletedCount} orphaned account(s) out of ${checkedCount} checked`
       });
     } catch (error) {
-      console.error('❌ Error in /admin/users/cleanup-orphans:', error);
+      logger.error('❌ Error in /admin/users/cleanup-orphans:', error);
       res.status(500).json({ error: 'Failed to cleanup orphaned accounts' });
     }
   });
@@ -6383,7 +6763,7 @@ IMPORTANT:
 
       const decoded = await admin.auth().verifyIdToken(token);
       const uid = decoded.uid;
-      console.log(`🗑️ Starting banned account archive for user: ${uid}`);
+      logger.info(`🗑️ Starting banned account archive for user: ${uid}`);
 
       const db = admin.firestore();
 
@@ -6469,7 +6849,7 @@ IMPORTANT:
         bannedBy: banInfo?.bannedBy || null
       };
 
-      console.log(`📦 Creating archive document: ${historyId}`);
+      logger.info(`📦 Creating archive document: ${historyId}`);
       await db.collection('bannedAccountHistory').doc(historyId).set(archiveData);
 
       // Anonymize data (similar to AccountDeletionService)
@@ -6510,7 +6890,7 @@ IMPORTANT:
       // Commit anonymization batch
       if (batchCount > 0) {
         await batch.commit();
-        console.log(`✅ Anonymized ${batchCount} documents`);
+        logger.info(`✅ Anonymized ${batchCount} documents`);
       }
 
       // Delete points transactions
@@ -6521,7 +6901,7 @@ IMPORTANT:
           deleteBatch.delete(doc.ref);
         }
         await deleteBatch.commit();
-        console.log(`✅ Deleted ${Math.min(pointsSnap.size, BATCH_LIMIT)} points transactions`);
+        logger.info(`✅ Deleted ${Math.min(pointsSnap.size, BATCH_LIMIT)} points transactions`);
       }
 
       // Delete referrals (both as referrer and referred)
@@ -6539,7 +6919,7 @@ IMPORTANT:
         }
         if (refCount > 0) {
           await refBatch.commit();
-          console.log(`✅ Deleted ${refCount} referrals`);
+          logger.info(`✅ Deleted ${refCount} referrals`);
         }
       }
 
@@ -6551,7 +6931,7 @@ IMPORTANT:
           notifBatch.delete(doc.ref);
         }
         await notifBatch.commit();
-        console.log(`✅ Deleted ${Math.min(notifSnap.size, BATCH_LIMIT)} notifications`);
+        logger.info(`✅ Deleted ${Math.min(notifSnap.size, BATCH_LIMIT)} notifications`);
       }
 
       // Delete user subcollections (clientState, activity)
@@ -6567,7 +6947,7 @@ IMPORTANT:
           subBatch.delete(doc.ref);
         }
         await subBatch.commit();
-        console.log(`✅ Deleted user subcollections`);
+        logger.info(`✅ Deleted user subcollections`);
       }
 
       // Delete userRiskScore if exists
@@ -6575,9 +6955,9 @@ IMPORTANT:
 
       // Delete the user document
       await db.collection('users').doc(uid).delete();
-      console.log(`✅ Deleted user document: ${uid}`);
+      logger.info(`✅ Deleted user document: ${uid}`);
 
-      console.log(`✅ Banned account archive complete for user: ${uid}`);
+      logger.info(`✅ Banned account archive complete for user: ${uid}`);
       return res.json({ 
         success: true, 
         historyId,
@@ -6585,7 +6965,7 @@ IMPORTANT:
       });
 
     } catch (error) {
-      console.error('❌ Error in /admin/banned-account-archive:', error);
+      logger.error('❌ Error in /admin/banned-account-archive:', error);
       res.status(500).json({ error: 'Failed to archive banned account' });
     }
   });
@@ -6619,7 +6999,7 @@ IMPORTANT:
 
       const decoded = await admin.auth().verifyIdToken(token);
       const uid = decoded.uid;
-      console.log(`🗑️ Starting account deletion for user: ${uid}`);
+      logger.info(`🗑️ Starting account deletion for user: ${uid}`);
 
       const db = admin.firestore();
       const BATCH_LIMIT = 450;
@@ -6628,12 +7008,12 @@ IMPORTANT:
       const userDoc = await db.collection('users').doc(uid).get();
       if (!userDoc.exists) {
         // User document already deleted - try to delete Auth user anyway
-        console.log(`⚠️ User document not found for ${uid}, attempting Auth deletion only`);
+        logger.info(`⚠️ User document not found for ${uid}, attempting Auth deletion only`);
         try {
           await admin.auth().deleteUser(uid);
-          console.log(`✅ Auth user deleted: ${uid}`);
+          logger.info(`✅ Auth user deleted: ${uid}`);
         } catch (authErr) {
-          console.log(`ℹ️ Auth user may already be deleted: ${authErr.message}`);
+          logger.info(`ℹ️ Auth user may already be deleted: ${authErr.message}`);
         }
         return res.json({ success: true, message: 'Account already deleted or cleanup completed' });
       }
@@ -6641,7 +7021,7 @@ IMPORTANT:
       const profilePhotoURL = userData.profilePhotoURL || null;
 
       // ========== PHASE 1: ANONYMIZATION ==========
-      console.log(`📝 Phase 1: Anonymizing PII for user ${uid}`);
+      logger.info(`📝 Phase 1: Anonymizing PII for user ${uid}`);
 
       // Get all documents to anonymize in parallel
       const [receiptsSnap, redeemedSnap, giftedClaimsSnap, postsSnap, suspiciousFlagsSnap] = await Promise.all([
@@ -6762,11 +7142,11 @@ IMPORTANT:
       // Commit final anonymization batch
       if (batchCount > 0) {
         await batch.commit();
-        console.log(`✅ Anonymized documents (receipts: ${receiptsSnap.size}, redeemedRewards: ${redeemedSnap.size}, giftedRewardClaims: ${giftedClaimsSnap.size}, posts: ${postsSnap.size}, suspiciousFlags: ${suspiciousFlagsSnap.size})`);
+        logger.info(`✅ Anonymized documents (receipts: ${receiptsSnap.size}, redeemedRewards: ${redeemedSnap.size}, giftedRewardClaims: ${giftedClaimsSnap.size}, posts: ${postsSnap.size}, suspiciousFlags: ${suspiciousFlagsSnap.size})`);
       }
 
       // ========== PHASE 2: DELETION ==========
-      console.log(`🗑️ Phase 2: Deleting user data for ${uid}`);
+      logger.info(`🗑️ Phase 2: Deleting user data for ${uid}`);
 
       // Get all documents to delete in parallel
       const [pointsSnap, referrerSnap, referredSnap, notifSnap, scanAttemptsSnap] = await Promise.all([
@@ -6791,7 +7171,7 @@ IMPORTANT:
           deleteCount++;
         }
         if (deleteCount > 0) await deleteBatch.commit();
-        console.log(`✅ Deleted ${pointsSnap.size} pointsTransactions`);
+        logger.info(`✅ Deleted ${pointsSnap.size} pointsTransactions`);
       }
 
       // Tombstone referrals instead of deleting (keeps referrer/referred counts stable)
@@ -6821,7 +7201,7 @@ IMPORTANT:
       }
       if (tombstoneCount > 0) {
         await refBatch.commit();
-        console.log(`✅ Tombstoned ${referredSnap.size} referrals (deleted user was referred)`);
+        logger.info(`✅ Tombstoned ${referredSnap.size} referrals (deleted user was referred)`);
       }
       // 2) Deleting user was the referrer: anonymize referrer side, keep referredUserId
       refBatch = db.batch();
@@ -6849,7 +7229,7 @@ IMPORTANT:
       }
       if (tombstoneCount > 0) {
         await refBatch.commit();
-        console.log(`✅ Tombstoned ${referrerSnap.size} referrals (deleted user was referrer)`);
+        logger.info(`✅ Tombstoned ${referrerSnap.size} referrals (deleted user was referrer)`);
       }
 
       // Delete notifications
@@ -6866,7 +7246,7 @@ IMPORTANT:
           notifCount++;
         }
         if (notifCount > 0) await notifBatch.commit();
-        console.log(`✅ Deleted ${notifSnap.size} notifications`);
+        logger.info(`✅ Deleted ${notifSnap.size} notifications`);
       }
 
       // Delete receiptScanAttempts
@@ -6883,7 +7263,7 @@ IMPORTANT:
           scanCount++;
         }
         if (scanCount > 0) await scanBatch.commit();
-        console.log(`✅ Deleted ${scanAttemptsSnap.size} receiptScanAttempts`);
+        logger.info(`✅ Deleted ${scanAttemptsSnap.size} receiptScanAttempts`);
       }
 
       // Delete user subcollections (clientState, activity)
@@ -6901,12 +7281,12 @@ IMPORTANT:
           subBatch.delete(doc.ref);
         }
         await subBatch.commit();
-        console.log(`✅ Deleted user subcollections (clientState: ${clientStateSnap.size}, activity: ${activitySnap.size})`);
+        logger.info(`✅ Deleted user subcollections (clientState: ${clientStateSnap.size}, activity: ${activitySnap.size})`);
       }
 
       // Delete userRiskScore if exists
       await db.collection('userRiskScores').doc(uid).delete().catch(() => {});
-      console.log(`✅ Deleted userRiskScore (if existed)`);
+      logger.info(`✅ Deleted userRiskScore (if existed)`);
 
       // ========== PHASE 3: PROFILE PHOTO DELETION ==========
       if (profilePhotoURL) {
@@ -6929,11 +7309,11 @@ IMPORTANT:
 
           if (filePath) {
             await bucket.file(filePath).delete();
-            console.log(`✅ Deleted profile photo: ${filePath}`);
+            logger.info(`✅ Deleted profile photo: ${filePath}`);
           }
         } catch (storageErr) {
           // Non-critical - photo may already be deleted or URL invalid
-          console.log(`ℹ️ Profile photo deletion skipped: ${storageErr.message}`);
+          logger.info(`ℹ️ Profile photo deletion skipped: ${storageErr.message}`);
         }
       }
 
@@ -6965,27 +7345,27 @@ IMPORTANT:
         }
       } catch (deletionRecordError) {
         // Non-critical - log but don't fail deletion
-        console.error('⚠️ Error recording deletion metadata (non-blocking):', deletionRecordError);
+        logger.error('⚠️ Error recording deletion metadata (non-blocking):', deletionRecordError);
       }
 
       // ========== PHASE 5: USER DOCUMENT DELETION ==========
       await db.collection('users').doc(uid).delete();
-      console.log(`✅ Deleted user document: ${uid}`);
+      logger.info(`✅ Deleted user document: ${uid}`);
 
       // ========== PHASE 6: FIREBASE AUTH USER DELETION ==========
       try {
         await admin.auth().deleteUser(uid);
-        console.log(`✅ Deleted Firebase Auth user: ${uid}`);
+        logger.info(`✅ Deleted Firebase Auth user: ${uid}`);
       } catch (authErr) {
         // Log but don't fail - Firestore data is already cleaned up
-        console.error(`⚠️ Error deleting Auth user (data already cleaned): ${authErr.message}`);
+        logger.error(`⚠️ Error deleting Auth user (data already cleaned): ${authErr.message}`);
       }
 
-      console.log(`✅ Account deletion complete for user: ${uid}`);
+      logger.info(`✅ Account deletion complete for user: ${uid}`);
       return res.json({ success: true });
 
     } catch (error) {
-      console.error('❌ Error in /user/delete-account:', error);
+      logger.error('❌ Error in /user/delete-account:', error);
       res.status(500).json({ error: 'Failed to delete account' });
     }
   });
@@ -7007,7 +7387,7 @@ IMPORTANT:
       const db = admin.firestore();
       const now = admin.firestore.Timestamp.now();
 
-      console.log('🧹 Cleaning up expired banned account history...');
+      logger.info('🧹 Cleaning up expired banned account history...');
 
       // Query expired records
       const expiredSnap = await db.collection('bannedAccountHistory')
@@ -7015,7 +7395,7 @@ IMPORTANT:
         .get();
 
       if (expiredSnap.empty) {
-        console.log('✅ No expired history records found');
+        logger.info('✅ No expired history records found');
         return res.json({ deletedCount: 0, message: 'No expired records to clean up' });
       }
 
@@ -7029,7 +7409,7 @@ IMPORTANT:
       }
 
       await batch.commit();
-      console.log(`✅ Deleted ${deletedCount} expired history records`);
+      logger.info(`✅ Deleted ${deletedCount} expired history records`);
 
       return res.json({ 
         deletedCount, 
@@ -7037,7 +7417,7 @@ IMPORTANT:
       });
 
     } catch (error) {
-      console.error('❌ Error in /admin/cleanup-expired-history:', error);
+      logger.error('❌ Error in /admin/cleanup-expired-history:', error);
       res.status(500).json({ error: 'Failed to cleanup expired history' });
     }
   });
@@ -7074,7 +7454,7 @@ IMPORTANT:
         return res.status(403).json({ error: 'UID mismatch' });
       }
 
-      console.log(`🧹 Cleaning up orphaned accounts for phone: ${phone}, newUid: ${callerUid}`);
+      logger.info(`🧹 Cleaning up orphaned accounts for phone: ${phone}, newUid: ${callerUid}`);
 
       const db = admin.firestore();
       const auth = admin.auth();
@@ -7094,7 +7474,7 @@ IMPORTANT:
         .get();
 
       if (usersSnap.empty) {
-        console.log('✅ No orphaned accounts found');
+        logger.info('✅ No orphaned accounts found');
         
         // Check for rapid delete→recreate patterns even if no orphans found
         try {
@@ -7123,7 +7503,7 @@ IMPORTANT:
             }
           }
         } catch (detectionError) {
-          console.error('❌ Error checking delete/recreate pattern (non-blocking):', detectionError);
+          logger.error('❌ Error checking delete/recreate pattern (non-blocking):', detectionError);
         }
         
         return res.json({ deletedCount: 0 });
@@ -7137,7 +7517,7 @@ IMPORTANT:
         
         // Skip the current user's document
         if (docUid === callerUid) {
-          console.log(`ℹ️ Skipping current user: ${docUid}`);
+          logger.info(`ℹ️ Skipping current user: ${docUid}`);
           continue;
         }
 
@@ -7145,22 +7525,22 @@ IMPORTANT:
         try {
           await auth.getUser(docUid);
           // Auth account exists - this is not an orphan, skip it
-          console.log(`ℹ️ Skipping non-orphan (Auth exists): ${docUid}`);
+          logger.info(`ℹ️ Skipping non-orphan (Auth exists): ${docUid}`);
         } catch (error) {
           if (error.code === 'auth/user-not-found') {
             // This is an orphaned document - delete it
-            console.log(`🗑️ Deleting orphaned user doc: ${docUid}`);
+            logger.info(`🗑️ Deleting orphaned user doc: ${docUid}`);
             batch.delete(doc.ref);
             deletedCount++;
           } else {
-            console.warn(`⚠️ Error checking user ${docUid}: ${error.code}`);
+            logger.warn(`⚠️ Error checking user ${docUid}: ${error.code}`);
           }
         }
       }
 
       if (deletedCount > 0) {
         await batch.commit();
-        console.log(`✅ Deleted ${deletedCount} orphaned user document(s)`);
+        logger.info(`✅ Deleted ${deletedCount} orphaned user document(s)`);
       }
 
       // Check for rapid delete→recreate patterns after cleanup
@@ -7191,13 +7571,13 @@ IMPORTANT:
           }
         }
       } catch (detectionError) {
-        console.error('❌ Error checking delete/recreate pattern (non-blocking):', detectionError);
+        logger.error('❌ Error checking delete/recreate pattern (non-blocking):', detectionError);
       }
 
       return res.json({ deletedCount });
 
     } catch (error) {
-      console.error('❌ Error in /users/cleanup-orphan-by-phone:', error);
+      logger.error('❌ Error in /users/cleanup-orphan-by-phone:', error);
       res.status(500).json({ error: 'Failed to cleanup orphaned accounts' });
     }
   });
@@ -7328,7 +7708,7 @@ IMPORTANT:
       tx.set(transactionRef, pointsTransaction);
     });
     
-    console.log(`✅ Auto-refunded expired reward: ${pointsRequired} points to user ${userId}`);
+    logger.info(`✅ Auto-refunded expired reward: ${pointsRequired} points to user ${userId}`);
     
     return {
       success: true,
@@ -7340,8 +7720,8 @@ IMPORTANT:
   // Refund expired reward endpoint
   app.post('/refund-expired-reward', async (req, res) => {
     try {
-      console.log('💰 Received refund expired reward request');
-      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+      logger.info('💰 Received refund expired reward request');
+      logger.info('📥 Request body:', JSON.stringify(req.body, null, 2));
       
       // Require authenticated user
       const userContext = await requireUser(req, res);
@@ -7350,7 +7730,7 @@ IMPORTANT:
       const { rewardId, redemptionCode } = req.body;
       
       if (!rewardId && !redemptionCode) {
-        console.log('❌ Missing required field: rewardId or redemptionCode');
+        logger.info('❌ Missing required field: rewardId or redemptionCode');
         return res.status(400).json({ 
           error: 'Missing required field: rewardId or redemptionCode'
         });
@@ -7373,7 +7753,7 @@ IMPORTANT:
           .get();
         
         if (snapshot.empty) {
-          console.log('❌ Reward not found with redemption code:', redemptionCode);
+          logger.info('❌ Reward not found with redemption code:', redemptionCode);
           return res.status(404).json({ error: 'Reward not found' });
         }
         
@@ -7382,7 +7762,7 @@ IMPORTANT:
       }
       
       if (!rewardDoc.exists) {
-        console.log('❌ Reward document not found');
+        logger.info('❌ Reward document not found');
         return res.status(404).json({ error: 'Reward not found' });
       }
       
@@ -7394,7 +7774,7 @@ IMPORTANT:
       
       // Validate that reward is eligible for refund
       if (isUsed) {
-        console.log('❌ Reward already used, cannot refund');
+        logger.info('❌ Reward already used, cannot refund');
         return res.status(400).json({ 
           error: 'Reward already used, cannot refund',
           status: 'already_used'
@@ -7402,7 +7782,7 @@ IMPORTANT:
       }
       
       if (!isExpired) {
-        console.log('❌ Reward not expired yet, cannot refund');
+        logger.info('❌ Reward not expired yet, cannot refund');
         return res.status(400).json({ 
           error: 'Reward not expired yet, cannot refund',
           status: 'not_expired'
@@ -7410,7 +7790,7 @@ IMPORTANT:
       }
       
       if (pointsRefunded) {
-        console.log('✅ Points already refunded for this reward');
+        logger.info('✅ Points already refunded for this reward');
         return res.json({ 
           success: true,
           message: 'Points already refunded',
@@ -7423,13 +7803,13 @@ IMPORTANT:
       const pointsRequired = data.pointsRequired || 0;
       
       if (!userId || pointsRequired <= 0) {
-        console.log('❌ Invalid reward data: missing userId or pointsRequired');
+        logger.info('❌ Invalid reward data: missing userId or pointsRequired');
         return res.status(400).json({ error: 'Invalid reward data' });
       }
       
       // Verify user can only refund their own rewards
       if (userId !== userContext.uid) {
-        console.log('❌ User attempted to refund another user\'s reward');
+        logger.info('❌ User attempted to refund another user\'s reward');
         return res.status(403).json({ error: 'You can only refund your own rewards' });
       }
       
@@ -7438,7 +7818,7 @@ IMPORTANT:
       const userDoc = await userRef.get();
       
       if (!userDoc.exists) {
-        console.log('❌ User not found:', userId);
+        logger.info('❌ User not found:', userId);
         return res.status(404).json({ error: 'User not found' });
       }
       
@@ -7463,7 +7843,7 @@ IMPORTANT:
       });
       
     } catch (error) {
-      console.error('❌ Error refunding expired reward:', error);
+      logger.error('❌ Error refunding expired reward:', error);
       res.status(500).json({ 
         error: 'Failed to refund expired reward',
         details: error.message 
@@ -7504,7 +7884,7 @@ IMPORTANT:
         try {
           await refundExpiredReward(bestDoc.ref, data, db);
         } catch (error) {
-          console.error('⚠️ Error auto-refunding expired reward during validate:', error);
+          logger.error('⚠️ Error auto-refunding expired reward during validate:', error);
           // Continue with response even if refund fails
         }
       }
@@ -7536,7 +7916,7 @@ IMPORTANT:
         }
       });
     } catch (error) {
-      console.error('❌ Error validating reward code:', error);
+      logger.error('❌ Error validating reward code:', error);
       return res.status(500).json({ error: 'Failed to validate reward code' });
     }
   });
@@ -7690,7 +8070,7 @@ IMPORTANT:
             await refundExpiredReward(rewardRef, rewardData, db);
           }
         } catch (error) {
-          console.error('⚠️ Error auto-refunding expired reward during consume:', error);
+          logger.error('⚠️ Error auto-refunding expired reward during consume:', error);
           // Continue with response even if refund fails
         }
       }
@@ -7702,7 +8082,7 @@ IMPORTANT:
 
       return res.json(result);
     } catch (error) {
-      console.error('❌ Error consuming reward code:', error);
+      logger.error('❌ Error consuming reward code:', error);
       return res.status(500).json({ error: 'Failed to consume reward code' });
     }
   });
@@ -7791,7 +8171,7 @@ IMPORTANT:
 
       await giftedRewardRef.set(giftedRewardData);
 
-      console.log(`🎁 Admin ${adminContext.uid} sent gift reward: "${trimmedTitle}" to ${targetType === 'all' ? 'all customers' : `${userIds.length} users`}`);
+      logger.info(`🎁 Admin ${adminContext.uid} sent gift reward: "${trimmedTitle}" to ${targetType === 'all' ? 'all customers' : `${userIds.length} users`}`);
 
       // Get target users
       let targetUserIds = [];
@@ -7828,7 +8208,7 @@ IMPORTANT:
         }
 
         targetUserIds = allUserDocs.map(doc => doc.id);
-        console.log(`📋 Found ${targetUserIds.length} eligible users (excluding employees)`);
+        logger.info(`📋 Found ${targetUserIds.length} eligible users (excluding employees)`);
       } else {
         targetUserIds = userIds;
       }
@@ -7893,17 +8273,17 @@ IMPORTANT:
             ...message,
             tokens: batchTokens
           }).catch(err => {
-            console.warn('⚠️ Some FCM notifications failed:', err);
+            logger.warn('⚠️ Some FCM notifications failed:', err);
           });
         }
       }
 
       // Wait for notification documents to be created
       await Promise.all(notificationPromises).catch(err => {
-        console.warn('⚠️ Failed to create some notification documents:', err);
+        logError(err, req, { operation: 'gift_reward_notifications' });
       });
 
-      console.log(`✅ Gift reward sent: ${userDocs.length} notifications, ${fcmTokens.length} push notifications`);
+      logger.info(`✅ Gift reward sent: ${userDocs.length} notifications, ${fcmTokens.length} push notifications`);
 
       // Return success even if no users found (gift is still created and available)
       res.json({
@@ -7917,7 +8297,7 @@ IMPORTANT:
       });
 
     } catch (error) {
-      console.error('❌ Error sending gift reward:', error);
+      logger.error('❌ Error sending gift reward:', error);
       const errorMessage = error.message || error.toString();
       res.status(500).json({ error: `Failed to send gift reward: ${errorMessage}` });
     }
@@ -7926,10 +8306,10 @@ IMPORTANT:
   /**
    * POST /admin/rewards/gift/custom
    * 
-   * Send a custom reward with uploaded image to all customers or specific users.
+   * Send a custom reward with optional uploaded image to all customers or specific users.
    * 
    * Multipart form:
-   * - image: File (required)
+   * - image: File (optional)
    * - rewardTitle: string (required)
    * - rewardDescription: string (required)
    * - rewardCategory: string (required)
@@ -7942,30 +8322,35 @@ IMPORTANT:
       const adminContext = await requireAdmin(req, res);
       if (!adminContext) return;
 
-      if (!req.file) {
-        return res.status(400).json({ error: 'Image file is required' });
-      }
-
       const { rewardTitle, rewardDescription, rewardCategory, targetType, userIds, expiresAt } = req.body;
 
       // Validate required fields
       if (!rewardTitle || typeof rewardTitle !== 'string' || rewardTitle.trim().length === 0) {
-        fs.unlinkSync(req.file.path); // Clean up uploaded file
+        // Clean up uploaded file if it exists
+        if (req.file && fs.existsSync(req.file.path)) {
+          fsPromises.unlink(req.file.path).catch(err => logger.error('Failed to delete file:', err));
+        }
         return res.status(400).json({ error: 'rewardTitle is required' });
       }
 
       if (!rewardDescription || typeof rewardDescription !== 'string' || rewardDescription.trim().length === 0) {
-        fs.unlinkSync(req.file.path);
+        if (req.file && fs.existsSync(req.file.path)) {
+          fsPromises.unlink(req.file.path).catch(err => logger.error('Failed to delete file:', err));
+        }
         return res.status(400).json({ error: 'rewardDescription is required' });
       }
 
       if (!rewardCategory || typeof rewardCategory !== 'string' || rewardCategory.trim().length === 0) {
-        fs.unlinkSync(req.file.path);
+        if (req.file && fs.existsSync(req.file.path)) {
+          fsPromises.unlink(req.file.path).catch(err => logger.error('Failed to delete file:', err));
+        }
         return res.status(400).json({ error: 'rewardCategory is required' });
       }
 
       if (!targetType || !['all', 'individual'].includes(targetType)) {
-        fs.unlinkSync(req.file.path);
+        if (req.file && fs.existsSync(req.file.path)) {
+          fsPromises.unlink(req.file.path).catch(err => logger.error('Failed to delete file:', err));
+        }
         return res.status(400).json({ error: 'targetType must be "all" or "individual"' });
       }
 
@@ -7974,43 +8359,54 @@ IMPORTANT:
         try {
           parsedUserIds = JSON.parse(userIds || '[]');
         } catch (e) {
-          fs.unlinkSync(req.file.path);
+          if (req.file && fs.existsSync(req.file.path)) {
+            fsPromises.unlink(req.file.path).catch(err => logger.error('Failed to delete file:', err));
+          }
           return res.status(400).json({ error: 'userIds must be a valid JSON array' });
         }
         if (!Array.isArray(parsedUserIds) || parsedUserIds.length === 0) {
-          fs.unlinkSync(req.file.path);
+          if (req.file && fs.existsSync(req.file.path)) {
+            fsPromises.unlink(req.file.path).catch(err => logger.error('Failed to delete file:', err));
+          }
           return res.status(400).json({ error: 'userIds array is required for individual targeting' });
         }
       }
 
       const db = admin.firestore();
       const storage = admin.storage();
-      const bucket = storage.bucket();
-
-      // Upload image to Firebase Storage
+      
+      // Create giftedRewardId first (used for both image upload and document creation)
       const giftedRewardId = db.collection('giftedRewards').doc().id;
-      const imageFileName = `gifted-rewards/${giftedRewardId}/image.jpg`;
-      const file = bucket.file(imageFileName);
+      
+      // Initialize imageURL as null (will be set if image is uploaded)
+      let imageURL = null;
+      
+      // Upload image to Firebase Storage if provided
+      if (req.file) {
+        const bucket = storage.bucket('dumplinghouseapp.firebasestorage.app');
+        const imageFileName = `gifted-rewards/${giftedRewardId}/image.jpg`;
+        const file = bucket.file(imageFileName);
 
-      const imageData = await fsPromises.readFile(req.file.path);
-      await file.save(imageData, {
-        metadata: {
-          contentType: 'image/jpeg',
+        const imageData = await fsPromises.readFile(req.file.path);
+        await file.save(imageData, {
           metadata: {
-            uploadedBy: adminContext.uid,
-            uploadedAt: new Date().toISOString()
+            contentType: 'image/jpeg',
+            metadata: {
+              uploadedBy: adminContext.uid,
+              uploadedAt: new Date().toISOString()
+            }
           }
-        }
-      });
+        });
 
-      // Make file publicly readable
-      await file.makePublic();
+        // Make file publicly readable
+        await file.makePublic();
 
-      // Get public URL
-      const imageURL = `https://storage.googleapis.com/${bucket.name}/${imageFileName}`;
+        // Get public URL
+        imageURL = `https://storage.googleapis.com/${bucket.name}/${imageFileName}`;
 
-      // Clean up local file
-      fs.unlinkSync(req.file.path);
+        // Clean up local file
+        await fsPromises.unlink(req.file.path).catch(err => logger.error('Failed to delete file:', err));
+      }
 
       // Parse expiration date if provided
       let expiresAtTimestamp = null;
@@ -8045,7 +8441,7 @@ IMPORTANT:
 
       await giftedRewardRef.set(giftedRewardData);
 
-      console.log(`🎁 Admin ${adminContext.uid} sent custom gift reward: "${trimmedTitle}" to ${targetType === 'all' ? 'all customers' : `${parsedUserIds.length} users`}`);
+      logger.info(`🎁 Admin ${adminContext.uid} sent custom gift reward: "${trimmedTitle}" to ${targetType === 'all' ? 'all customers' : `${parsedUserIds.length} users`}`);
 
       // Get target users
       let targetUserIds = [];
@@ -8082,7 +8478,7 @@ IMPORTANT:
         }
 
         targetUserIds = allUserDocs.map(doc => doc.id);
-        console.log(`📋 Found ${targetUserIds.length} eligible users (excluding employees)`);
+        logger.info(`📋 Found ${targetUserIds.length} eligible users (excluding employees)`);
       } else {
         targetUserIds = parsedUserIds;
       }
@@ -8147,17 +8543,17 @@ IMPORTANT:
             ...message,
             tokens: batchTokens
           }).catch(err => {
-            console.warn('⚠️ Some FCM notifications failed:', err);
+            logger.warn('⚠️ Some FCM notifications failed:', err);
           });
         }
       }
 
       // Wait for notification documents to be created
       await Promise.all(notificationPromises).catch(err => {
-        console.warn('⚠️ Failed to create some notification documents:', err);
+        logError(err, req, { operation: 'gift_reward_notifications' });
       });
 
-      console.log(`✅ Custom gift reward sent: ${userDocs.length} notifications, ${fcmTokens.length} push notifications`);
+      logger.info(`✅ Custom gift reward sent: ${userDocs.length} notifications, ${fcmTokens.length} push notifications`);
 
       // Return success even if no users found (gift is still created and available)
       res.json({
@@ -8172,10 +8568,10 @@ IMPORTANT:
       });
 
     } catch (error) {
-      console.error('❌ Error sending custom gift reward:', error);
+      logger.error('❌ Error sending custom gift reward:', error);
       // Clean up uploaded file if it still exists
       if (req.file && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
+        fsPromises.unlink(req.file.path).catch(err => logger.error('Failed to delete file:', err));
       }
       const errorMessage = error.message || error.toString();
       res.status(500).json({ error: `Failed to send custom gift reward: ${errorMessage}` });
@@ -8386,7 +8782,7 @@ IMPORTANT:
       res.json({ gifts: availableGifts });
 
     } catch (error) {
-      console.error('❌ Error fetching gifted rewards:', error);
+      logger.error('❌ Error fetching gifted rewards:', error);
       res.status(500).json({ error: 'Failed to fetch gifted rewards' });
     }
   });
@@ -8625,7 +9021,7 @@ IMPORTANT:
       batch.set(db.collection('pointsTransactions').doc(pointsTransactionId), pointsTransaction);
       await batch.commit();
 
-      console.log(`✅ User ${uid} claimed gift reward ${giftedRewardId}, redemption code: ${redemptionCode}`);
+      logger.info(`✅ User ${uid} claimed gift reward ${giftedRewardId}, redemption code: ${redemptionCode}`);
 
       res.json({
         success: true,
@@ -8646,7 +9042,7 @@ IMPORTANT:
       });
 
     } catch (error) {
-      console.error('❌ Error claiming gift reward:', error);
+      logger.error('❌ Error claiming gift reward:', error);
       res.status(500).json({ error: 'Failed to claim gift reward' });
     }
   });
@@ -8671,11 +9067,11 @@ IMPORTANT:
         ...doc.data()
       }));
 
-      console.log(`📋 Fetched ${tiers.length} reward tiers`);
+      logger.info(`📋 Fetched ${tiers.length} reward tiers`);
       res.json({ tiers });
 
     } catch (error) {
-      console.error('❌ Error fetching reward tiers:', error);
+      logger.error('❌ Error fetching reward tiers:', error);
       res.status(500).json({ error: 'Failed to fetch reward tiers' });
     }
   });
@@ -8729,13 +9125,13 @@ IMPORTANT:
         // Update existing tier
         docId = existingSnapshot.docs[0].id;
         await db.collection('rewardTierItems').doc(docId).update(tierData);
-        console.log(`✏️ Updated reward tier ${pointsRequired} with ${eligibleItems.length} items`);
+        logger.info(`✏️ Updated reward tier ${pointsRequired} with ${eligibleItems.length} items`);
       } else {
         // Create new tier
         docId = `tier_${pointsRequired}`;
         tierData.createdAt = admin.firestore.FieldValue.serverTimestamp();
         await db.collection('rewardTierItems').doc(docId).set(tierData);
-        console.log(`➕ Created reward tier ${pointsRequired} with ${eligibleItems.length} items`);
+        logger.info(`➕ Created reward tier ${pointsRequired} with ${eligibleItems.length} items`);
       }
 
       res.json({
@@ -8747,7 +9143,7 @@ IMPORTANT:
       });
 
     } catch (error) {
-      console.error('❌ Error saving reward tier items:', error);
+      logger.error('❌ Error saving reward tier items:', error);
       res.status(500).json({ error: 'Failed to save reward tier items' });
     }
   });
@@ -8794,7 +9190,7 @@ IMPORTANT:
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedBy: adminContext.uid
         });
-        console.log(`➕ Created tier ${tierId} with item: ${itemName}`);
+        logger.info(`➕ Created tier ${tierId} with item: ${itemName}`);
       } else {
         // Add to existing tier (avoid duplicates)
         const tierData = tierDoc.data();
@@ -8810,7 +9206,7 @@ IMPORTANT:
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedBy: adminContext.uid
         });
-        console.log(`➕ Added item ${itemName} to tier ${tierId}`);
+        logger.info(`➕ Added item ${itemName} to tier ${tierId}`);
       }
 
       res.json({
@@ -8822,7 +9218,7 @@ IMPORTANT:
       });
 
     } catch (error) {
-      console.error('❌ Error adding item to reward tier:', error);
+      logger.error('❌ Error adding item to reward tier:', error);
       res.status(500).json({ error: 'Failed to add item to reward tier' });
     }
   });
@@ -8862,7 +9258,7 @@ IMPORTANT:
         updatedBy: adminContext.uid
       });
 
-      console.log(`🗑️ Removed item ${itemId} from tier ${tierId}`);
+      logger.info(`🗑️ Removed item ${itemId} from tier ${tierId}`);
 
       res.json({
         success: true,
@@ -8872,7 +9268,7 @@ IMPORTANT:
       });
 
     } catch (error) {
-      console.error('❌ Error removing item from reward tier:', error);
+      logger.error('❌ Error removing item from reward tier:', error);
       res.status(500).json({ error: 'Failed to remove item from reward tier' });
     }
   });
@@ -8902,7 +9298,7 @@ IMPORTANT:
             }
           }
         } catch (e) {
-          console.warn('⚠️ Invalid pagination cursor, ignoring:', e.message);
+          logger.warn('⚠️ Invalid pagination cursor, ignoring:', e.message);
         }
       }
 
@@ -8920,14 +9316,14 @@ IMPORTANT:
       let snapshot;
       try {
         snapshot = await query.get();
-        console.log(`📋 Admin receipts query returned ${snapshot.size} documents`);
+        logger.info(`📋 Admin receipts query returned ${snapshot.size} documents`);
       } catch (queryError) {
-        console.error('❌ Error executing receipts query:', queryError);
+        logger.error('❌ Error executing receipts query:', queryError);
         // If orderBy fails, try without it (fallback)
-        console.log('⚠️ Attempting fallback query without orderBy...');
+        logger.info('⚠️ Attempting fallback query without orderBy...');
         const fallbackQuery = db.collection('receipts').limit(pageSize);
         snapshot = await fallbackQuery.get();
-        console.log(`📋 Fallback query returned ${snapshot.size} documents`);
+        logger.info(`📋 Fallback query returned ${snapshot.size} documents`);
       }
 
       const receipts = [];
@@ -8991,7 +9387,7 @@ IMPORTANT:
         nextPageToken
       });
     } catch (error) {
-      console.error('❌ Error listing admin receipts:', error);
+      logger.error('❌ Error listing admin receipts:', error);
       res.status(500).json({ error: 'Failed to load receipts for admin' });
     }
   });
@@ -9035,7 +9431,7 @@ IMPORTANT:
 
       await batch.commit();
 
-      console.log('🗑️ Admin deleted receipt and related records:', {
+      logger.info('🗑️ Admin deleted receipt and related records:', {
         receiptId,
         orderNumber,
         orderDate,
@@ -9045,7 +9441,7 @@ IMPORTANT:
 
       res.json({ success: true });
     } catch (error) {
-      console.error('❌ Error deleting admin receipt:', error);
+      logger.error('❌ Error deleting admin receipt:', error);
       res.status(500).json({ error: 'Failed to delete receipt for admin' });
     }
   });
@@ -9116,7 +9512,7 @@ IMPORTANT:
         ? (shouldIncludeAdmins ? 'all users (including admins)' : 'all users')
         : `${userIds.length} users`;
       const notificationTypeDescription = isPromotionalNotification ? 'promotional' : 'transactional';
-      console.log(`📨 Admin ${adminContext.uid} sending ${notificationTypeDescription} notification: "${trimmedTitle}" to ${recipientDescription}`);
+      logger.info(`📨 Admin ${adminContext.uid} sending ${notificationTypeDescription} notification: "${trimmedTitle}" to ${recipientDescription}`);
 
       // Fetch FCM tokens based on target type
       let usersSnapshot;
@@ -9205,7 +9601,7 @@ IMPORTANT:
       }
 
       if (tokensToSend.length === 0) {
-        console.log('⚠️ No valid FCM tokens found for notification');
+        logger.info('⚠️ No valid FCM tokens found for notification');
         const diagnostics = (targetType === 'all')
           ? {
               targetType,
@@ -9235,7 +9631,7 @@ IMPORTANT:
         });
       }
 
-      console.log(`📱 Sending to ${tokensToSend.length} devices...`);
+      logger.info(`📱 Sending to ${tokensToSend.length} devices...`);
 
       // Send push notifications via FCM
       let successCount = 0;
@@ -9267,12 +9663,12 @@ IMPORTANT:
           if (response.failureCount > 0) {
             response.responses.forEach((resp, idx) => {
               if (!resp.success) {
-                console.warn(`❌ FCM send failed for token ${idx}: ${resp.error?.code || 'unknown'}`);
+                logger.warn(`❌ FCM send failed for token ${idx}: ${resp.error?.code || 'unknown'}`);
               }
             });
           }
         } catch (fcmError) {
-          console.error('❌ FCM batch send error:', fcmError);
+          logger.error('❌ FCM batch send error:', fcmError);
           failureCount += batchTokens.length;
         }
       }
@@ -9317,7 +9713,7 @@ IMPORTANT:
         await batch.commit();
       }
 
-      console.log(`✅ Notification sent: ${successCount} success, ${failureCount} failed`);
+      logger.info(`✅ Notification sent: ${successCount} success, ${failureCount} failed`);
 
       res.json({
         success: true,
@@ -9328,7 +9724,7 @@ IMPORTANT:
       });
 
     } catch (error) {
-      console.error('❌ Error sending admin notification:', error);
+      logger.error('❌ Error sending admin notification:', error);
       res.status(500).json({ error: 'Failed to send notification' });
     }
   });
@@ -9370,7 +9766,7 @@ IMPORTANT:
       res.json({ notifications });
 
     } catch (error) {
-      console.error('❌ Error fetching notification history:', error);
+      logger.error('❌ Error fetching notification history:', error);
       res.status(500).json({ error: 'Failed to fetch notification history' });
     }
   });
@@ -9411,7 +9807,7 @@ IMPORTANT:
       const cacheNow = Date.now();
       if (adminStatsCache.data && adminStatsCache.timestamp && 
           (cacheNow - adminStatsCache.timestamp) < adminStatsCache.ttl) {
-        console.log('📊 Admin stats served from cache');
+        logger.info('📊 Admin stats served from cache');
         return res.json(adminStatsCache.data);
       }
 
@@ -9428,8 +9824,8 @@ IMPORTANT:
       const monthStart = now.startOf('month').toJSDate();
       const nextMonthStart = now.startOf('month').plus({ months: 1 }).toJSDate();
       
-      console.log(`📊 Admin stats using timezone: ${statsTimezone}`);
-      console.log(`📊 Today boundaries: ${todayStart.toISOString()} to ${tomorrowStart.toISOString()}`);
+      logger.info(`📊 Admin stats using timezone: ${statsTimezone}`);
+      logger.info(`📊 Today boundaries: ${todayStart.toISOString()} to ${tomorrowStart.toISOString()}`);
 
       // Run all queries in parallel for efficiency
       // Use count() aggregation for large collections to avoid reading all documents
@@ -9498,7 +9894,7 @@ IMPORTANT:
           .get()
           .then(snap => {
             const count = snap.data().count;
-            console.log(`📊 Rewards redeemed today query: found ${count} rewards (between ${todayStart.toISOString()} and ${tomorrowStart.toISOString()})`);
+            logger.info(`📊 Rewards redeemed today query: found ${count} rewards (between ${todayStart.toISOString()} and ${tomorrowStart.toISOString()})`);
             return count;
           }),
         
@@ -9531,11 +9927,11 @@ IMPORTANT:
       adminStatsCache.data = stats;
       adminStatsCache.timestamp = cacheNow;
 
-      console.log('📊 Admin stats fetched and cached:', stats);
+      logger.info('📊 Admin stats fetched and cached:', stats);
       res.json(stats);
 
     } catch (error) {
-      console.error('❌ Error fetching admin stats:', error);
+      logger.error('❌ Error fetching admin stats:', error);
       res.status(500).json({ error: 'Failed to fetch admin statistics' });
     }
   });
@@ -9571,7 +9967,7 @@ IMPORTANT:
       const cacheNow = Date.now();
       if (rewardHistoryMonthsCache.data && rewardHistoryMonthsCache.timestamp && 
           (cacheNow - rewardHistoryMonthsCache.timestamp) < rewardHistoryMonthsCache.ttl) {
-        console.log('📅 Reward history months served from cache');
+        logger.info('📅 Reward history months served from cache');
         return res.json(rewardHistoryMonthsCache.data);
       }
 
@@ -9628,11 +10024,11 @@ IMPORTANT:
       rewardHistoryMonthsCache.data = result;
       rewardHistoryMonthsCache.timestamp = cacheNow;
 
-      console.log(`📅 Found ${months.length} months with redeemed rewards`);
+      logger.info(`📅 Found ${months.length} months with redeemed rewards`);
       res.json(result);
 
     } catch (error) {
-      console.error('❌ Error fetching reward history months:', error);
+      logger.error('❌ Error fetching reward history months:', error);
       res.status(500).json({ error: 'Failed to fetch reward history months' });
     }
   });
@@ -9812,11 +10208,11 @@ IMPORTANT:
         nextCursor: hasMore && rewardsDocs.length > 0 ? rewardsDocs[rewardsDocs.length - 1].id : null
       };
 
-      console.log(`📊 Fetched ${rewards.length} rewards for ${month} (hasMore: ${hasMore})`);
+      logger.info(`📊 Fetched ${rewards.length} rewards for ${month} (hasMore: ${hasMore})`);
       res.json(result);
 
     } catch (error) {
-      console.error('❌ Error fetching reward history:', error);
+      logger.error('❌ Error fetching reward history:', error);
       res.status(500).json({ error: 'Failed to fetch reward history' });
     }
   });
@@ -9881,7 +10277,7 @@ IMPORTANT:
       });
 
     } catch (error) {
-      console.error('❌ Error fetching all-time summary:', error);
+      logger.error('❌ Error fetching all-time summary:', error);
       res.status(500).json({ error: 'Failed to fetch all-time summary' });
     }
   });
@@ -10017,11 +10413,11 @@ IMPORTANT:
         nextCursor: hasMore && rewardsDocs.length > 0 ? rewardsDocs[rewardsDocs.length - 1].id : null
       };
 
-      console.log(`📊 Fetched ${rewards.length} all-time rewards (hasMore: ${hasMore})`);
+      logger.info(`📊 Fetched ${rewards.length} all-time rewards (hasMore: ${hasMore})`);
       res.json(result);
 
     } catch (error) {
-      console.error('❌ Error fetching all-time reward history:', error);
+      logger.error('❌ Error fetching all-time reward history:', error);
       res.status(500).json({ error: 'Failed to fetch all-time reward history' });
     }
   });
@@ -10166,11 +10562,11 @@ IMPORTANT:
         nextCursor: hasMore && rewardsDocs.length > 0 ? rewardsDocs[rewardsDocs.length - 1].id : null
       };
 
-      console.log(`📊 Fetched ${rewards.length} rewards for this year (hasMore: ${hasMore})`);
+      logger.info(`📊 Fetched ${rewards.length} rewards for this year (hasMore: ${hasMore})`);
       res.json(result);
 
     } catch (error) {
-      console.error('❌ Error fetching this-year reward history:', error);
+      logger.error('❌ Error fetching this-year reward history:', error);
       res.status(500).json({ error: 'Failed to fetch this-year reward history' });
     }
   });
@@ -10228,7 +10624,7 @@ IMPORTANT:
 
       // Ensure it's exactly 12 characters: +1XXXXXXXXXX
       if (normalizedPhone.length !== 12 || !normalizedPhone.startsWith('+1')) {
-        console.warn(`⚠️ Phone normalization warning: ${phone} -> ${normalizedPhone} (expected +1XXXXXXXXXX)`);
+        logger.warn(`⚠️ Phone normalization warning: ${phone} -> ${normalizedPhone} (expected +1XXXXXXXXXX)`);
         // Try one more time with just digits
         if (digits.length >= 10) {
           const last10 = digits.slice(-10); // Take last 10 digits
@@ -10290,13 +10686,13 @@ IMPORTANT:
       } catch (profileErr) {
         // Fail closed for profile existence (conservative): if we cannot verify,
         // treat as "profile exists" so we don't accidentally lock users out due to server issues.
-        console.warn('⚠️ Error checking hasUserProfile in /check-ban-status:', profileErr?.message || profileErr);
+        logger.warn('⚠️ Error checking hasUserProfile in /check-ban-status:', profileErr?.message || profileErr);
         hasUserProfile = true;
       }
 
       res.json({ isBanned, hasUserProfile });
     } catch (error) {
-      console.error('❌ Error checking ban status:', error);
+      logger.error('❌ Error checking ban status:', error);
       res.status(500).json({ error: 'Failed to check ban status' });
     }
   });
@@ -10385,10 +10781,10 @@ IMPORTANT:
         isBanned: true
       });
 
-      console.log(`🚫 User ${userId} (${normalizedPhone}) banned by ${adminContext.email}`);
+      logger.info(`🚫 User ${userId} (${normalizedPhone}) banned by ${adminContext.email}`);
       res.json({ success: true, phone: normalizedPhone });
     } catch (error) {
-      console.error('❌ Error banning user:', error);
+      logger.error('❌ Error banning user:', error);
       res.status(500).json({ error: 'Failed to ban user' });
     }
   });
@@ -10486,7 +10882,7 @@ IMPORTANT:
         db.collection('bannedNumbers').doc(digitsOnlyLegacy).delete().catch(() => {})
       ]);
 
-      console.log(`🚫 Phone number ${normalizedPhone} banned by ${adminContext.email}${existingAccountFound ? ` (existing account: ${bannedUserId})` : ' (no existing account)'}`);
+      logger.info(`🚫 Phone number ${normalizedPhone} banned by ${adminContext.email}${existingAccountFound ? ` (existing account: ${bannedUserId})` : ' (no existing account)'}`);
       
       res.json({
         success: true,
@@ -10496,7 +10892,7 @@ IMPORTANT:
         bannedUserName
       });
     } catch (error) {
-      console.error('❌ Error banning phone number:', error);
+      logger.error('❌ Error banning phone number:', error);
       res.status(500).json({ error: 'Failed to ban phone number' });
     }
   });
@@ -10569,10 +10965,10 @@ IMPORTANT:
         }
       }
 
-      console.log(`✅ Phone number ${normalizedPhone} unbanned by ${adminContext.email}`);
+      logger.info(`✅ Phone number ${normalizedPhone} unbanned by ${adminContext.email}`);
       res.json({ success: true });
     } catch (error) {
-      console.error('❌ Error unbanning number:', error);
+      logger.error('❌ Error unbanning number:', error);
       res.status(500).json({ error: 'Failed to unban number' });
     }
   });
@@ -10648,10 +11044,10 @@ IMPORTANT:
         nextCursor: hasMore && bannedDocs.length > 0 ? bannedDocs[bannedDocs.length - 1].id : null
       };
 
-      console.log(`📋 Fetched ${bannedNumbers.length} banned numbers (hasMore: ${hasMore})`);
+      logger.info(`📋 Fetched ${bannedNumbers.length} banned numbers (hasMore: ${hasMore})`);
       res.json(result);
     } catch (error) {
-      console.error('❌ Error fetching banned numbers:', error);
+      logger.error('❌ Error fetching banned numbers:', error);
       res.status(500).json({ error: 'Failed to fetch banned numbers' });
     }
   });
@@ -10701,7 +11097,7 @@ IMPORTANT:
               };
             }
           } catch (err) {
-            console.error(`Error fetching user ${userId}:`, err);
+            logger.error(`Error fetching user ${userId}:`, err);
           }
         }
 
@@ -10753,7 +11149,7 @@ IMPORTANT:
         hasMore = snapshot.size > limit;
         flagDocs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
         
-        console.log(`✅ Indexed query succeeded: ${flagDocs.length} flags`);
+        logger.info(`✅ Indexed query succeeded: ${flagDocs.length} flags`);
       } catch (queryError) {
         // Check if it's an index error
         const isIndexError = queryError.message && (
@@ -10764,7 +11160,7 @@ IMPORTANT:
         );
 
         if (isIndexError) {
-          console.warn('⚠️ Index not ready, using fallback query:', queryError.message);
+          logger.warn('⚠️ Index not ready, using fallback query:', queryError.message);
           
           // Fallback: Fetch all flags (with reasonable limit), filter and sort in memory
           const maxFallbackLimit = 1000; // Reasonable limit for in-memory processing
@@ -10772,7 +11168,7 @@ IMPORTANT:
             .limit(maxFallbackLimit)
             .get();
 
-          console.log(`📋 Fallback: Fetched ${allFlagsSnapshot.size} flags for client-side filtering`);
+          logger.info(`📋 Fallback: Fetched ${allFlagsSnapshot.size} flags for client-side filtering`);
 
           // Filter in memory
           let filteredDocs = allFlagsSnapshot.docs.filter(doc => {
@@ -10803,7 +11199,7 @@ IMPORTANT:
           flagDocs = filteredDocs.slice(startIndex, endIndex);
           hasMore = endIndex < filteredDocs.length;
 
-          console.log(`✅ Fallback query: ${flagDocs.length} flags after filtering (hasMore: ${hasMore})`);
+          logger.info(`✅ Fallback query: ${flagDocs.length} flags after filtering (hasMore: ${hasMore})`);
         } else {
           // Re-throw non-index errors
           throw queryError;
@@ -10819,10 +11215,10 @@ IMPORTANT:
         nextCursor: hasMore && flagDocs.length > 0 ? flagDocs[flagDocs.length - 1].id : null
       };
 
-      console.log(`📋 Fetched ${flags.length} suspicious flags (hasMore: ${hasMore})`);
+      logger.info(`📋 Fetched ${flags.length} suspicious flags (hasMore: ${hasMore})`);
       res.json(result);
     } catch (error) {
-      console.error('❌ Error fetching suspicious flags:', error);
+      logger.error('❌ Error fetching suspicious flags:', error);
       res.status(500).json({ 
         error: 'Failed to fetch suspicious flags',
         message: error.message || 'Unknown error'
@@ -10921,10 +11317,10 @@ IMPORTANT:
       const service = new SuspiciousBehaviorService(db);
       await service.updateUserRiskScore(userId);
 
-      console.log(`✅ Admin ${adminContext.uid} reviewed flag ${id} with action: ${action}`);
+      logger.info(`✅ Admin ${adminContext.uid} reviewed flag ${id} with action: ${action}`);
       res.json({ success: true, message: `Flag ${action}ed successfully` });
     } catch (error) {
-      console.error('❌ Error reviewing flag:', error);
+      logger.error('❌ Error reviewing flag:', error);
       res.status(500).json({ error: 'Failed to review flag' });
     }
   });
@@ -10951,7 +11347,7 @@ IMPORTANT:
 
       res.json(profile);
     } catch (error) {
-      console.error('❌ Error fetching user risk score:', error);
+      logger.error('❌ Error fetching user risk score:', error);
       res.status(500).json({ error: 'Failed to fetch user risk score' });
     }
   });
@@ -11065,7 +11461,7 @@ class SuspiciousBehaviorService {
       
       return fingerprintHash;
     } catch (error) {
-      console.error('❌ Error recording device fingerprint:', error);
+      logger.error('❌ Error recording device fingerprint:', error);
       return null;
     }
   }
@@ -11208,7 +11604,7 @@ class SuspiciousBehaviorService {
       }
       
     } catch (error) {
-      console.error('❌ Error checking receipt patterns:', error);
+      logger.error('❌ Error checking receipt patterns:', error);
     }
   }
 
@@ -11322,7 +11718,7 @@ class SuspiciousBehaviorService {
       }
       
     } catch (error) {
-      console.error('❌ Error checking referral patterns:', error);
+      logger.error('❌ Error checking referral patterns:', error);
     }
   }
 
@@ -11374,7 +11770,7 @@ class SuspiciousBehaviorService {
       }
       
     } catch (error) {
-      console.error('❌ Error checking new account bonus pattern:', error);
+      logger.error('❌ Error checking new account bonus pattern:', error);
     }
   }
 
@@ -11392,7 +11788,7 @@ class SuspiciousBehaviorService {
         .get();
       
       if (!existingFlags.empty) {
-        console.log(`⚠️ Similar flag already exists for user ${userId}, type: ${flagData.flagType}`);
+        logger.info(`⚠️ Similar flag already exists for user ${userId}, type: ${flagData.flagType}`);
         return existingFlags.docs[0].id;
       }
       
@@ -11419,11 +11815,11 @@ class SuspiciousBehaviorService {
       // Update user risk score
       await this.updateUserRiskScore(userId);
       
-      console.log(`🚩 Flagged user ${userId} for ${flagData.flagType} (severity: ${flagData.severity})`);
+      logger.info(`🚩 Flagged user ${userId} for ${flagData.flagType} (severity: ${flagData.severity})`);
       
       return flagRef.id;
     } catch (error) {
-      console.error('❌ Error flagging suspicious behavior:', error);
+      logger.error('❌ Error flagging suspicious behavior:', error);
       return null;
     }
   }
@@ -11549,7 +11945,7 @@ class SuspiciousBehaviorService {
       
       return riskScoreDoc;
     } catch (error) {
-      console.error('❌ Error updating user risk score:', error);
+      logger.error('❌ Error updating user risk score:', error);
       return null;
     }
   }
@@ -11576,7 +11972,7 @@ class SuspiciousBehaviorService {
         }))
       };
     } catch (error) {
-      console.error('❌ Error getting user risk profile:', error);
+      logger.error('❌ Error getting user risk profile:', error);
       return null;
     }
   }
@@ -11586,8 +11982,13 @@ class SuspiciousBehaviorService {
 // Global Error Handler (must be after all routes)
 // =============================================================================
 
+// Sentry error handler middleware (must be before custom error handler)
+if (Sentry) {
+  app.use(Sentry.Handlers.errorHandler());
+}
+
 app.use((err, req, res, next) => {
-  console.error('❌ Unhandled error:', err);
+  logError(err, req, { errorCode: err.code || 'INTERNAL_ERROR' });
   res.status(err.status || 500).json({
     errorCode: err.code || 'INTERNAL_ERROR',
     error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message
@@ -11600,27 +12001,38 @@ let isShuttingDown = false;
 
 validateEnvironment();
 
-server = app.listen(port, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${port}`);
-  console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔑 OpenAI API Key configured: ${process.env.OPENAI_API_KEY ? 'Yes' : 'No'}`);
-  console.log(`🔥 Firebase configured: ${admin.apps.length ? 'Yes' : 'No'}`);
+server = app.listen(port, '0.0.0.0', async () => {
+  logger.info('\n🚀 Server starting...\n');
+  logger.info(`📍 Port: ${port}`);
+  logger.info(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.info(`🌐 URL: http://0.0.0.0:${port}\n`);
+  
+  // Check service status
+  logger.info('📊 Service Status:');
+  logger.info(`  ${admin.apps.length ? '✅' : '❌'} Firebase: ${admin.apps.length ? 'Initialized' : 'Not initialized'}`);
+  logger.info(`  ${process.env.OPENAI_API_KEY ? '✅' : '❌'} OpenAI: ${process.env.OPENAI_API_KEY ? 'Configured' : 'Not configured'}`);
+  
+  const redisHealth = await checkRedisHealth();
+  logger.info(`  ${redisHealth.connected ? '✅' : redisClient ? '⚠️' : 'ℹ️'} Redis: ${redisHealth.status || 'Not configured'}`);
+  logger.info(`  ${Sentry ? '✅' : 'ℹ️'} Sentry: ${Sentry ? 'Configured' : 'Not configured'}`);
+  
+  logger.info('\n✅ Server ready!\n');
 });
 
 function shutdown(signal, exitCode = 0) {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  console.log(`🧹 Shutdown initiated (${signal})`);
+  logger.info(`🧹 Shutdown initiated (${signal})`);
   
   // Close Redis connection if it exists
   if (redisClient) {
     redisClient.disconnect();
-    console.log('✅ Redis disconnected');
+    logger.info('✅ Redis disconnected');
   }
   
   if (server) {
     server.close(() => {
-      console.log('✅ Server closed');
+      logger.info('✅ Server closed');
       process.exit(exitCode);
     });
   } else {
@@ -11632,11 +12044,15 @@ function shutdown(signal, exitCode = 0) {
 
 // Process-level error handlers to prevent crashes
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  logError(error, null, { 
+    type: 'unhandledRejection',
+    promise: promise?.toString?.() || 'unknown'
+  });
 });
 
 process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught Exception:', error);
+  logError(error, null, { type: 'uncaughtException' });
   shutdown('uncaughtException', 1);
 });
 
