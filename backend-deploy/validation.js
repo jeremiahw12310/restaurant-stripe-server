@@ -120,7 +120,9 @@ const redeemRewardSchema = Joi.object({
   cookingMethod: Joi.string().max(50).allow('', null).optional(),
   drinkType: Joi.string().max(50).allow('', null).optional(),
   selectedDrinkItemId: Joi.string().max(100).allow('', null).optional(),
-  selectedDrinkItemName: Joi.string().max(200).allow('', null).optional()
+  selectedDrinkItemName: Joi.string().max(200).allow('', null).optional(),
+  iceLevel: Joi.string().max(50).allow('', null).optional(),
+  sugarLevel: Joi.string().max(50).allow('', null).optional()
 });
 
 /**
