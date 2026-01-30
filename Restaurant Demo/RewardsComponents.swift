@@ -710,7 +710,9 @@ struct RewardDetailView: View {
                                     selectedItem2: flavor2, // Second dumpling for half-and-half
                                     cookingMethod: comboCookingMethod,
                                     drinkType: selectedDrinkType,
-                                    selectedDrinkItem: comboDrinkItem // Drink item in separate field
+                                    selectedDrinkItem: comboDrinkItem, // Drink item in separate field
+                                    iceLevel: selectedIceLevel,
+                                    sugarLevel: selectedSugarLevel
                                 )
                             }
                         } else {
@@ -724,7 +726,9 @@ struct RewardDetailView: View {
                                     selectedItem2: nil, // Not used for single dumpling
                                     cookingMethod: comboCookingMethod,
                                     drinkType: selectedDrinkType,
-                                    selectedDrinkItem: comboDrinkItem // Drink item in separate field
+                                    selectedDrinkItem: comboDrinkItem, // Drink item in separate field
+                                    iceLevel: selectedIceLevel,
+                                    sugarLevel: selectedSugarLevel
                                 )
                             }
                         }
@@ -919,6 +923,12 @@ struct RewardDetailView: View {
                             selectedItem = item // Temporarily store for drink type view
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                                 showDrinkTypeSelection = true
+                            }
+                        } else if category == "Milk Tea" || category == "Fruit Tea" || category == "Coffee" {
+                            // Milk Tea, Fruit Tea, Coffee: show ice/sugar then topping
+                            selectedItem = item
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                showIceSugarSelection = true
                             }
                         } else {
                             // Other categories go straight to topping selection

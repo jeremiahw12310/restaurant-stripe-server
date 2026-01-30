@@ -8924,7 +8924,8 @@ IMPORTANT:
       }
 
       const { giftedRewardId, selectedItemId, selectedItemName, selectedToppingId, selectedToppingName, 
-              selectedItemId2, selectedItemName2, cookingMethod, drinkType, selectedDrinkItemId, selectedDrinkItemName } = req.body;
+              selectedItemId2, selectedItemName2, cookingMethod, drinkType, selectedDrinkItemId, selectedDrinkItemName,
+              iceLevel, sugarLevel } = req.body;
 
       if (!giftedRewardId || typeof giftedRewardId !== 'string') {
         return res.status(400).json({ error: 'giftedRewardId is required' });
@@ -9059,6 +9060,8 @@ IMPORTANT:
         drinkType: drinkType || null,
         selectedDrinkItemId: selectedDrinkItemId || null,
         selectedDrinkItemName: selectedDrinkItemName || null,
+        iceLevel: iceLevel || null,
+        sugarLevel: sugarLevel || null,
         isGiftedReward: true,
         giftedRewardId: giftedRewardId
       };
@@ -9110,7 +9113,9 @@ IMPORTANT:
           ...(selectedItemName2 && { selectedItemName2 }),
           ...(cookingMethod && { cookingMethod }),
           ...(drinkType && { drinkType }),
-          ...(selectedDrinkItemName && { selectedDrinkItemName })
+          ...(selectedDrinkItemName && { selectedDrinkItemName }),
+          ...(iceLevel && { iceLevel }),
+          ...(sugarLevel && { sugarLevel })
         }
       };
 
@@ -9136,6 +9141,8 @@ IMPORTANT:
         drinkType: drinkType || null,
         selectedDrinkItemId: selectedDrinkItemId || null,
         selectedDrinkItemName: selectedDrinkItemName || null,
+        iceLevel: iceLevel || null,
+        sugarLevel: sugarLevel || null,
         expiresAt: expiresAt.toISOString(),
         message: 'Gift reward claimed successfully! Show the code to your cashier.',
         error: null

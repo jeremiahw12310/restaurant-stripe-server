@@ -209,6 +209,9 @@ struct GiftedRewardDetailView: View {
     @State private var comboDumplingItem: RewardEligibleItem?
     @State private var comboDrinkItem: RewardEligibleItem?
     @State private var comboCookingMethod: String?
+    @State private var showIceSugarSelection = false
+    @State private var selectedIceLevel: String = "Normal"
+    @State private var selectedSugarLevel: String = "Normal"
     
     // Helper computed properties to detect reward type
     private var requiresTopping: Bool {
@@ -231,6 +234,11 @@ struct GiftedRewardDetailView: View {
     
     private var isFullComboReward: Bool {
         gift.rewardTitle.trimmingCharacters(in: .whitespacesAndNewlines) == "Full Combo"
+    }
+    
+    private var requiresIceSugarSelection: Bool {
+        let title = gift.rewardTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title == "Milk Tea" || title == "Fruit Tea" || title == "Coffee" || title == "Lemonade or Soda"
     }
     
     // Create a RewardOption from GiftedReward for selection views
@@ -446,9 +454,9 @@ struct GiftedRewardDetailView: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                             showDrinkTypeSelection = true
                         }
-                    } else if requiresTopping, let drinkItem = item {
+                    } else if requiresIceSugarSelection, let drinkItem = item {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            showToppingSelection = true
+                            showIceSugarSelection = true
                         }
                     } else if requiresCookingMethodSelection, let dumplingItem = item {
                         selectedSingleDumpling = dumplingItem
@@ -619,7 +627,7 @@ struct GiftedRewardDetailView: View {
                         selectedDrinkType = drinkType
                         showDrinkTypeSelection = false
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            showToppingSelection = true
+                            showIceSugarSelection = true
                         }
                     },
                     onCancel: {
@@ -627,6 +635,24 @@ struct GiftedRewardDetailView: View {
                     }
                 )
             }
+        }
+        .sheet(isPresented: $showIceSugarSelection) {
+            RewardIceSugarSelectionView(
+                reward: rewardOption,
+                drinkName: selectedItem?.itemName ?? gift.rewardTitle,
+                currentPoints: rewardsVM.userPoints,
+                onSelectionComplete: { ice, sugar in
+                    selectedIceLevel = ice
+                    selectedSugarLevel = sugar
+                    showIceSugarSelection = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        showToppingSelection = true
+                    }
+                },
+                onCancel: {
+                    showIceSugarSelection = false
+                }
+            )
         }
         .sheet(isPresented: $showComboDrinkCategorySelection) {
             RewardDrinkCategorySelectionView(
@@ -656,6 +682,10 @@ struct GiftedRewardDetailView: View {
                     if requiresDrinkTypeSelection {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                             showDrinkTypeSelection = true
+                        }
+                    } else if requiresIceSugarSelection {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showIceSugarSelection = true
                         }
                     } else {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -734,7 +764,9 @@ struct GiftedRewardDetailView: View {
             cookingMethod: comboCookingMethod ?? cookingMethod,
             drinkType: selectedDrinkType,
             selectedDrinkItemId: comboDrinkItem?.itemId,
-            selectedDrinkItemName: comboDrinkItem?.itemName
+            selectedDrinkItemName: comboDrinkItem?.itemName,
+            iceLevel: selectedIceLevel,
+            sugarLevel: selectedSugarLevel
         )
         
         do {

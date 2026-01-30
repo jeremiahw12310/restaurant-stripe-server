@@ -224,6 +224,8 @@ struct GiftRewardClaimRequest: Codable {
     let drinkType: String?
     let selectedDrinkItemId: String?
     let selectedDrinkItemName: String?
+    let iceLevel: String?
+    let sugarLevel: String?
 }
 
 // MARK: - Gift Reward Claim Response
@@ -240,6 +242,8 @@ struct GiftRewardClaimResponse: Codable {
     let drinkType: String?
     let selectedDrinkItemId: String?
     let selectedDrinkItemName: String?
+    let iceLevel: String?
+    let sugarLevel: String?
     let expiresAt: Date
     let message: String
     let error: String?
@@ -257,6 +261,8 @@ struct GiftRewardClaimResponse: Codable {
         case drinkType
         case selectedDrinkItemId
         case selectedDrinkItemName
+        case iceLevel
+        case sugarLevel
         case expiresAt
         case message
         case error
@@ -277,6 +283,8 @@ struct GiftRewardClaimResponse: Codable {
         self.drinkType = try container.decodeIfPresent(String.self, forKey: .drinkType)
         self.selectedDrinkItemId = try container.decodeIfPresent(String.self, forKey: .selectedDrinkItemId)
         self.selectedDrinkItemName = try container.decodeIfPresent(String.self, forKey: .selectedDrinkItemName)
+        self.iceLevel = try container.decodeIfPresent(String.self, forKey: .iceLevel)
+        self.sugarLevel = try container.decodeIfPresent(String.self, forKey: .sugarLevel)
         self.message = try container.decode(String.self, forKey: .message)
         self.error = try container.decodeIfPresent(String.self, forKey: .error)
         
