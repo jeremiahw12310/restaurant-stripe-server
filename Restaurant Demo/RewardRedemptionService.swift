@@ -111,7 +111,9 @@ class RewardRedemptionService: ObservableObject {
         cookingMethod: String? = nil,
         drinkType: String? = nil,
         selectedDrinkItemId: String? = nil,
-        selectedDrinkItemName: String? = nil
+        selectedDrinkItemName: String? = nil,
+        iceLevel: String? = nil,
+        sugarLevel: String? = nil
     ) async -> Result<RewardRedemptionResponse, Error> {
         
         await MainActor.run {
@@ -143,7 +145,9 @@ class RewardRedemptionService: ObservableObject {
                 cookingMethod: cookingMethod,
                 drinkType: drinkType,
                 selectedDrinkItemId: selectedDrinkItemId,
-                selectedDrinkItemName: selectedDrinkItemName
+                selectedDrinkItemName: selectedDrinkItemName,
+                iceLevel: iceLevel,
+                sugarLevel: sugarLevel
             )
             
             guard let url = URL(string: "\(baseURL)/redeem-reward") else {
@@ -172,6 +176,12 @@ class RewardRedemptionService: ObservableObject {
             }
             if let type = drinkType {
                 DebugLogger.debug("🥤 Drink type: \(type)", category: "Rewards")
+            }
+            if let ice = iceLevel {
+                DebugLogger.debug("🧊 Ice level: \(ice)", category: "Rewards")
+            }
+            if let sugar = sugarLevel {
+                DebugLogger.debug("🍬 Sugar level: \(sugar)", category: "Rewards")
             }
             DebugLogger.debug("📡 API URL: \(url)", category: "Rewards")
             DebugLogger.debug("📦 Request data: \(String(data: jsonData, encoding: .utf8) ?? "")", category: "Rewards")
@@ -209,6 +219,12 @@ class RewardRedemptionService: ObservableObject {
                 }
                 if let type = redemptionResponse.drinkType {
                     DebugLogger.debug("🥤 Drink type: \(type)", category: "Rewards")
+                }
+                if let ice = redemptionResponse.iceLevel {
+                    DebugLogger.debug("🧊 Ice level: \(ice)", category: "Rewards")
+                }
+                if let sugar = redemptionResponse.sugarLevel {
+                    DebugLogger.debug("🍬 Sugar level: \(sugar)", category: "Rewards")
                 }
                 
                 return .success(redemptionResponse)

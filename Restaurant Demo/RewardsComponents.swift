@@ -167,6 +167,9 @@ struct RewardDetailView: View {
     @State private var comboDumplingItem: RewardEligibleItem? // NEW: Dumpling item for Full Combo
     @State private var comboDrinkItem: RewardEligibleItem? // NEW: Drink item for Full Combo
     @State private var comboCookingMethod: String? // NEW: Cooking method for Full Combo
+    @State private var showIceSugarSelection = false // Ice/sugar level selection (for drink rewards)
+    @State private var selectedIceLevel: String = "Normal" // Ice level selection
+    @State private var selectedSugarLevel: String = "Normal" // Sugar level selection
     @State private var isRedeeming = false
     @State private var appearAnimation = false
     @State private var pulseAnimation = false
@@ -208,6 +211,12 @@ struct RewardDetailView: View {
         // Check if this is the Full Combo reward
         let title = reward.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return title == "Full Combo"
+    }
+    
+    private var requiresIceSugarSelection: Bool {
+        // Check if this is a drink reward that needs ice/sugar level selection
+        let title = reward.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title == "Milk Tea" || title == "Fruit Tea" || title == "Coffee" || title == "Lemonade or Soda"
     }
     
     var progress: Double {
@@ -597,10 +606,10 @@ struct RewardDetailView: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                             showDrinkTypeSelection = true
                         }
-                    } else if requiresTopping, let drinkItem = item {
-                        // Other drink rewards go straight to topping selection
+                    } else if requiresIceSugarSelection, let drinkItem = item {
+                        // Other drink rewards (Milk Tea, Fruit Tea, Coffee) go to ice/sugar selection
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            showToppingSelection = true
+                            showIceSugarSelection = true
                         }
                     } else if isPizzaDumplings, let dumplingItem = item {
                         // Pizza Dumplings skip cooking method - auto-set to "Pan-fried"
@@ -644,11 +653,11 @@ struct RewardDetailView: View {
                                 showToppingSelection = true
                             }
                         } else {
-                            // Regular: Store drink type and show topping selection
+                            // Regular Lemonade/Soda: Store drink type and show ice/sugar selection
                             selectedDrinkType = drinkType
                             showDrinkTypeSelection = false
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                showToppingSelection = true
+                                showIceSugarSelection = true
                             }
                         }
                     },
@@ -657,6 +666,25 @@ struct RewardDetailView: View {
                     }
                 )
             }
+        }
+        .sheet(isPresented: $showIceSugarSelection) {
+            RewardIceSugarSelectionView(
+                reward: reward,
+                drinkName: selectedItem?.itemName ?? reward.title,
+                currentPoints: currentPoints,
+                onSelectionComplete: { ice, sugar in
+                    selectedIceLevel = ice
+                    selectedSugarLevel = sugar
+                    showIceSugarSelection = false
+                    // Show topping selection next
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        showToppingSelection = true
+                    }
+                },
+                onCancel: {
+                    showIceSugarSelection = false
+                }
+            )
         }
         .sheet(isPresented: $showToppingSelection) {
             RewardToppingSelectionView(
@@ -702,8 +730,15 @@ struct RewardDetailView: View {
                         }
                     } else {
                         // Regular: Proceed with redemption after topping selection
+                        // Include ice and sugar levels for drink rewards
                         Task {
-                            await redeemReward(selectedItem: selectedItem, selectedTopping: topping, drinkType: selectedDrinkType)
+                            await redeemReward(
+                                selectedItem: selectedItem,
+                                selectedTopping: topping,
+                                drinkType: selectedDrinkType,
+                                iceLevel: selectedIceLevel,
+                                sugarLevel: selectedSugarLevel
+                            )
                         }
                     }
                 },
@@ -913,7 +948,9 @@ struct RewardDetailView: View {
         selectedItem2: RewardEligibleItem? = nil,
         cookingMethod: String? = nil,
         drinkType: String? = nil,
-        selectedDrinkItem: RewardEligibleItem? = nil
+        selectedDrinkItem: RewardEligibleItem? = nil,
+        iceLevel: String? = nil,
+        sugarLevel: String? = nil
     ) async {
         guard let userId = Auth.auth().currentUser?.uid else {
             DebugLogger.debug("❌ No user ID available for redemption", category: "Rewards")
@@ -947,7 +984,9 @@ struct RewardDetailView: View {
             cookingMethod: cookingMethod,
             drinkType: drinkType,
             selectedDrinkItemId: selectedDrinkItem?.itemId,
-            selectedDrinkItemName: selectedDrinkItem?.itemName
+            selectedDrinkItemName: selectedDrinkItem?.itemName,
+            iceLevel: iceLevel,
+            sugarLevel: sugarLevel
         )
         
         await MainActor.run {

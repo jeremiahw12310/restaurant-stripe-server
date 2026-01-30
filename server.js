@@ -3756,7 +3756,9 @@ IMPORTANT:
         cookingMethod,       // NEW: Optional cooking method (for dumpling rewards)
         drinkType,           // NEW: Optional drink type (Lemonade or Soda)
         selectedDrinkItemId, // NEW: Optional drink item ID (for Full Combo)
-        selectedDrinkItemName // NEW: Optional drink item name (for Full Combo)
+        selectedDrinkItemName, // NEW: Optional drink item name (for Full Combo)
+        iceLevel,            // Optional ice level (Normal, 75%, 50%, 25%, No Ice)
+        sugarLevel           // Optional sugar level (Normal, 75%, 50%, 25%, No Sugar)
       } = req.body;
       
       const userId = req.auth.uid;
@@ -3846,7 +3848,9 @@ IMPORTANT:
           ...(cookingMethod && { cookingMethod }),
           ...(drinkType && { drinkType }),
           ...(selectedDrinkItemId && { selectedDrinkItemId }),
-          ...(selectedDrinkItemName && { selectedDrinkItemName })
+          ...(selectedDrinkItemName && { selectedDrinkItemName }),
+          ...(iceLevel && { iceLevel }),
+          ...(sugarLevel && { sugarLevel })
         };
         
         let transactionDescription = `Redeemed: ${rewardTitle}`;
@@ -3898,6 +3902,8 @@ IMPORTANT:
           drinkType: drinkType || null,
           selectedDrinkItemId: selectedDrinkItemId || null,
           selectedDrinkItemName: selectedDrinkItemName || null,
+          iceLevel: iceLevel || null,
+          sugarLevel: sugarLevel || null,
           expiresAt: redeemedReward.expiresAt
         };
       });
@@ -3920,6 +3926,8 @@ IMPORTANT:
             drinkType: redemptionResult.existingReward.drinkType || null,
             selectedDrinkItemId: redemptionResult.existingReward.selectedDrinkItemId || null,
             selectedDrinkItemName: redemptionResult.existingReward.selectedDrinkItemName || null,
+            iceLevel: redemptionResult.existingReward.iceLevel || null,
+            sugarLevel: redemptionResult.existingReward.sugarLevel || null,
             expiresAt: existingExpiresAt,
             message: 'Reward redeemed successfully! Show the code to your cashier.'
           }
@@ -3936,6 +3944,8 @@ IMPORTANT:
             drinkType: redemptionResult.drinkType,
             selectedDrinkItemId: redemptionResult.selectedDrinkItemId,
             selectedDrinkItemName: redemptionResult.selectedDrinkItemName,
+            iceLevel: redemptionResult.iceLevel,
+            sugarLevel: redemptionResult.sugarLevel,
             expiresAt: redemptionResult.expiresAt,
             message: 'Reward redeemed successfully! Show the code to your cashier.'
           };
