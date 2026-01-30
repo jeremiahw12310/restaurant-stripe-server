@@ -219,6 +219,24 @@
       .toast.show {
         opacity: 1;
       }
+      .btn-beta {
+        display: inline-block;
+        margin-top: 14px;
+        padding: 8px 12px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--muted);
+        text-decoration: none;
+        border-radius: 12px;
+        transition: color 0.12s ease, background 0.12s ease;
+      }
+      .btn-beta:hover {
+        color: var(--gold);
+        background: rgba(216, 165, 63, 0.08);
+      }
+      .btn-beta:active {
+        opacity: 0.9;
+      }
       @media (prefers-reduced-motion: reduce) {
         .btn {
           transition: none;
@@ -273,6 +291,9 @@
           ·
           <a href="/terms.html" target="_blank" rel="noreferrer">Terms of Service</a>
         </div>
+        <div style="text-align: center;">
+          <a class="btn-beta" id="betaTestBtn" href="#" target="_blank" rel="noopener noreferrer">Beta Test</a>
+        </div>
       </div>
     </div>
 
@@ -289,6 +310,9 @@
       // App Store link (enable after submission by filling this in)
       // Example: "https://apps.apple.com/app/id1234567890"
       const APP_STORE_URL = "";
+
+      // TestFlight public link for beta testers (paste your link from App Store Connect → TestFlight → Public Link)
+      const TESTFLIGHT_PUBLIC_LINK = "https://testflight.apple.com/join/GJfArH64";
 
       // Deep link fallback (if the app is installed but Universal Links isn't set up yet)
       const deepLink = `restaurantdemo://referral?code=${encodeURIComponent(code)}`;
@@ -323,6 +347,14 @@
           document.body.removeChild(ta);
           showToast("Copied code");
         }
+      }
+
+      // Beta Test button (TestFlight)
+      const betaTestBtn = document.getElementById("betaTestBtn");
+      if (TESTFLIGHT_PUBLIC_LINK && /^https?:\/\//i.test(TESTFLIGHT_PUBLIC_LINK)) {
+        betaTestBtn.href = TESTFLIGHT_PUBLIC_LINK;
+      } else {
+        betaTestBtn.style.display = "none";
       }
 
       // App Store button (disabled by default until APP_STORE_URL is set)
