@@ -1034,6 +1034,60 @@ Calculate the total price accurately. Keep the response warm and personal.`;
       }
       
       console.log('✅ Successfully parsed and validated AI response');
+
+      // Enforce variety against recent combos (server-side)
+      const recentCombos = Array.isArray(previousRecommendations) ? previousRecommendations.slice(-3) : [];
+      if (recentCombos.length > 0) {
+        const normalizeComboKey = (items) => items
+          .map(item => (item.id || '').toLowerCase().trim())
+          .filter(id => id.length > 0)
+          .sort()
+          .join('|');
+
+        const previousKeys = new Set(recentCombos.map(combo => normalizeComboKey(combo.items || [])));
+        const currentKey = normalizeComboKey(parsedResponse.items);
+
+        if (previousKeys.has(currentKey)) {
+          console.log('🔁 Detected duplicate combo vs recent recommendations, attempting replacement');
+          const previousIds = new Set(
+            recentCombos
+              .flatMap(combo => (combo.items || []).map(item => (item.id || '').toLowerCase().trim()))
+              .filter(id => id.length > 0)
+          );
+
+          const duplicateIndex = parsedResponse.items.findIndex(item =>
+            previousIds.has((item.id || '').toLowerCase().trim())
+          );
+
+          if (duplicateIndex !== -1) {
+            const currentItem = parsedResponse.items[duplicateIndex];
+            let candidates = allMenuItems.filter(mi => !previousIds.has((mi.id || '').toLowerCase().trim()));
+
+            if (currentItem.category) {
+              const targetCategory = currentItem.category.toLowerCase();
+              const categoryCandidates = candidates.filter(mi => (mi.category || '').toLowerCase() === targetCategory);
+              if (categoryCandidates.length > 0) {
+                candidates = categoryCandidates;
+              }
+            }
+
+            if (candidates.length > 0) {
+              const replacement = candidates[Math.floor(Math.random() * candidates.length)];
+              parsedResponse.items[duplicateIndex] = {
+                id: replacement.id,
+                category: replacement.category || currentItem.category || 'Other'
+              };
+            }
+          }
+
+          const updatedKey = normalizeComboKey(parsedResponse.items);
+          if (previousKeys.has(updatedKey)) {
+            console.log('⚠️ Duplicate combo still present after replacement attempt');
+          } else {
+            console.log('✅ Duplicate combo resolved with replacement item');
+          }
+        }
+      }
       
       // 🛡️ PLAN B: Dietary Restriction Safety Validation System
       console.log('🛡️ Running dietary restriction safety validation...');

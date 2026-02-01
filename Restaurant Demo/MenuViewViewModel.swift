@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import SwiftUI
+import Kingfisher
 
 class MenuViewViewModel: ObservableObject {
     @Published var showComboLoading = false
@@ -15,6 +16,7 @@ class MenuViewViewModel: ObservableObject {
     private let comboService = PersonalizedComboService()
     private var isComboReady = false
     private var isInterstitialDone = false
+    private var areImagesReady = false
     
     // Failsafe timeout to dismiss interstitial if request hangs
     private var comboTimeoutWorkItem: DispatchWorkItem?
@@ -36,6 +38,7 @@ class MenuViewViewModel: ObservableObject {
         // Reset gating flags
         isComboReady = false
         isInterstitialDone = false
+        areImagesReady = false
         requestEarlyCut = false
         error = nil
         
@@ -97,12 +100,17 @@ class MenuViewViewModel: ObservableObject {
                 DebugLogger.debug("💰 Total price: $\(combo.totalPrice)", category: "Menu")
                 self?.personalizedCombo = combo
                 self?.isComboReady = true
-                // Signal the interstitial it may end early (subject to threshold)
-                self?.requestEarlyCut = true
-                self?.maybeShowResult()
                 
                 // Add this combo to previous recommendations
                 self?.addToPreviousRecommendations(combo)
+                
+                // Prefetch images before signaling video can end
+                self?.prefetchComboImages(combo: combo) {
+                    self?.areImagesReady = true
+                    // Signal the interstitial it may end early (subject to threshold)
+                    self?.requestEarlyCut = true
+                    self?.maybeShowResult()
+                }
             }
         )
         .store(in: &cancellables)
@@ -117,8 +125,64 @@ class MenuViewViewModel: ObservableObject {
     }
 
     private func maybeShowResult() {
-        if isComboReady && isInterstitialDone {
+        if isComboReady && isInterstitialDone && areImagesReady {
             showComboResult = true
+        }
+    }
+    
+    private func prefetchComboImages(combo: PersonalizedCombo, completion: @escaping () -> Void) {
+        let urls = combo.items.compactMap { $0.resolvedImageURL }
+        
+        guard !urls.isEmpty else {
+            DebugLogger.debug("🖼️ No combo images to prefetch", category: "Menu")
+            completion()
+            return
+        }
+        
+        DebugLogger.debug("🖼️ Prefetching \(urls.count) combo images", category: "Menu")
+        
+        let group = DispatchGroup()
+        let processor = DownsamplingImageProcessor(size: CGSize(width: 120, height: 120))
+        let options: KingfisherOptionsInfo = [
+            .processor(processor),
+            .scaleFactor(UIScreen.main.scale)
+        ]
+        
+        var timeoutFired = false
+        var failedCount = 0
+        
+        let timeoutWorkItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            timeoutFired = true
+            guard self.showComboInterstitial, !self.areImagesReady else { return }
+            DebugLogger.debug("🖼️ Image load timeout - dismissing with error", category: "Menu")
+            self.showComboInterstitial = false
+            self.error = "Images took too long to load. Please try again."
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 25.0, execute: timeoutWorkItem)
+        
+        for url in urls {
+            group.enter()
+            KingfisherManager.shared.retrieveImage(with: url, options: options) { result in
+                if case .failure(let error) = result {
+                    failedCount += 1
+                    DebugLogger.debug("🖼️ Failed to load combo image: \(url.absoluteString) (\(error.localizedDescription))", category: "Menu")
+                }
+                group.leave()
+            }
+        }
+        
+        group.notify(queue: .main) {
+            timeoutWorkItem.cancel()
+            guard !timeoutFired else { return }
+            if failedCount > 0 {
+                DebugLogger.debug("🖼️ Combo image load failed for \(failedCount) item(s) - dismissing with error", category: "Menu")
+                self.showComboInterstitial = false
+                self.error = "Some images failed to load. Please try again."
+                return
+            }
+            DebugLogger.debug("🖼️ All combo images loaded", category: "Menu")
+            completion()
         }
     }
     

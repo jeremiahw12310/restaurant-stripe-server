@@ -19,6 +19,21 @@ class PersonalizedComboService: ObservableObject {
         }
     }
 
+    private struct ComboErrorResponse: Decodable {
+        let error: String?
+        let details: String?
+
+        var combinedMessage: String {
+            if let error, let details, !details.isEmpty {
+                return "\(error): \(details)"
+            }
+            if let error, !error.isEmpty {
+                return error
+            }
+            return "Request failed."
+        }
+    }
+
     private func idTokenPublisher() -> AnyPublisher<String, Error> {
         Future<String, Error> { promise in
             guard let user = Auth.auth().currentUser else {
@@ -75,13 +90,25 @@ class PersonalizedComboService: ObservableObject {
         }
         
         return idTokenPublisher()
-            .flatMap { token -> AnyPublisher<Data, Error> in
+            .flatMap { token -> AnyPublisher<(data: Data, response: URLResponse), Error> in
                 var authed = urlRequest
                 authed.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 return URLSession.configured.dataTaskPublisher(for: authed)
-                    .map(\.data)
                     .mapError { $0 as Error }
                     .eraseToAnyPublisher()
+            }
+            .tryMap { output in
+                guard let httpResponse = output.response as? HTTPURLResponse else {
+                    throw ComboError.networkError
+                }
+
+                if httpResponse.statusCode == 200 {
+                    return output.data
+                }
+
+                let errorResponse = try? JSONDecoder().decode(ComboErrorResponse.self, from: output.data)
+                let message = errorResponse?.combinedMessage ?? "Request failed (\(httpResponse.statusCode))."
+                throw ComboError.serverError(message)
             }
             .handleEvents(receiveOutput: { data in
                 DebugLogger.debug("📥 Received response data: \(String(data: data, encoding: .utf8) ?? "Unable to decode")", category: "Combo")
@@ -147,6 +174,11 @@ class PersonalizedComboService: ObservableObject {
                     menuItems.first { $0.isDumpling } ?? menuItems.first,
                     menuItems.first { !$0.isDumpling } ?? menuItems.first
                 ].compactMap { $0 } : comboItems
+
+                let missingImageItems = finalItems.filter { $0.resolvedImageURL == nil }
+                if !missingImageItems.isEmpty {
+                    DebugLogger.debug("⚠️ Combo items missing image URLs: \(missingImageItems.map { "\($0.id) [imageURL: \($0.imageURL)]" })", category: "Combo")
+                }
                 
                 return PersonalizedCombo(
                     items: finalItems,
@@ -179,6 +211,7 @@ enum ComboError: Error, LocalizedError {
     case encodingError
     case networkError
     case decodingError
+    case serverError(String)
     
     var errorDescription: String? {
         switch self {
@@ -190,6 +223,8 @@ enum ComboError: Error, LocalizedError {
             return "Network error occurred"
         case .decodingError:
             return "Failed to decode response"
+        case .serverError(let message):
+            return message
         }
     }
 } 
