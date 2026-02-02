@@ -462,7 +462,7 @@ function createInMemoryRateLimiter({ keyFn, windowMs, max, errorCode }) {
       res.set('Retry-After', String(retryAfterSeconds));
       return res.status(429).json({
         errorCode: errorCode || 'RATE_LIMITED',
-        error: 'Too many requests. Please slow down.',
+        error: `You're doing this too quickly. Please wait ${retryAfterSeconds} second${retryAfterSeconds === 1 ? '' : 's'}.`,
         retryAfterSeconds
       });
     }
@@ -523,7 +523,9 @@ function createRateLimiter({ keyFn, windowMs, max, errorCode }) {
       if (retryAfterSeconds) res.set('Retry-After', String(retryAfterSeconds));
       return res.status(429).json({
         errorCode: errorCode || 'RATE_LIMITED',
-        error: 'Too many requests. Please slow down.',
+        error: retryAfterSeconds 
+          ? `You're doing this too quickly. Please wait ${retryAfterSeconds} second${retryAfterSeconds === 1 ? '' : 's'}.`
+          : 'You\'re doing this too quickly. Please wait a moment.',
         retryAfterSeconds
       });
     }
@@ -1829,13 +1831,13 @@ app.get('/app-version', (req, res) => {
 const comboPerUserLimiter = createRateLimiter({
   keyFn: (req) => req.auth?.uid,
   windowMs: 60_000,
-  max: parseInt(process.env.COMBO_UID_PER_MIN || '6', 10),
+  max: parseInt(process.env.COMBO_UID_PER_MIN || '15', 10),
   errorCode: 'COMBO_RATE_LIMITED'
 });
 const comboPerIpLimiter = createRateLimiter({
   keyFn: (req) => getClientIp(req),
   windowMs: 60_000,
-  max: parseInt(process.env.COMBO_IP_PER_MIN || '20', 10),
+  max: parseInt(process.env.COMBO_IP_PER_MIN || '30', 10),
   errorCode: 'COMBO_RATE_LIMITED'
 });
 
@@ -1872,7 +1874,7 @@ app.post('/generate-combo', requireFirebaseAuth, comboPerUserLimiter, comboPerIp
         db,
         uid: req.auth.uid,
         endpointKey: 'generate-combo',
-        limit: process.env.COMBO_DAILY_LIMIT || 20
+        limit: process.env.COMBO_DAILY_LIMIT || 40
       });
       if (!quota.allowed) {
         return res.status(429).json({
