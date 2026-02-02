@@ -1,5 +1,4 @@
 import SwiftUI
-import StoreKit
 
 /// View displayed when the app requires an update to continue
 struct UpdateRequiredView: View {
@@ -102,23 +101,9 @@ struct UpdateRequiredView: View {
     }
     
     private func openAppStore() {
-        // Try to get App Store URL from the service
-        if let appStoreURL = AppVersionService.shared.getAppStoreURL() {
-            UIApplication.shared.open(appStoreURL)
-        } else {
-            // Fallback: Try to open App Store with the app's bundle identifier
-            // This uses StoreKit 2's App Store URL scheme
-            if let bundleId = Bundle.main.bundleIdentifier {
-                if let url = URL(string: "https://apps.apple.com/app/id\(bundleId)") {
-                    UIApplication.shared.open(url)
-                } else {
-                    // Last resort: Open App Store search
-                    let encodedBundleId = bundleId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? bundleId
-                    if let searchURL = URL(string: "https://apps.apple.com/search?term=\(encodedBundleId)") {
-                        UIApplication.shared.open(searchURL)
-                    }
-                }
-            }
+        // Use App Store URL from service (Config.appStoreID or search-by-bundle-id fallback)
+        if let url = AppVersionService.shared.getAppStoreURL() {
+            UIApplication.shared.open(url)
         }
     }
 }

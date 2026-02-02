@@ -446,10 +446,23 @@ class NotificationService: NSObject, ObservableObject {
     // MARK: - Push Notification Tap Handling
     
     /// Handle when user taps on a push notification
-    /// Marks all unread notifications as read (since push payloads don't include Firestore document IDs)
+    /// Marks all unread notifications as read and handles navigation based on notification type
     func handlePushNotificationTap(userInfo: [String: Any]) {
         DebugLogger.debug("📱 NotificationService: Handling push notification tap", category: "Notifications")
         markAllNotificationsAsRead()
+        
+        // Handle reward gift navigation
+        if let type = userInfo["type"] as? String, type == "reward_gift",
+           let giftedRewardId = userInfo["giftedRewardId"] as? String {
+            DebugLogger.debug("🎁 NotificationService: Navigating to gifted reward: \(giftedRewardId)", category: "Notifications")
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .navigateToGiftedReward,
+                    object: nil,
+                    userInfo: ["giftedRewardId": giftedRewardId]
+                )
+            }
+        }
     }
     
     // MARK: - App Badge Management

@@ -113,27 +113,25 @@ struct MenuItem: Codable, Identifiable, Hashable {
         self.category = category
     }
     
-    // Computed property to resolve image URL for AsyncImage
+    // Computed property to resolve image URL for AsyncImage (single source of truth for menu + combo)
     var resolvedImageURL: URL? {
-        if imageURL.hasPrefix("gs://") {
-            let components = imageURL.replacingOccurrences(of: "gs://", with: "").components(separatedBy: "/")
-            if components.count >= 2 {
-                let bucketName = components[0]
-                let filePath = components.dropFirst().joined(separator: "/")
-                let encodedPath = filePath.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filePath
-                
-                // Construct proper Firebase Storage URL
-                let urlString = "https://firebasestorage.googleapis.com/v0/b/\(bucketName)/o/\(encodedPath)?alt=media"
-                
-                if let url = URL(string: urlString) {
-                    DebugLogger.debug("✅ Resolved gs:// URL: \(urlString)", category: "Menu")
-                    return url
-                } else {
-                    DebugLogger.debug("❌ Failed to construct URL from: \(urlString)", category: "Menu")
-                }
+        let trimmed = imageURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.hasPrefix("gs://") {
+            let components = trimmed.replacingOccurrences(of: "gs://", with: "").components(separatedBy: "/")
+            guard components.count >= 2 else { return nil }
+            let bucketName = components[0]  // Use bucket as-is from stored URL
+            let filePath = components.dropFirst().joined(separator: "/")
+            let partiallyEncoded = filePath.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filePath
+            let encodedPath = partiallyEncoded.replacingOccurrences(of: "/", with: "%2F")
+            let urlString = "https://firebasestorage.googleapis.com/v0/b/\(bucketName)/o/\(encodedPath)?alt=media"
+            if let url = URL(string: urlString) {
+                return url
             }
-        } else if imageURL.hasPrefix("http") {
-            return URL(string: imageURL)
+            return nil
+        }
+        if trimmed.hasPrefix("http") {
+            return URL(string: trimmed)
         }
         return nil
     }

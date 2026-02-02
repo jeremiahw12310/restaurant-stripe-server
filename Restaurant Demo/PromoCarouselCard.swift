@@ -12,7 +12,6 @@ enum PromoDestinationType: String, CaseIterable, Identifiable, Codable, Equatabl
     case personalizedCombo
     case scanReceipt
     case rewards
-    case community
     case url
 
     var id: String { rawValue }
@@ -22,7 +21,6 @@ enum PromoDestinationType: String, CaseIterable, Identifiable, Codable, Equatabl
         case .personalizedCombo: return "Personalized Combo"
         case .scanReceipt: return "Scan Receipt"
         case .rewards: return "Rewards"
-        case .community: return "Community"
         case .url: return "Open URL"
         }
     }
@@ -559,7 +557,6 @@ struct PromoCarouselCard: View {
     let openOrder: () -> Void
     let openScan: () -> Void
     let openRewards: () -> Void
-    let openCommunity: () -> Void
     let openPersonalizedCombo: () -> Void
 
     @State private var currentIndex: Int = 0
@@ -839,8 +836,6 @@ struct PromoCarouselCard: View {
             openScan()
         case .rewards:
             openRewards()
-        case .community:
-            openCommunity()
         case .personalizedCombo:
             openPersonalizedCombo()
         case .url:

@@ -439,19 +439,8 @@ struct AccountCustomizationView: View {
             "avatarEmoji": selectedEmoji,
             "avatarColor": colorName
         ]) { _ in
-            // Update all community posts and replies with new avatar settings
-            userVM.updateAvatarInAllPosts(userId: self.uid, avatarEmoji: self.selectedEmoji, avatarColorName: colorName) { success in
-                DispatchQueue.main.async {
-                    if success {
-                        DebugLogger.debug("✅ Successfully updated avatar in all community posts", category: "User")
-                        
-                        // User profile will be automatically updated via Firestore listeners
-                    } else {
-                        DebugLogger.debug("⚠️ Failed to update some community posts with new avatar", category: "User")
-                    }
-                    // Continue regardless of community update success
-                    self.handleCompletion()
-                }
+            DispatchQueue.main.async {
+                self.handleCompletion()
             }
         }
     }

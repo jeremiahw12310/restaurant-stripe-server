@@ -66,7 +66,11 @@ class AdminReceiptsViewModel: ObservableObject {
             }
             
             let token = try await user.getIDTokenResult(forcingRefresh: false).token
-            guard let url = URL(string: "\(Config.backendURL)/admin/receipts" + (startAfter != nil ? "?startAfter=\(startAfter!)&limit=\(pageSize)" : "?limit=\(pageSize)")) else {
+            var urlString = "\(Config.backendURL)/admin/receipts?limit=\(pageSize)"
+            if let cursor = startAfter {
+                urlString += "&startAfter=\(cursor)"
+            }
+            guard let url = URL(string: urlString) else {
                 errorMessage = "Invalid admin receipts URL."
                 return
             }

@@ -26,7 +26,7 @@ class DynamicThemeManager: ObservableObject {
     }
     
     enum ContentContext {
-        case menu, community, ordering, profile, admin
+        case menu, ordering, profile, admin
     }
     
     init() {
@@ -71,8 +71,6 @@ class DynamicThemeManager: ObservableObject {
             newTheme = .appetite
         case (.evening, .menu, _):
             newTheme = .warm
-        case (_, .community, .social):
-            newTheme = .social
         case (.night, _, _):
             newTheme = .calm
         case (_, .ordering, .excited):
@@ -255,7 +253,7 @@ extension DynamicThemeManager {
         )
     }
     
-    // Social theme (community-focused)
+    // Social theme
     private var socialColors: DynamicColors {
         DynamicColors(
             primary: Color(red: 0.5, green: 0.3, blue: 0.9),
@@ -299,9 +297,8 @@ class VisualIntelligenceManager: ObservableObject {
         case .menu:
             // Enhance appetite appeal
             return .appetiteBoost(warmth: 0.2, saturation: 0.15)
-        case .community:
-            // Optimize for social engagement
-            return .socialOptimization(vibrancy: 0.1, sharpness: 0.05)
+        case .profile:
+            return .moodLighting(brightness: 0.06, contrast: 0.04)
         case .ordering:
             // Enhance decision-making clarity
             return .moodLighting(brightness: 0.1, contrast: 0.08)
@@ -353,8 +350,8 @@ class SmartLayoutManager: ObservableObject {
             layoutMode = screenSize.width > 400 ? .comfortable : .compact
             contentDensity = .comfortable
             visualFlow = .card
-        case .community:
-            layoutMode = .spacious
+        case .profile:
+            layoutMode = .comfortable
             contentDensity = .comfortable
             visualFlow = .natural
         case .ordering:

@@ -138,57 +138,69 @@ struct NotificationsCenterView: View {
 
 struct NotificationCard: View {
     let notification: AppNotification
+    @Environment(\.dismiss) private var dismiss
     
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            // Icon
-            ZStack {
-                Circle()
-                    .fill(notificationBackgroundColor)
-                    .frame(width: 44, height: 44)
+        Button(action: handleTap) {
+            HStack(alignment: .top, spacing: 14) {
+                // Icon
+                ZStack {
+                    Circle()
+                        .fill(notificationBackgroundColor)
+                        .frame(width: 44, height: 44)
+                    
+                    Image(systemName: notificationIcon)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(notificationIconColor)
+                }
                 
-                Image(systemName: notificationIcon)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(notificationIconColor)
-            }
-            
-            // Content
-            VStack(alignment: .leading, spacing: 6) {
-                Text(notification.title)
-                    .font(.system(size: 16, weight: notification.read ? .medium : .bold, design: .rounded))
-                    .foregroundColor(Theme.modernPrimary)
-                    .lineLimit(2)
+                // Content
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(notification.title)
+                        .font(.system(size: 16, weight: notification.read ? .medium : .bold, design: .rounded))
+                        .foregroundColor(Theme.modernPrimary)
+                        .lineLimit(2)
+                    
+                    Text(notification.body)
+                        .font(.system(size: 14, weight: .regular, design: .rounded))
+                        .foregroundColor(Theme.modernSecondary)
+                        .lineLimit(3)
+                    
+                    Text(relativeTimeString(from: notification.createdAt))
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundColor(Theme.modernSecondary.opacity(0.7))
+                        .padding(.top, 2)
+                }
                 
-                Text(notification.body)
-                    .font(.system(size: 14, weight: .regular, design: .rounded))
-                    .foregroundColor(Theme.modernSecondary)
-                    .lineLimit(3)
+                Spacer()
                 
-                Text(relativeTimeString(from: notification.createdAt))
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundColor(Theme.modernSecondary.opacity(0.7))
-                    .padding(.top, 2)
+                // Unread Indicator
+                if !notification.read {
+                    Circle()
+                        .fill(Theme.primaryGold)
+                        .frame(width: 8, height: 8)
+                }
             }
-            
-            Spacer()
-            
-            // Unread Indicator
-            if !notification.read {
-                Circle()
-                    .fill(Theme.primaryGold)
-                    .frame(width: 8, height: 8)
-            }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(notification.read ? Theme.modernCardSecondary.opacity(0.3) : Theme.modernCardSecondary.opacity(0.5))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(notification.read ? Color.clear : Theme.primaryGold.opacity(0.3), lineWidth: 1.5)
+                    )
+            )
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(notification.read ? Theme.modernCardSecondary.opacity(0.3) : Theme.modernCardSecondary.opacity(0.5))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(notification.read ? Color.clear : Theme.primaryGold.opacity(0.3), lineWidth: 1.5)
-                )
-        )
+        .buttonStyle(PlainButtonStyle())
         .animation(.easeInOut(duration: 0.2), value: notification.read)
+    }
+    
+    private func handleTap() {
+        if notification.type == .rewardGift {
+            // Post notification to navigate to rewards tab
+            NotificationCenter.default.post(name: .navigateToRewardsTab, object: nil)
+            dismiss()
+        }
     }
     
     private var notificationIcon: String {

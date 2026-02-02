@@ -284,7 +284,6 @@ struct HomeView: View {
                             openOrder: { openOrderView() },
                             openScan: { showReceiptScanner = true },
                             openRewards: { showDetailedRewards = true },
-                            openCommunity: { NotificationCenter.default.post(name: .switchToMoreTab, object: nil) },
                             openPersonalizedCombo: {
                                 // Navigate to menu tab and maybe present personalized combo flow if present
                                 NotificationCenter.default.post(name: Notification.Name("switchToHomeTab"), object: nil)
@@ -497,6 +496,12 @@ struct HomeView: View {
                 DebugLogger.debug("📩 HomeView: presentReferral notification received", category: "Home")
                 showReferral = true
             }
+            .onReceive(NotificationCenter.default.publisher(for: .showRewardsFromChatbot)) { _ in
+                showChatbot = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    showDetailedRewards = true
+                }
+            }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("referralAwardGranted"))) { note in
                 DebugLogger.debug("🎉 HomeView: referralAwardGranted -> \(note.userInfo?["bonus"] ?? 0)", category: "Home")
                 showReferralAwardAlert = true
@@ -541,7 +546,9 @@ struct HomeView: View {
             AccountCustomizationView(uid: Auth.auth().currentUser?.uid ?? "")
                 .environmentObject(authVM)
         }
-        .sheet(isPresented: $showDetailedRewards) {
+        .sheet(isPresented: $showDetailedRewards, onDismiss: {
+            sharedRewardsVM.presentStagedQRIfNeeded()
+        }) {
             UnifiedRewardsScreen(mode: .modal)
                 .environmentObject(userVM)
                 .environmentObject(sharedRewardsVM)
@@ -581,20 +588,14 @@ struct HomeView: View {
             LifetimePointsView()
                 .environmentObject(userVM)
         }
-        .sheet(item: $selectedGift) { gift in
+        .sheet(item: $selectedGift, onDismiss: {
+            sharedRewardsVM.presentStagedQRIfNeeded()
+        }) { gift in
             GiftedRewardDetailView(gift: gift)
                 .environmentObject(userVM)
                 .environmentObject(sharedRewardsVM)
                 .environmentObject(sharedMenuVM)
         }
-        .fullScreenCover(item: $sharedRewardsVM.pendingQRSuccess) { successData in
-            RewardCardScreen(
-                userName: userVM.firstName.isEmpty ? "Your" : userVM.firstName,
-                successData: successData,
-                onDismiss: { sharedRewardsVM.pendingQRSuccess = nil }
-            )
-        }
-
         .alert("Choose Navigation App", isPresented: $showMapsAlert) {
             Button("Apple Maps") {
                 openAppleMaps()
@@ -775,6 +776,11 @@ struct HomeView: View {
         }
         .onChange(of: showOrderHandoff) { _, isShowing in
             handleOverlayPresentationChange(isPresented: isShowing, name: "OrderHandoffModal")
+        }
+        .onChange(of: sharedRewardsVM.stagedQRSuccess) { _, newValue in
+            if newValue != nil && showDetailedRewards {
+                showDetailedRewards = false
+            }
         }
     }
     

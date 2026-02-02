@@ -7,6 +7,10 @@ extension Notification.Name {
     static let switchToMoreTab = Notification.Name("switchToMoreTab")
     static let incomingReferralCode = Notification.Name("incomingReferralCode")
     static let openRewardsHistory = Notification.Name("openRewardsHistory")
+    static let navigateToGiftedReward = Notification.Name("navigateToGiftedReward")
+    static let navigateToRewardsTab = Notification.Name("navigateToRewardsTab")
+    /// Posted by ChatbotView when user taps "OPEN" on rewards card. HomeView dismisses chatbot and presents rewards to avoid sheet-on-sheet lag.
+    static let showRewardsFromChatbot = Notification.Name("showRewardsFromChatbot")
 }
 
 struct ContentView: View {
@@ -31,6 +35,14 @@ struct ContentView: View {
     // Pre-permission prompt (shown only when iOS status is `.notDetermined`)
     @State private var showNotificationPrePrompt: Bool = false
     @State private var notificationPrePromptCheckedUid: String = ""
+    
+    // Gifted reward navigation (from push notification tap or in-app list tap)
+    @State private var giftedRewardToShow: GiftedReward? = nil
+    
+    // In-app popup for users without notifications (to alert them of gifted rewards)
+    @State private var showGiftedRewardAlert: Bool = false
+    @State private var pendingGiftedRewardForAlert: GiftedReward? = nil
+    @AppStorage("lastAlertedGiftedRewardIds") private var lastAlertedGiftedRewardIdsData: Data = Data()
 
     var body: some View {
         ZStack {
@@ -99,9 +111,21 @@ struct ContentView: View {
                 preloadReferralCodeForAuthenticatedUser()
                 consumePendingReferralCodeIfPresent()
                 maybeShowNotificationPrePromptIfNeeded()
+                // Show pending reward QR on cold start (didBecomeActive may fire before ContentView exists)
+                if sharedRewardsVM.showPendingRewardQRIfNeeded() {
+                    selectedTab = 3
+                }
+                // Check for unseen gifted rewards and show popup for all users
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    checkForUnseenGiftedRewards()
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
                 maybeShowNotificationPrePromptIfNeeded()
+                checkForUnseenGiftedRewards()
+                if sharedRewardsVM.showPendingRewardQRIfNeeded() {
+                    selectedTab = 3
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .incomingReferralCode)) { notif in
                 let code = (notif.userInfo?["code"] as? String) ?? ""
@@ -111,6 +135,14 @@ struct ContentView: View {
                 if let userInfo = notif.userInfo as? [String: Any] {
                     NotificationService.shared.handlePushNotificationTap(userInfo: userInfo)
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .navigateToGiftedReward)) { notif in
+                if let rewardId = notif.userInfo?["giftedRewardId"] as? String {
+                    navigateToGiftedReward(id: rewardId)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .navigateToRewardsTab)) { _ in
+                selectedTab = 3
             }
             // Ban alert removed - banned users are redirected to deletion screen in LaunchView
             .onChange(of: selectedTab) { _, newTab in
@@ -124,6 +156,36 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showReferralSheet) {
             ReferralView(initialCode: referralSheetCode)
+        }
+        .sheet(item: $giftedRewardToShow, onDismiss: {
+            sharedRewardsVM.presentStagedQRIfNeeded()
+        }) { gift in
+            GiftedRewardDetailView(gift: gift)
+                .environmentObject(userVM)
+                .environmentObject(sharedRewardsVM)
+                .environmentObject(sharedMenuVM)
+        }
+        .alert("You Have a Free Reward!", isPresented: $showGiftedRewardAlert) {
+            Button("View Reward") {
+                if let reward = pendingGiftedRewardForAlert {
+                    selectedTab = 3
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        giftedRewardToShow = reward
+                    }
+                }
+            }
+            Button("Okay", role: .cancel) { }
+        } message: {
+            if let reward = pendingGiftedRewardForAlert {
+                Text("Dumpling House sent you a free \(reward.rewardTitle)!")
+            }
+        }
+        .fullScreenCover(item: $sharedRewardsVM.pendingQRSuccess) { successData in
+            RewardCardScreen(
+                userName: userVM.firstName.isEmpty ? "Your" : userVM.firstName,
+                successData: successData,
+                onDismiss: { sharedRewardsVM.pendingQRSuccess = nil }
+            )
         }
     }
     
@@ -143,7 +205,7 @@ struct ContentView: View {
         case 3: // Rewards
             themeManager.contentContext = .menu
         case 4: // More
-            themeManager.contentContext = .community
+            themeManager.contentContext = .profile
         default:
             themeManager.contentContext = .menu
         }
@@ -240,6 +302,56 @@ struct ContentView: View {
                 UserDefaults.standard.set(true, forKey: shownKey)
                 showNotificationPrePrompt = true
             }
+        }
+    }
+    
+    // MARK: - Gifted Reward Navigation
+    
+    /// Navigate to a specific gifted reward (from push notification tap or in-app notification tap)
+    private func navigateToGiftedReward(id: String) {
+        // Switch to rewards tab
+        selectedTab = 3
+        // Mark as alerted so we don't show the in-app popup again for this reward
+        saveAlertedRewardId(id)
+        // Find the reward and show it in a sheet
+        if let reward = sharedRewardsVM.giftedRewards.first(where: { $0.id == id }) {
+            // Small delay to ensure tab switch completes first
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                giftedRewardToShow = reward
+            }
+        }
+    }
+    
+    // MARK: - Gifted Reward In-App Alert (for all users)
+    
+    /// Check for unseen gifted rewards and show an alert for all users (regardless of notification permission)
+    private func checkForUnseenGiftedRewards() {
+        let alertedIds = loadAlertedRewardIds()
+        
+        // Find unclaimed rewards not yet alerted
+        if let newReward = sharedRewardsVM.giftedRewards.first(where: {
+            !alertedIds.contains($0.id) && $0.isActive && !$0.isExpired
+        }) {
+            pendingGiftedRewardForAlert = newReward
+            showGiftedRewardAlert = true
+            saveAlertedRewardId(newReward.id)
+        }
+    }
+    
+    /// Load the set of gifted reward IDs that have already been alerted to the user
+    private func loadAlertedRewardIds() -> Set<String> {
+        guard let ids = try? JSONDecoder().decode(Set<String>.self, from: lastAlertedGiftedRewardIdsData) else {
+            return []
+        }
+        return ids
+    }
+    
+    /// Save a gifted reward ID as having been alerted to the user
+    private func saveAlertedRewardId(_ id: String) {
+        var ids = loadAlertedRewardIds()
+        ids.insert(id)
+        if let data = try? JSONEncoder().encode(ids) {
+            lastAlertedGiftedRewardIdsData = data
         }
     }
 }

@@ -1094,7 +1094,7 @@ struct RewardDetailView: View {
                 // Presenting from the root avoids nested-sheet timing bugs.
                 dismiss()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    rewardsVM.pendingQRSuccess = successData
+                    rewardsVM.stagedQRSuccess = successData
                 }
                 
                 DebugLogger.debug("✅ Reward redeemed successfully!", category: "Rewards")

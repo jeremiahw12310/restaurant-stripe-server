@@ -72,7 +72,7 @@ struct Config {
 }
 
 extension Config {
-    // Whitelisted Order Online URL for Community link policy
+    // Whitelisted Order Online URL for external links
     static var orderOnlineURL: URL {
         // Default to backend base + "/order"; update if a dedicated ordering domain is used
         if let url = URL(string: backendURL + "/order") {
@@ -85,8 +85,8 @@ extension Config {
             return fallbackURL
         }
         // This should never happen - both backendURL and productionBackendURL are hardcoded valid URLs
-        // Using fatalError instead of force unwrap for better debugging context
-        fatalError("Config error: Unable to construct any valid URL for orderOnlineURL. Check backendURL configuration: '\(backendURL)'")
+        // Last resort fallback - use a hardcoded known-good URL (compile-time constant guaranteed to parse)
+        return URL(string: "https://restaurant-stripe-server-1.onrender.com/order")!
     }
 }
 
@@ -96,10 +96,32 @@ extension Config {
     static let supportEmail: String? = "support@bytequack.com"
 
     /// Privacy Policy URL used by the More screen. Set this to enable in-app Safari viewing.
-    static var privacyPolicyURL: URL? { URL(string: "\(backendURL)/privacy.html") }
+    static var privacyPolicyURL: URL? {
+        if let url = URL(string: "\(backendURL)/privacy.html") {
+            return url
+        }
+        if let fallbackURL = URL(string: "\(productionBackendURL)/privacy.html") {
+            #if DEBUG
+            print("⚠️ Invalid backend URL configuration: \(backendURL)/privacy.html. Falling back to production /privacy.html.")
+            #endif
+            return fallbackURL
+        }
+        return nil
+    }
 
     /// Terms of Service URL used by the More screen. Set this to enable in-app Safari viewing.
-    static var termsOfServiceURL: URL? { URL(string: "\(backendURL)/terms.html") }
+    static var termsOfServiceURL: URL? {
+        if let url = URL(string: "\(backendURL)/terms.html") {
+            return url
+        }
+        if let fallbackURL = URL(string: "\(productionBackendURL)/terms.html") {
+            #if DEBUG
+            print("⚠️ Invalid backend URL configuration: \(backendURL)/terms.html. Falling back to production /terms.html.")
+            #endif
+            return fallbackURL
+        }
+        return nil
+    }
 }
 
 // MARK: - Setup Instructions

@@ -627,6 +627,8 @@ final class AdminRewardsScanViewModel: ObservableObject {
         let drinkType: String?           // NEW: Drink type (Lemonade or Soda)
         let selectedDrinkItemId: String? // NEW: Drink item ID (for Full Combo)
         let selectedDrinkItemName: String? // NEW: Drink item name (for Full Combo)
+        let iceLevel: String?            // Ice level for drink rewards
+        let sugarLevel: String?          // Sugar level for drink rewards
     }
 
     struct ValidateResponse: Codable {
@@ -654,6 +656,14 @@ final class AdminRewardsScanViewModel: ObservableObject {
             return fmt.string(from: date)
         }
         return nil
+    }
+    
+    // Helper to build ice/sugar suffix for drink rewards
+    private func iceSugarSuffix(for reward: Reward) -> String {
+        guard let ice = reward.iceLevel, let sugar = reward.sugarLevel else { return "" }
+        // Only show if at least one is not Normal
+        if ice == "Normal" && sugar == "Normal" { return "" }
+        return " - Ice: \(ice), Sugar: \(sugar)"
     }
     
     func buildDisplayName(for reward: Reward) -> String {
@@ -691,6 +701,9 @@ final class AdminRewardsScanViewModel: ObservableObject {
                 display += " with \(toppingName)"
             }
             
+            // Add ice/sugar for the drink component
+            display += iceSugarSuffix(for: reward)
+            
             return display.isEmpty ? (reward.rewardTitle ?? "Full Combo") : display
         }
         
@@ -722,17 +735,23 @@ final class AdminRewardsScanViewModel: ObservableObject {
         // For Lemonade/Soda: shows flavor, drink type, and topping
         // For other teas: shows flavor and topping
         if let itemName = reward.selectedItemName, let toppingName = reward.selectedToppingName {
+            var display: String
             if let drinkType = reward.drinkType {
                 // Lemonade or Soda with topping
-                return "\(itemName) (\(drinkType)) with \(toppingName)"
+                display = "\(itemName) (\(drinkType)) with \(toppingName)"
+            } else {
+                // Other teas (Milk Tea, Fruit Tea, Coffee) with topping
+                display = "\(itemName) with \(toppingName)"
             }
-            // Other teas (Milk Tea, Fruit Tea, Coffee) with topping
-            return "\(itemName) with \(toppingName)"
+            display += iceSugarSuffix(for: reward)
+            return display
         }
         
         // Check for drink with drink type but no topping (Lemonade/Soda only)
         if let itemName = reward.selectedItemName, let drinkType = reward.drinkType {
-            return "\(itemName) (\(drinkType))"
+            var display = "\(itemName) (\(drinkType))"
+            display += iceSugarSuffix(for: reward)
+            return display
         }
         
         // Check for drink without topping (other teas - Milk Tea, Fruit Tea, Coffee)
@@ -742,6 +761,9 @@ final class AdminRewardsScanViewModel: ObservableObject {
             // Add tag for 6-Piece Lunch Special (in case there's no cooking method shown)
             if reward.rewardTitle == "6-Piece Lunch Special Dumplings" {
                 display += " (6 Piece Lunch Special)"
+            } else {
+                // Might be a drink without topping - add ice/sugar if present
+                display += iceSugarSuffix(for: reward)
             }
             return display
         }

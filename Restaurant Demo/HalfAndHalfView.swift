@@ -203,34 +203,12 @@ struct FlavorSelectionCard: View {
     
     @Environment(\.colorScheme) var colorScheme
     
-    private var imageURL: URL? {
-        guard !item.imageURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        
-        if item.imageURL.hasPrefix("gs://") {
-            let components = item.imageURL.replacingOccurrences(of: "gs://", with: "").components(separatedBy: "/")
-            if components.count >= 2 {
-                let bucketName = components[0]
-                let filePath = components.dropFirst().joined(separator: "/")
-                let encodedPath = filePath.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filePath
-                let downloadURL = "https://firebasestorage.googleapis.com/v0/b/\(bucketName)/o/\(encodedPath)?alt=media"
-                return URL(string: downloadURL)
-            }
-        } else if item.imageURL.hasPrefix("https://firebasestorage.googleapis.com") {
-            return URL(string: item.imageURL)
-        } else if item.imageURL.hasPrefix("http") {
-            return URL(string: item.imageURL)
-        }
-        return nil
-    }
-    
     var body: some View {
         Button(action: onTap) {
             VStack(spacing: 8) {
                 // Image
                 ZStack {
-                    if let imageURL = imageURL {
+                    if let imageURL = item.resolvedImageURL {
                         KFImage(imageURL)
                             .resizable()
                             .placeholder { ProgressView() }

@@ -176,12 +176,11 @@ struct UnifiedRewardsScreen: View {
                 onDismiss: { sheetSuccessData = nil }
             )
         }
-        .fullScreenCover(item: $rewardsVM.pendingQRSuccess) { successData in
-            RewardCardScreen(
-                userName: userVM.firstName.isEmpty ? "Your" : userVM.firstName,
-                successData: successData,
-                onDismiss: { rewardsVM.pendingQRSuccess = nil }
-            )
+        .onChange(of: rewardsVM.stagedQRSuccess) { _, newValue in
+            // For tabRoot (no parent sheet), move staged to pending immediately
+            if newValue != nil && mode == .tabRoot {
+                rewardsVM.presentStagedQRIfNeeded()
+            }
         }
     }
 

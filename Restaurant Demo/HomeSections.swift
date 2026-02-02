@@ -37,6 +37,7 @@ struct HomeRewardsSection: View {
                 RedeemedRewardsCountdownCard(activeRedemption: active) {
                     sharedRewardsVM.handleActiveRedemptionExpired(active)
                 }
+                .contentShape(RoundedRectangle(cornerRadius: 22))
                 .onTapGesture {
                     if let sd = sharedRewardsVM.successDataByCode[active.redemptionCode] {
                         sheetSuccessData = IdentifiableSuccessData(sd)
@@ -124,11 +125,16 @@ struct HomeRewardsSection: View {
 
     var body: some View {
         VStack(spacing: 12) {
+            // Space above the active countdown so it has proper breathing room from the card top
+            if !sharedRewardsVM.activeRedemptions.isEmpty {
+                Spacer().frame(height: 20)
+            }
             // Active countdown(s) at top when rewards were recently redeemed
             ForEach(sharedRewardsVM.activeRedemptions) { active in
                 RedeemedRewardsCountdownCard(activeRedemption: active) {
                     sharedRewardsVM.handleActiveRedemptionExpired(active)
                 }
+                .contentShape(RoundedRectangle(cornerRadius: 22))
                 .onTapGesture {
                     if let sd = sharedRewardsVM.successDataByCode[active.redemptionCode] {
                         sheetSuccessData = IdentifiableSuccessData(sd)
@@ -136,7 +142,7 @@ struct HomeRewardsSection: View {
                 }
                 .padding(.bottom, 8)
             }
-            
+
             // Premium style header
             HStack {
                 HStack(spacing: 8) {
@@ -242,7 +248,7 @@ struct HomeRewardsSection: View {
         }
         // Allow a bit more room when a redeemed countdown is present so cards
         // don’t visually overlap the "REWARDS" header
-        .frame(height: CGFloat(310 + min(sharedRewardsVM.activeRedemptions.count, 5) * 80))
+        .frame(height: CGFloat(310 + min(sharedRewardsVM.activeRedemptions.count, 5) * 80) + (sharedRewardsVM.activeRedemptions.isEmpty ? 0 : 20))
         .padding(.horizontal, 24)
         .padding(.vertical, 20)
         .background(

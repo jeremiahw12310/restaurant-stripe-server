@@ -227,14 +227,14 @@ struct MenuView: View {
                 viewModel.handlePersonalizedComboTap(userVM: userVM, menuVM: menuVM)
             }
         }
-        // Surface combo flow errors (e.g., preferences not completed)
+        // Surface combo flow errors (e.g., rate limited, preferences not completed)
         .onChange(of: viewModel.error) { _, newValue in
             showComboErrorAlert = (newValue?.isEmpty == false)
         }
-        .alert("Personalized Combo", isPresented: $showComboErrorAlert) {
-            Button("OK", role: .cancel) { }
+        .alert("Combo Generation", isPresented: $showComboErrorAlert) {
+            Button("Got It", role: .cancel) { }
         } message: {
-            Text(viewModel.error ?? "Something went wrong. Please try again.")
+            Text(viewModel.error ?? "Unable to generate combo right now. Please try again in a moment.")
         }
     }
     

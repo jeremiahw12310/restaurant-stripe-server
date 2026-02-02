@@ -12,66 +12,10 @@ struct MenuItemCard: View {
     @StateObject private var userVM = UserViewModel()
     @EnvironmentObject var menuVM: MenuViewModel
     
-    private var imageURL: URL? {
-        // Handle empty URLs
-        guard !item.imageURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            DebugLogger.debug("🖼️ Empty imageURL for item: \(item.id)", category: "Menu")
-            return nil
-        }
-        
-        // Handle Firebase Storage URLs
-        if item.imageURL.hasPrefix("gs://") {
-            // Convert gs:// URL to proper Firebase Storage download URL
-            // Format: gs://bucket-name/path/to/file
-            // Convert to: https://firebasestorage.googleapis.com/v0/b/bucket-name/o/path%2Fto%2Ffile?alt=media
-            
-            let components = item.imageURL.replacingOccurrences(of: "gs://", with: "").components(separatedBy: "/")
-            if components.count >= 2 {
-                let bucketName = components[0]
-                let filePath = components.dropFirst().joined(separator: "/")
-                
-                // Better URL encoding for Firebase Storage
-                let encodedPath = filePath.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filePath
-                let downloadURL = "https://firebasestorage.googleapis.com/v0/b/\(bucketName)/o/\(encodedPath)?alt=media"
-                
-                DebugLogger.debug("🖼️ Converting gs:// URL:", category: "Menu")
-                DebugLogger.debug("   Original: \(item.imageURL)", category: "Menu")
-                DebugLogger.debug("   Bucket: \(bucketName)", category: "Menu")
-                DebugLogger.debug("   Path: \(filePath)", category: "Menu")
-                DebugLogger.debug("   Encoded: \(encodedPath)", category: "Menu")
-                DebugLogger.debug("   Final URL: \(downloadURL)", category: "Menu")
-                
-                // Test the URL immediately
-                if let url = URL(string: downloadURL) {
-                    DebugLogger.debug("✅ URL created successfully", category: "Menu")
-                    return url
-                } else {
-                    DebugLogger.debug("❌ Failed to create URL from: \(downloadURL)", category: "Menu")
-                    return nil
-                }
-            } else {
-                DebugLogger.debug("❌ Invalid gs:// URL format: \(item.imageURL)", category: "Menu")
-                return nil
-            }
-        } else if item.imageURL.hasPrefix("https://firebasestorage.googleapis.com") {
-            // Already a Firebase Storage URL
-            DebugLogger.debug("🖼️ Using existing Firebase Storage URL: \(item.imageURL)", category: "Menu")
-            return URL(string: item.imageURL)
-        } else if item.imageURL.hasPrefix("http") {
-            // Regular URL
-            DebugLogger.debug("🖼️ Using regular URL: \(item.imageURL)", category: "Menu")
-            return URL(string: item.imageURL)
-        } else {
-            // Invalid or empty URL
-            DebugLogger.debug("🖼️ Invalid or empty URL: '\(item.imageURL)'", category: "Menu")
-            return nil
-        }
-    }
-    
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            // Image area (no card background) - use cached if available
-            if let imageURL = imageURL {
+            // Image area (no card background) - use cached if available; URL from MenuItem.resolvedImageURL
+            if let imageURL = item.resolvedImageURL {
                 let urlString = imageURL.absoluteString
                 
                 // Use cached image if available, otherwise fall back to Kingfisher

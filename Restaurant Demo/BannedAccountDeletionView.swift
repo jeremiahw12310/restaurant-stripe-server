@@ -54,7 +54,6 @@ struct BannedAccountDeletionView: View {
                             .padding(.top, 8)
                         Text("• Receipt scan history (shows as \"Deleted User\")")
                         Text("• Redeemed rewards history")
-                        Text("• Community posts and replies")
                         
                         Text("This action is immediate and cannot be undone.")
                             .font(.footnote)

@@ -228,6 +228,9 @@ struct ComboItemCard: View {
     let menuViewModel: MenuViewModel
     let forceNoImage: Bool
     
+    /// Options matching prefetch (no cacheMemoryOnly) so combo images can load from disk.
+    private static let comboImageProcessor = DownsamplingImageProcessor(size: CGSize(width: 120, height: 120))
+    
     private var isDrinkCategory: Bool {
         // Check if category name indicates it's a drink
         let categoryLower = item.category.lowercased()
@@ -278,6 +281,9 @@ struct ComboItemCard: View {
             if !forceNoImage && !isDrinkCategory {
                 if let imageURL = item.resolvedImageURL {
                     KFImage(imageURL)
+                        .setProcessor(Self.comboImageProcessor)
+                        .scaleFactor(UIScreen.main.scale)
+                        .cacheMemoryOnly(false)
                         .resizable()
                         .placeholder {
                             placeholderImage

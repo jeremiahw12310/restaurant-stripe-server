@@ -20,10 +20,10 @@ service firebase.storage {
       return request.resource.contentType.matches('video/.*');
     }
 
-    // Legacy root images that are hardcoded in the app.
-    // Keep these public to avoid breaking older clients/UI.
+    // Allow public read access to image files at root level (menu item images, icons, etc.)
+    // Only image extensions are allowed - no sensitive files can be exposed
     match /{fileName} {
-      allow read: if fileName.matches('^(Subject\\.png|wontonsoup-2\\.png|eda\\.png|coke\\.png|peanut\\.png)$');
+      allow read: if fileName.matches('.*\\.(png|jpg|jpeg|gif|webp)$');
     }
     
     // Allow authenticated users to upload community posts (images and videos)

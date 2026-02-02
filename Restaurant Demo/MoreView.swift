@@ -98,24 +98,6 @@ struct MoreView: View {
                     notificationService.markAllNotificationsAsRead()
                 }
             }
-            .sheet(isPresented: $showDietaryPreferences) {
-                UserPreferencesView(uid: uid)
-                    .environmentObject(userVM)
-            }
-            .sheet(isPresented: $showRewards) {
-                UnifiedRewardsScreen(mode: .modal)
-                    .environmentObject(userVM)
-                    .environmentObject(sharedRewardsVM)
-            }
-            .sheet(isPresented: $showAccountDeletion) {
-                AccountDeletionView()
-                    .environmentObject(userVM)
-            }
-            .sheet(item: $safariDestination) { destination in
-                SimplifiedSafariView(url: destination.url) {
-                    safariDestination = nil
-                }
-            }
             .alert("Sign Out", isPresented: $showSignOutConfirm) {
                 Button("Cancel", role: .cancel) {}
                 Button("Sign Out", role: .destructive) {
@@ -128,6 +110,36 @@ struct MoreView: View {
                 Button("OK") {}
             } message: {
                 Text("No URL is configured yet for \(missingLinkTitle).")
+            }
+        }
+        .sheet(isPresented: $showDietaryPreferences) {
+            UserPreferencesView(uid: uid)
+                .environmentObject(userVM)
+        }
+        .sheet(isPresented: $showRewards, onDismiss: {
+            // Switch to Rewards tab so fullScreenCover can present (More tab hierarchy blocks it).
+            // Delay allows sheet dismiss + tab switch to complete before showing QR.
+            NotificationCenter.default.post(name: .navigateToRewardsTab, object: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                sharedRewardsVM.presentStagedQRIfNeeded()
+            }
+        }) {
+            UnifiedRewardsScreen(mode: .modal)
+                .environmentObject(userVM)
+                .environmentObject(sharedRewardsVM)
+        }
+        .sheet(isPresented: $showAccountDeletion) {
+            AccountDeletionView()
+                .environmentObject(userVM)
+        }
+        .sheet(item: $safariDestination) { destination in
+            SimplifiedSafariView(url: destination.url) {
+                safariDestination = nil
+            }
+        }
+        .onChange(of: sharedRewardsVM.stagedQRSuccess) { _, newValue in
+            if newValue != nil && showRewards {
+                showRewards = false
             }
         }
     }
@@ -412,50 +424,62 @@ struct MoreView: View {
     }
     
     private func compactNotificationRow(notification: AppNotification) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            // Icon
-            ZStack {
-                Circle()
-                    .fill(notificationIconBackgroundColor(for: notification.type))
-                    .frame(width: 32, height: 32)
+        Button(action: {
+            handleNotificationTap(notification)
+        }) {
+            HStack(alignment: .top, spacing: 10) {
+                // Icon
+                ZStack {
+                    Circle()
+                        .fill(notificationIconBackgroundColor(for: notification.type))
+                        .frame(width: 32, height: 32)
+                    
+                    Image(systemName: notificationIcon(for: notification.type))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(notificationIconColor(for: notification.type))
+                }
                 
-                Image(systemName: notificationIcon(for: notification.type))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(notificationIconColor(for: notification.type))
-            }
-            
-            // Content
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .top, spacing: 6) {
-                    Text(notification.title)
-                        .font(.system(size: 14, weight: notification.read ? .medium : .semibold, design: .rounded))
-                        .foregroundColor(Theme.modernPrimary)
-                        .lineLimit(1)
+                // Content
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .top, spacing: 6) {
+                        Text(notification.title)
+                            .font(.system(size: 14, weight: notification.read ? .medium : .semibold, design: .rounded))
+                            .foregroundColor(Theme.modernPrimary)
+                            .lineLimit(1)
+                        
+                        Spacer()
+                        
+                        if !notification.read {
+                            Circle()
+                                .fill(Theme.primaryGold)
+                                .frame(width: 6, height: 6)
+                        }
+                    }
                     
-                    Spacer()
-                    
-                    if !notification.read {
-                        Circle()
-                            .fill(Theme.primaryGold)
-                            .frame(width: 6, height: 6)
+                    HStack {
+                        Text(notification.body)
+                            .font(.system(size: 12, weight: .regular, design: .rounded))
+                            .foregroundColor(Theme.modernSecondary)
+                            .lineLimit(1)
+                        
+                        Spacer()
+                        
+                        Text(relativeTimeString(from: notification.createdAt))
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundColor(Theme.modernSecondary.opacity(0.7))
                     }
                 }
-                
-                HStack {
-                    Text(notification.body)
-                        .font(.system(size: 12, weight: .regular, design: .rounded))
-                        .foregroundColor(Theme.modernSecondary)
-                        .lineLimit(1)
-                    
-                    Spacer()
-                    
-                    Text(relativeTimeString(from: notification.createdAt))
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundColor(Theme.modernSecondary.opacity(0.7))
-                }
             }
+            .padding(.vertical, 4)
         }
-        .padding(.vertical, 4)
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private func handleNotificationTap(_ notification: AppNotification) {
+        if notification.type == .rewardGift {
+            // Post notification to switch to rewards tab
+            NotificationCenter.default.post(name: .navigateToRewardsTab, object: nil)
+        }
     }
     
     private func notificationIcon(for type: AppNotification.NotificationType) -> String {

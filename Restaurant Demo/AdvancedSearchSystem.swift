@@ -14,12 +14,9 @@ class AdvancedSearchManager: ObservableObject {
     
     private var cancellables = Set<AnyCancellable>()
     
-    // Sample menu data (in production, this would come from your data source)
-    private let menuItems: [SearchMenuItem] = [
-        SearchMenuItem(id: "1", name: "Truffle Pasta", description: "Handmade pasta with truffle sauce", price: 28.99, category: .main, tags: ["pasta", "truffle", "Italian"]),
-        SearchMenuItem(id: "2", name: "Caesar Salad", description: "Fresh romaine with parmesan", price: 14.99, category: .appetizer, tags: ["salad", "vegetarian", "fresh"]),
-        SearchMenuItem(id: "3", name: "Chocolate Soufflé", description: "Decadent chocolate dessert", price: 12.99, category: .dessert, tags: ["chocolate", "dessert", "sweet"])
-    ]
+    // Menu data - empty by default (this view is not currently connected to the app)
+    // In production, this would be populated from the real menu data source
+    private let menuItems: [SearchMenuItem] = []
     
     init() {
         setupSearchSubscriptions()

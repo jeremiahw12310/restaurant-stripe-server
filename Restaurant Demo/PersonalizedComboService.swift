@@ -22,15 +22,27 @@ class PersonalizedComboService: ObservableObject {
     private struct ComboErrorResponse: Decodable {
         let error: String?
         let details: String?
+        let errorCode: String?
+        let retryAfterSeconds: Int?
 
         var combinedMessage: String {
-            if let error, let details, !details.isEmpty {
-                return "\(error): \(details)"
-            }
+            // If we have a user-friendly error message from the server, use it directly
             if let error, !error.isEmpty {
+                // If there are additional details, append them
+                if let details, !details.isEmpty {
+                    return "\(error): \(details)"
+                }
                 return error
             }
             return "Request failed."
+        }
+        
+        var isRateLimited: Bool {
+            errorCode == "COMBO_RATE_LIMITED" || errorCode == "RATE_LIMITED"
+        }
+        
+        var isDailyLimitReached: Bool {
+            errorCode == "DAILY_LIMIT_REACHED"
         }
     }
 

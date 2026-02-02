@@ -280,7 +280,7 @@ struct RedemptionConfirmationData {
 }
 
 // MARK: - Redemption Success Data
-struct RedemptionSuccessData: Codable {
+struct RedemptionSuccessData: Codable, Equatable {
     let redemptionCode: String
     let rewardTitle: String
     let rewardDescription: String

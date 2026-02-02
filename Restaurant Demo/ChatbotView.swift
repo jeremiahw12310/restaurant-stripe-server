@@ -35,9 +35,6 @@ class ChatbotViewModel: ObservableObject {
     @Published var showSuggestions: Bool = false
     @Published var showHeartBurst: Bool = false
     @Published var heartBurstPosition: CGPoint = .zero
-    @Published var showMagicPreview: Bool = false
-    @Published var magicPreviewComment: String = ""
-    @Published var isGeneratingMagic: Bool = false
     @Published var isRecording: Bool = false
     
     private var cancellables = Set<AnyCancellable>()
@@ -408,81 +405,6 @@ class ChatbotViewModel: ObservableObject {
             .store(in: &cancellables)
     }
     
-    // MARK: - Community Magic Methods
-    
-    func generateMagicCommentPreview() {
-        isGeneratingMagic = true
-        
-        guard let url = URL(string: "\(Config.backendURL)/preview-dumpling-hero-comment") else {
-            isGeneratingMagic = false
-            return
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        // Use last assistant message as context
-        let lastMessage = messages.last(where: { !$0.isUser })?.content ?? ""
-        
-        let requestBody: [String: Any] = [
-            "prompt": lastMessage,
-            "postContext": [:]
-        ]
-        
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-        } catch {
-            DebugLogger.debug("Error serializing magic preview request: \(error)", category: "Chatbot")
-            isGeneratingMagic = false
-            return
-        }
-
-        idTokenPublisher()
-            .flatMap { token -> AnyPublisher<MagicPreviewResponse, Error> in
-                var authed = request
-                authed.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-                return URLSession.configured.dataTaskPublisher(for: authed)
-                    .mapError { $0 as Error }
-                    .tryMap { data, response -> MagicPreviewResponse in
-                        guard let http = response as? HTTPURLResponse else { throw ChatbotAPIError.other }
-                        if http.statusCode == 200 {
-                            return try JSONDecoder().decode(MagicPreviewResponse.self, from: data)
-                        }
-                        if http.statusCode == 429, Self.isRateLimitError(statusCode: 429, body: data) {
-                            throw ChatbotAPIError.rateLimited
-                        }
-                        throw ChatbotAPIError.other
-                    }
-                    .eraseToAnyPublisher()
-            }
-            .receive(on: DispatchQueue.main)
-            .sink(
-                receiveCompletion: { completion in
-                    self.isGeneratingMagic = false
-                    if case .failure(let error) = completion {
-                        DebugLogger.debug("Magic preview error: \(error)", category: "Chatbot")
-                        if (error as? ChatbotAuthError) == .notSignedIn {
-                            self.messages.append(ChatMessage(content: "Please sign in to use Dumpling Hero magic.", isUser: false, timestamp: Date()))
-                        } else if (error as? ChatbotAPIError) == .rateLimited {
-                            self.messages.append(ChatMessage(content: Self.rateLimitMessage, isUser: false, timestamp: Date()))
-                        }
-                    }
-                },
-                receiveValue: { response in
-                    self.magicPreviewComment = response.comment.commentText
-                    self.showMagicPreview = true
-                }
-            )
-            .store(in: &cancellables)
-    }
-    
-    func postMagicComment(completion: @escaping (Bool) -> Void) {
-        // This would integrate with CommunityViewModel to actually post
-        // For now, just simulating success
-        completion(true)
-    }
-    
     // MARK: - Voice Input
     func startRecording() {
         guard !audioEngine.isRunning else { return }
@@ -686,15 +608,6 @@ class ChatbotViewModel: ObservableObject {
     }
 }
 
-struct MagicPreviewResponse: Codable {
-    let success: Bool
-    let comment: MagicComment
-}
-
-struct MagicComment: Codable {
-    let commentText: String
-}
-
 struct ChatResponse: Codable {
     let response: String
 }
@@ -712,7 +625,6 @@ struct ChatbotView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject var userVM: UserViewModel
     @EnvironmentObject var rewardsVM: RewardsViewModel
-    @State private var showRewardsSheet: Bool = false
     @State private var allowAnimations: Bool = true
     @State private var isLowPowerMode: Bool = ProcessInfo.processInfo.isLowPowerModeEnabled
     
@@ -821,7 +733,7 @@ struct ChatbotView: View {
                                     MessageBubble(
                                         message: message,
                                         onShowRewards: {
-                                            showRewardsSheet = true
+                                            NotificationCenter.default.post(name: .showRewardsFromChatbot, object: nil)
                                         },
                                         showRegenerate: message.id == lastAssistantId,
                                         isNewAssistant: (message.id == lastAssistantId) && !message.isUser,
@@ -882,14 +794,8 @@ struct ChatbotView: View {
                     .transition(.scale.combined(with: .opacity))
             }
         }
-        .sheet(isPresented: $viewModel.showMagicPreview) {
-            MagicPreviewSheet(viewModel: viewModel)
-        }
-        .sheet(isPresented: $showRewardsSheet) {
-            UnifiedRewardsScreen(mode: .modal)
-                .environmentObject(userVM)
-                .environmentObject(rewardsVM)
-        }
+        // Rewards opened from chatbot are presented by HomeView (dismiss chatbot first, then show rewards)
+        // to avoid sheet-on-sheet lag from stacking HomeView + ChatbotView + RewardsSheet
         // (Search overlay removed)
         .overlay(alignment: .bottom) {
             GoldGlowView(progress: glowProgress)
@@ -1462,117 +1368,6 @@ struct LoadingIndicator: View {
     }
 }
 
-// MARK: - Magic Preview Sheet
-struct MagicPreviewSheet: View {
-    @ObservedObject var viewModel: ChatbotViewModel
-    @Environment(\.dismiss) var dismiss
-    @State private var isPosting = false
-    
-    var body: some View {
-        NavigationView {
-            VStack(spacing: 20) {
-                // Preview card
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Image("newhero")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 40, height: 40)
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text("Dumpling Hero")
-                                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                                
-                                Text("AI")
-                                    .font(.caption2)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Theme.primaryGold)
-                                    .cornerRadius(6)
-                            }
-                            
-                            Text("Just now")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                    }
-                    
-                    Text(viewModel.magicPreviewComment)
-                        .font(.body)
-                        .padding(.vertical, 8)
-                }
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color(.systemBackground))
-                        .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 4)
-                )
-                .padding()
-                
-                Spacer()
-                
-                // Action buttons
-                VStack(spacing: 12) {
-                    Button(action: {
-                        isPosting = true
-                        viewModel.postMagicComment { success in
-                            isPosting = false
-                            if success {
-                                dismiss()
-                            }
-                        }
-                    }) {
-                        HStack {
-                            if isPosting {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                Text("Posting...")
-                            } else {
-                                Image(systemName: "paperplane.fill")
-                                Text("Post to Community")
-                            }
-                        }
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(
-                            LinearGradient(
-                                gradient: Gradient(colors: [
-                                    Theme.energyOrange,
-                                    Theme.energyRed
-                                ]),
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .cornerRadius(16)
-                    }
-                    .disabled(isPosting)
-                    
-                    Button(action: {
-                        dismiss()
-                    }) {
-                        Text("Cancel")
-                            .font(.system(size: 16, weight: .semibold, design: .rounded))
-                            .foregroundColor(.secondary)
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                    }
-                }
-                .padding()
-            }
-            .navigationTitle("Magic Comment Preview")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-    }
-}
-
 // MARK: - Context Chip Component
 struct ContextChip: View {
     let icon: String
@@ -1609,8 +1404,6 @@ struct ContextChip: View {
         .buttonStyle(PlainButtonStyle())
     }
 }
-
-// Note: HeartBurstView is imported from CommunityAnimations.swift
 
 // MARK: - Rewards Inline Card
 struct RewardsInlineCard: View {

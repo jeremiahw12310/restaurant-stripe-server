@@ -28,6 +28,8 @@ class RewardsViewModel: ObservableObject {
                 self.lastSuccessData = nil
                 self.successDataByCode = [:]
                 self.giftedRewards = []
+                self.pendingQRSuccess = nil
+                self.stagedQRSuccess = nil
             }
         }
     }
@@ -60,6 +62,8 @@ class RewardsViewModel: ObservableObject {
     @Published var successDataByCode: [String: RedemptionSuccessData] = [:]
     /// When set, Rewards tab presents the QR screen immediately (root-level presentation).
     @Published var pendingQRSuccess: RedemptionSuccessData?
+    /// Staged QR data waiting for parent sheets to dismiss before presenting
+    @Published var stagedQRSuccess: RedemptionSuccessData?
     @Published var rewardJustUsed = false
     @Published var giftedRewards: [GiftedReward] = []
     @Published var showRefundNotification = false
@@ -88,6 +92,31 @@ class RewardsViewModel: ObservableObject {
         successDataByCode[code] = success
         lastSuccessData = success
         persistActiveReward()
+    }
+    
+    /// If the user has a pending (non-expired) reward and the QR screen is not already showing,
+    /// sets `pendingQRSuccess` so the cashier QR fullScreenCover appears. Call on app become active.
+    /// - Returns: `true` if the QR screen was shown, `false` otherwise.
+    @MainActor
+    func showPendingRewardQRIfNeeded() -> Bool {
+        guard pendingQRSuccess == nil else { return false }
+        guard !activeRedemptions.isEmpty,
+              let first = activeRedemptions.first,
+              let successData = successDataByCode[first.redemptionCode],
+              successData.expiresAt > Date() else {
+            return false
+        }
+        pendingQRSuccess = successData
+        return true
+    }
+    
+    /// Called when parent sheet finishes dismissing - moves staged data to pending for presentation
+    @MainActor
+    func presentStagedQRIfNeeded() {
+        if let staged = stagedQRSuccess {
+            stagedQRSuccess = nil
+            pendingQRSuccess = staged
+        }
     }
     
     // MARK: - Lunch Special Availability Check

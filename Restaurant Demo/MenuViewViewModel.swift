@@ -21,6 +21,12 @@ class MenuViewViewModel: ObservableObject {
     // Failsafe timeout to dismiss interstitial if request hangs
     private var comboTimeoutWorkItem: DispatchWorkItem?
     
+    // Retain prefetcher so it isn't deallocated before completion
+    private var imagePrefetcher: ImagePrefetcher?
+    
+    // Count overlapping prefetches so we only restore Kingfisher defaults when the last one finishes
+    private var comboPrefetchInProgressCount = 0
+    
     // Track previous recommendations (last 3)
     private var previousRecommendations: [PreviousCombo] = []
     
@@ -141,49 +147,35 @@ class MenuViewViewModel: ObservableObject {
         
         DebugLogger.debug("🖼️ Prefetching \(urls.count) combo images", category: "Menu")
         
-        let group = DispatchGroup()
+        // KingfisherOptionsInfoItem.cacheMemoryOnly has no associated value, so we temporarily
+        // remove it from default options so prefetched combo images persist to disk.
         let processor = DownsamplingImageProcessor(size: CGSize(width: 120, height: 120))
         let options: KingfisherOptionsInfo = [
             .processor(processor),
-            .scaleFactor(UIScreen.main.scale)
+            .scaleFactor(UIScreen.main.scale),
+            .cacheSerializer(FormatIndicatedCacheSerializer.png),
+            .backgroundDecode
         ]
-        
-        var timeoutFired = false
-        var failedCount = 0
-        
-        let timeoutWorkItem = DispatchWorkItem { [weak self] in
-            guard let self = self else { return }
-            timeoutFired = true
-            guard self.showComboInterstitial, !self.areImagesReady else { return }
-            DebugLogger.debug("🖼️ Image load timeout - dismissing with error", category: "Menu")
-            self.showComboInterstitial = false
-            self.error = "Images took too long to load. Please try again."
+        let originalDefaults = KingfisherManager.shared.defaultOptions
+        KingfisherManager.shared.defaultOptions = originalDefaults.filter { opt in
+            if case .cacheMemoryOnly = opt { return false }
+            return true
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 25.0, execute: timeoutWorkItem)
+        comboPrefetchInProgressCount += 1
         
-        for url in urls {
-            group.enter()
-            KingfisherManager.shared.retrieveImage(with: url, options: options) { result in
-                if case .failure(let error) = result {
-                    failedCount += 1
-                    DebugLogger.debug("🖼️ Failed to load combo image: \(url.absoluteString) (\(error.localizedDescription))", category: "Menu")
+        // Store prefetcher so it isn't deallocated before completion
+        imagePrefetcher = ImagePrefetcher(urls: urls, options: options) { [weak self] skipped, failed, completed in
+            DispatchQueue.main.async {
+                self?.comboPrefetchInProgressCount = max(0, (self?.comboPrefetchInProgressCount ?? 1) - 1)
+                if self?.comboPrefetchInProgressCount == 0 {
+                    KingfisherManager.shared.defaultOptions = originalDefaults
                 }
-                group.leave()
+                self?.imagePrefetcher = nil  // Clear reference after completion
+                DebugLogger.debug("🖼️ Image prefetch done - skipped: \(skipped.count), failed: \(failed.count), completed: \(completed.count)", category: "Menu")
+                completion()
             }
         }
-        
-        group.notify(queue: .main) {
-            timeoutWorkItem.cancel()
-            guard !timeoutFired else { return }
-            if failedCount > 0 {
-                DebugLogger.debug("🖼️ Combo image load failed for \(failedCount) item(s) - dismissing with error", category: "Menu")
-                self.showComboInterstitial = false
-                self.error = "Some images failed to load. Please try again."
-                return
-            }
-            DebugLogger.debug("🖼️ All combo images loaded", category: "Menu")
-            completion()
-        }
+        imagePrefetcher?.start()
     }
     
     private func addToPreviousRecommendations(_ combo: PersonalizedCombo) {

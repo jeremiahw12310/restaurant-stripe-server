@@ -16,43 +16,6 @@ struct ItemDetailView: View {
     @State private var showSafariView = false
     @State private var showToppingCategorySheet = false
     
-    private var imageURL: URL? {
-        // Handle empty URLs
-        guard !item.imageURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        
-        // Handle Firebase Storage URLs
-        if item.imageURL.hasPrefix("gs://") {
-            // Convert gs:// URL to proper Firebase Storage download URL
-            // Format: gs://bucket-name/path/to/file
-            // Convert to: https://firebasestorage.googleapis.com/v0/b/bucket-name/o/path%2Fto%2Ffile?alt=media
-            
-            let components = item.imageURL.replacingOccurrences(of: "gs://", with: "").components(separatedBy: "/")
-            if components.count >= 2 {
-                let bucketName = components[0]
-                let filePath = components.dropFirst().joined(separator: "/")
-                
-                // Better URL encoding for Firebase Storage
-                let encodedPath = filePath.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filePath
-                let downloadURL = "https://firebasestorage.googleapis.com/v0/b/\(bucketName)/o/\(encodedPath)?alt=media"
-                
-                return URL(string: downloadURL)
-            } else {
-                return nil
-            }
-        } else if item.imageURL.hasPrefix("https://firebasestorage.googleapis.com") {
-            // Already a Firebase Storage URL
-            return URL(string: item.imageURL)
-        } else if item.imageURL.hasPrefix("http") {
-            // Regular URL
-            return URL(string: item.imageURL)
-        } else {
-            // Invalid or empty URL
-            return nil
-        }
-    }
-    
     private var totalPrice: Double {
         let toppingPrice = selectedToppings.compactMap { toppingID in
             menuVM.drinkOptions.first(where: { $0.id == toppingID && !$0.isMilkSub })?.price
@@ -456,7 +419,7 @@ struct ItemDetailView: View {
     
     private var floatingImageSection: some View {
         Group {
-            if let imageURL = imageURL {
+            if let imageURL = item.resolvedImageURL {
                 KFImage(imageURL)
                     .resizable()
                     .placeholder {
@@ -497,7 +460,7 @@ struct ItemDetailView: View {
     private var heroImageSection: some View {
         ZStack(alignment: .bottom) {
             Group {
-                if let imageURL = imageURL {
+                if let imageURL = item.resolvedImageURL {
                     KFImage(imageURL)
                         .resizable()
                         .scaledToFit()

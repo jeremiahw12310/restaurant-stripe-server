@@ -89,7 +89,7 @@ struct RewardIceSugarSelectionView: View {
     // MARK: - Slider Section
     private var sliderSection: some View {
         VStack(spacing: 24) {
-            HStack(spacing: 40) {
+            HStack(spacing: 16) {
                 // Ice Slider
                 VStack(spacing: 16) {
                     // Icon and label
@@ -130,7 +130,7 @@ struct RewardIceSugarSelectionView: View {
                     )
                 }
             }
-            .padding(.horizontal, 32)
+            .padding(.horizontal, 20)
             .padding(.vertical, 28)
             .frostedGlassCard(cornerRadius: 24)
             .padding(.horizontal, 20)
@@ -220,68 +220,86 @@ struct VerticalLevelSlider: View {
     @State private var isDragging = false
     
     private let sliderHeight: CGFloat = 280
-    private let trackWidth: CGFloat = 60
+    private let trackWidth: CGFloat = 50  // Track bar width only
+    private let labelWidth: CGFloat = 70  // Space for labels
     private let knobSize: CGFloat = 28
     
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .bottom) {
-                // Background track
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.white.opacity(0.1))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                    )
-                
-                // Filled portion (from bottom to selected level)
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                accentColor.opacity(0.8),
-                                accentColor.opacity(0.4)
-                            ],
-                            startPoint: .bottom,
-                            endPoint: .top
+        HStack(alignment: .top, spacing: 8) {
+            // Track with fill and indicators
+            GeometryReader { geometry in
+                ZStack(alignment: .bottom) {
+                    // Background track
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color.white.opacity(0.1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16)
+                                .stroke(Color.white.opacity(0.2), lineWidth: 1)
                         )
-                    )
-                    .frame(height: fillHeight)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.7), value: selectedLevel)
-                
-                // Level indicators and labels
-                VStack(spacing: 0) {
-                    ForEach(0..<levels.count, id: \.self) { index in
-                        levelRow(index: index, geometry: geometry)
-                        if index < levels.count - 1 {
-                            Spacer()
+                    
+                    // Filled portion (from bottom to selected level)
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    accentColor.opacity(0.8),
+                                    accentColor.opacity(0.4)
+                                ],
+                                startPoint: .bottom,
+                                endPoint: .top
+                            )
+                        )
+                        .frame(height: fillHeight)
+                        .animation(.spring(response: 0.4, dampingFraction: 0.7), value: selectedLevel)
+                    
+                    // Level indicator dots
+                    VStack(spacing: 0) {
+                        ForEach(0..<levels.count, id: \.self) { index in
+                            levelDot(index: index)
+                            if index < levels.count - 1 {
+                                Spacer()
+                            }
                         }
                     }
+                    .padding(.vertical, 12)
                 }
-                .padding(.vertical, 12)
+                .frame(width: trackWidth, height: sliderHeight)
             }
             .frame(width: trackWidth, height: sliderHeight)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        isDragging = true
-                        let yPosition = value.location.y
-                        let levelIndex = calculateLevelFromPosition(yPosition)
-                        if levelIndex != selectedLevel {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                selectedLevel = levelIndex
-                            }
-                            // Haptic feedback
-                            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                            impactFeedback.impactOccurred()
-                        }
+            
+            // Labels to the right of the track
+            VStack(spacing: 0) {
+                ForEach(0..<levels.count, id: \.self) { index in
+                    levelLabel(index: index)
+                    if index < levels.count - 1 {
+                        Spacer()
                     }
-                    .onEnded { _ in
-                        isDragging = false
-                    }
-            )
+                }
+            }
+            .frame(width: labelWidth, height: sliderHeight)
+            .padding(.vertical, 12)
         }
-        .frame(width: trackWidth, height: sliderHeight)
+        .frame(width: trackWidth + 8 + labelWidth, height: sliderHeight)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    isDragging = true
+                    let yPosition = value.location.y
+                    let levelIndex = calculateLevelFromPosition(yPosition)
+                    if levelIndex != selectedLevel {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            selectedLevel = levelIndex
+                        }
+                        // Haptic feedback
+                        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                        impactFeedback.impactOccurred()
+                    }
+                }
+                .onEnded { _ in
+                    isDragging = false
+                }
+        )
     }
     
     // Calculate fill height based on selected level (0 = full, 4 = empty)
@@ -298,33 +316,51 @@ struct VerticalLevelSlider: View {
         return max(0, min(levels.count - 1, levelIndex))
     }
     
-    // Level row with indicator
+    // Level indicator dot
     @ViewBuilder
-    private func levelRow(index: Int, geometry: GeometryProxy) -> some View {
+    private func levelDot(index: Int) -> some View {
         let isSelected = index == selectedLevel
         
-        HStack(spacing: 0) {
-            // Level indicator dot
-            Circle()
-                .fill(isSelected ? accentColor : Color.white.opacity(0.3))
-                .frame(width: isSelected ? 14 : 8, height: isSelected ? 14 : 8)
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(isSelected ? 0.8 : 0.2), lineWidth: isSelected ? 2 : 1)
-                )
-                .shadow(color: isSelected ? accentColor.opacity(0.5) : .clear, radius: 4)
-                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isSelected)
-        }
-        .frame(width: trackWidth, height: knobSize)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                selectedLevel = index
+        Circle()
+            .fill(isSelected ? accentColor : Color.white.opacity(0.3))
+            .frame(width: isSelected ? 14 : 8, height: isSelected ? 14 : 8)
+            .overlay(
+                Circle()
+                    .stroke(Color.white.opacity(isSelected ? 0.8 : 0.2), lineWidth: isSelected ? 2 : 1)
+            )
+            .shadow(color: isSelected ? accentColor.opacity(0.5) : .clear, radius: 4)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isSelected)
+            .frame(width: trackWidth, height: knobSize)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                    selectedLevel = index
+                }
+                // Haptic feedback
+                let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                impactFeedback.impactOccurred()
             }
-            // Haptic feedback
-            let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-            impactFeedback.impactOccurred()
-        }
+    }
+    
+    // Level label text
+    @ViewBuilder
+    private func levelLabel(index: Int) -> some View {
+        let isSelected = index == selectedLevel
+        
+        Text(levels[index])
+            .font(.system(size: isSelected ? 14 : 12, weight: isSelected ? .bold : .medium))
+            .foregroundColor(isSelected ? .white : .white.opacity(0.5))
+            .frame(width: labelWidth, height: knobSize, alignment: .leading)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isSelected)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                    selectedLevel = index
+                }
+                // Haptic feedback
+                let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                impactFeedback.impactOccurred()
+            }
     }
 }
 
