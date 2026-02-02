@@ -65,19 +65,23 @@ struct GiftedRewardCard: View {
                             switch phase {
                             case .empty:
                                 ProgressView()
-                                    .frame(width: 80, height: 80)
+                                    .frame(width: 100, height: 100)
                             case .success(let image):
                                 image
                                     .resizable()
                                     .aspectRatio(contentMode: .fill)
-                                    .frame(width: 80, height: 80)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    .frame(width: 100, height: 100)
+                                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 16)
+                                            .stroke(Color.white.opacity(0.3), lineWidth: 1.5)
+                                    )
                                     .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
                             case .failure:
                                 Image(systemName: "photo")
                                     .font(.system(size: 40))
                                     .foregroundColor(.white.opacity(0.6))
-                                    .frame(width: 80, height: 80)
+                                    .frame(width: 100, height: 100)
                             @unknown default:
                                 EmptyView()
                             }
@@ -87,14 +91,14 @@ struct GiftedRewardCard: View {
                         Image(imageName)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 80, height: 80)
+                            .frame(width: 100, height: 100)
                             .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
                     } else {
                         // Default gift icon
                         Image(systemName: "gift.fill")
                             .font(.system(size: 40))
                             .foregroundColor(.white.opacity(0.8))
-                            .frame(width: 80, height: 80)
+                            .frame(width: 100, height: 100)
                     }
                     
                     VStack(alignment: .leading, spacing: 6) {
@@ -262,6 +266,24 @@ struct GiftedRewardDetailView: View {
         )
     }
     
+    /// For Full Combo, dumpling selection uses the 12-piece tier (same as earned flow). Otherwise use rewardOption.
+    private var dumplingRewardOption: RewardOption {
+        if isFullComboReward {
+            return RewardOption(
+                title: gift.rewardTitle,
+                description: gift.rewardDescription,
+                pointsRequired: 1500,
+                color: rewardOption.color,
+                icon: rewardOption.icon,
+                category: gift.rewardCategory,
+                imageName: rewardOption.imageName,
+                eligibleCategoryId: rewardOption.eligibleCategoryId,
+                rewardTierId: "tier_12piece_1500"
+            )
+        }
+        return rewardOption
+    }
+    
     // Determine button text based on reward type
     private var claimButtonText: String {
         if gift.isCustom {
@@ -327,7 +349,11 @@ struct GiftedRewardDetailView: View {
                                         .resizable()
                                         .aspectRatio(contentMode: .fill)
                                         .frame(width: 150, height: 150)
-                                        .clipShape(RoundedRectangle(cornerRadius: 20))
+                                        .clipShape(RoundedRectangle(cornerRadius: 24))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 24)
+                                                .stroke(Color.white.opacity(0.4), lineWidth: 2)
+                                        )
                                         .shadow(color: .black.opacity(0.3), radius: 16, x: 0, y: 8)
                                 case .failure:
                                     Image(systemName: "photo")
@@ -511,7 +537,7 @@ struct GiftedRewardDetailView: View {
         }
         .sheet(isPresented: $showDumplingSelection) {
             RewardDumplingSelectionView(
-                reward: rewardOption,
+                reward: dumplingRewardOption,
                 currentPoints: rewardsVM.userPoints,
                 onSingleDumplingSelected: { dumpling in
                     selectedFlavor1 = dumpling
@@ -521,9 +547,10 @@ struct GiftedRewardDetailView: View {
                     showDumplingSelection = false
                     
                     if isFullComboReward {
-                        // Full Combo: proceed to drink category selection
+                        // Full Combo: show cooking method first, then drink category (same as earned flow)
+                        selectedSingleDumpling = dumpling
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            showComboDrinkCategorySelection = true
+                            showCookingMethodSelection = true
                         }
                     } else if requiresCookingMethodSelection {
                         // 6-piece dumplings: show cooking method
@@ -551,7 +578,7 @@ struct GiftedRewardDetailView: View {
         }
         .sheet(isPresented: $showHalfAndHalfSelection) {
             RewardHalfAndHalfSelectionView(
-                reward: rewardOption,
+                reward: dumplingRewardOption,
                 currentPoints: rewardsVM.userPoints,
                 onSelectionComplete: { flavor1, flavor2, cookingMethod in
                     selectedFlavor1 = flavor1
@@ -679,7 +706,25 @@ struct GiftedRewardDetailView: View {
                     comboDrinkItem = drinkItem
                     showComboDrinkItemSelection = false
                     
-                    if requiresDrinkTypeSelection {
+                    let category = selectedComboDrinkCategory ?? ""
+                    if isFullComboReward {
+                        // Full Combo: branch on selected drink category (same as earned flow)
+                        if category == "Lemonade" || category == "Soda" {
+                            selectedItem = drinkItem
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                showDrinkTypeSelection = true
+                            }
+                        } else if category == "Milk Tea" || category == "Fruit Tea" || category == "Coffee" {
+                            selectedItem = drinkItem
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                showIceSugarSelection = true
+                            }
+                        } else {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                showToppingSelection = true
+                            }
+                        }
+                    } else if requiresDrinkTypeSelection {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                             showDrinkTypeSelection = true
                         }
@@ -840,7 +885,7 @@ struct GiftedRewardDetailView: View {
                 Task { await rewardsVM.loadGiftedRewards() }
                 await MainActor.run { dismiss() }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    rewardsVM.pendingQRSuccess = successData
+                    rewardsVM.stagedQRSuccess = successData
                 }
                 
                 DebugLogger.debug("✅ Gift claimed successfully!", category: "Rewards")

@@ -375,6 +375,30 @@ struct AdminSendRewardsView: View {
             }
             
             if viewModel.targetType == .individual {
+                // Search field
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.gray)
+                    TextField("Search by name or phone", text: $viewModel.searchQuery)
+                        .textFieldStyle(PlainTextFieldStyle())
+                        .onChange(of: viewModel.searchQuery) { _, _ in
+                            viewModel.scheduleReloadUsers()
+                        }
+                    if !viewModel.searchQuery.isEmpty {
+                        Button {
+                            viewModel.searchQuery = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.gray)
+                        }
+                    }
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.gray.opacity(0.1))
+                )
+                
                 // User selection list (similar to AdminNotificationsView)
                 if !viewModel.users.isEmpty {
                     ScrollView {
@@ -409,33 +433,149 @@ struct AdminSendRewardsView: View {
     // MARK: - Preview Section
     private var previewSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Preview")
+            Text("Preview (Customer View)")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundColor(.black)
             
-            VStack(alignment: .leading, spacing: 8) {
-                if let image = viewModel.selectedImage {
-                    Image(uiImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(height: 150)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                } else if let imageName = viewModel.selectedReward?.imageName {
-                    Image(imageName)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(height: 150)
+            // Rich preview card matching GiftedRewardCard styling
+            VStack(alignment: .leading, spacing: 16) {
+                // Header with GIFT badge and FREE badge
+                HStack {
+                    // GIFT badge
+                    HStack(spacing: 6) {
+                        Image(systemName: "gift.fill")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("GIFT")
+                            .font(.system(size: 12, weight: .black, design: .rounded))
+                            .tracking(1.0)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color(red: 1.0, green: 0.3, blue: 0.5), Color(red: 1.0, green: 0.5, blue: 0.7)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                    )
+                    .shadow(color: Color(red: 1.0, green: 0.3, blue: 0.5).opacity(0.4), radius: 4, x: 0, y: 2)
+                    
+                    Spacer()
+                    
+                    // FREE badge
+                    Text("FREE")
+                        .font(.system(size: 11, weight: .black, design: .rounded))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule()
+                                .fill(Color(red: 0.2, green: 0.8, blue: 0.4))
+                        )
                 }
                 
-                Text(viewModel.previewTitle)
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundColor(.black)
+                // Image and text content
+                HStack(spacing: 12) {
+                    // Preview image
+                    if let image = viewModel.selectedImage {
+                        Image(uiImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 100, height: 100)
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(Color.white.opacity(0.3), lineWidth: 1.5)
+                            )
+                            .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+                    } else if let imageName = viewModel.selectedReward?.imageName {
+                        Image(imageName)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 100, height: 100)
+                            .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+                    } else {
+                        // Default gift icon
+                        Image(systemName: "gift.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(.white.opacity(0.8))
+                            .frame(width: 100, height: 100)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(viewModel.previewTitle.isEmpty ? "Reward Title" : viewModel.previewTitle)
+                            .font(.system(size: 18, weight: .black, design: .rounded))
+                            .foregroundColor(.white)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        
+                        Text(viewModel.previewDescription.isEmpty ? "Reward description will appear here" : viewModel.previewDescription)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.white.opacity(0.85))
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                    
+                    Spacer()
+                }
                 
-                Text(viewModel.previewDescription)
-                    .font(.system(size: 14))
-                    .foregroundColor(.gray)
-                    .lineLimit(3)
+                // Claim button preview
+                HStack {
+                    Spacer()
+                    HStack(spacing: 8) {
+                        Image(systemName: "hand.tap.fill")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("CLAIM NOW")
+                            .font(.system(size: 14, weight: .black, design: .rounded))
+                            .tracking(0.5)
+                    }
+                    .foregroundColor(Color(red: 0.15, green: 0.1, blue: 0.0))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color(red: 1.0, green: 0.9, blue: 0.5), Color(red: 1.0, green: 0.75, blue: 0.2)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .shadow(color: Color(red: 1.0, green: 0.8, blue: 0.0).opacity(0.4), radius: 6, x: 0, y: 3)
+                    )
+                    Spacer()
+                }
             }
+            .padding(20)
+            .background(
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.9, green: 0.7, blue: 0.3),
+                                Color(red: 1.0, green: 0.85, blue: 0.45)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 24)
+                            .stroke(
+                                LinearGradient(
+                                    colors: [Color.white.opacity(0.5), Color.white.opacity(0.2)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 2
+                            )
+                    )
+                    .shadow(color: Color(red: 0.9, green: 0.7, blue: 0.3).opacity(0.4), radius: 12, x: 0, y: 6)
+            )
         }
         .padding(20)
         .background(
@@ -490,6 +630,7 @@ class AdminSendRewardsViewModel: ObservableObject {
     @Published var customCategory: String = "Food"
     @Published var targetType: TargetType = .all
     @Published var selectedUserIds: Set<String> = []
+    @Published var searchQuery: String = ""
     @Published var users: [NotificationUser] = []
     @Published var isLoadingUsers: Bool = false
     @Published var isSending: Bool = false
@@ -503,8 +644,19 @@ class AdminSendRewardsViewModel: ObservableObject {
         case individual
     }
     
+    private var searchDebounceWorkItem: DispatchWorkItem?
+    
     var filteredUsers: [NotificationUser] {
         return users
+    }
+    
+    func scheduleReloadUsers() {
+        searchDebounceWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.loadUsers()
+        }
+        searchDebounceWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
     }
     
     var canSend: Bool {
@@ -559,7 +711,15 @@ class AdminSendRewardsViewModel: ObservableObject {
                 return
             }
             
-            guard let url = URL(string: "\(Config.backendURL)/admin/users?limit=100") else {
+            var components = URLComponents(string: "\(Config.backendURL)/admin/users")
+            var items: [URLQueryItem] = [URLQueryItem(name: "limit", value: "100")]
+            let q = self.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !q.isEmpty {
+                items.append(URLQueryItem(name: "q", value: q))
+            }
+            components?.queryItems = items
+            
+            guard let url = components?.url else {
                 DispatchQueue.main.async {
                     self.isLoadingUsers = false
                 }
@@ -827,6 +987,7 @@ class AdminSendRewardsViewModel: ObservableObject {
         customCategory = "Food"
         targetType = .all
         selectedUserIds.removeAll()
+        searchQuery = ""
     }
 }
 

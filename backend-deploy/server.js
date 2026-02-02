@@ -8560,11 +8560,13 @@ IMPORTANT:
           }
         });
 
-        // Make file publicly readable
-        await file.makePublic();
-
-        // Get public URL
-        imageURL = `https://storage.googleapis.com/${bucket.name}/${imageFileName}`;
+        // Generate a signed URL that expires far in the future (10 years)
+        // This avoids the "uniform bucket-level access" error from makePublic()
+        const [signedUrl] = await file.getSignedUrl({
+          action: 'read',
+          expires: Date.now() + 10 * 365 * 24 * 60 * 60 * 1000, // 10 years
+        });
+        imageURL = signedUrl;
 
         // Clean up local file
         await fsPromises.unlink(req.file.path).catch(err => logger.error('Failed to delete file:', err));
