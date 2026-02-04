@@ -219,27 +219,6 @@
       .toast.show {
         opacity: 1;
       }
-      .btn-beta {
-        display: inline-block;
-        margin-top: 14px;
-        padding: 10px 16px;
-        font-size: 14px;
-        font-weight: 600;
-        color: var(--gold2);
-        text-decoration: none;
-        border-radius: 12px;
-        border: 1px solid rgba(191, 140, 38, 0.35);
-        background: rgba(216, 165, 63, 0.08);
-        transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
-      }
-      .btn-beta:hover {
-        color: var(--darkgold1);
-        background: rgba(216, 165, 63, 0.14);
-        border-color: rgba(191, 140, 38, 0.5);
-      }
-      .btn-beta:active {
-        opacity: 0.9;
-      }
       @media (prefers-reduced-motion: reduce) {
         .btn {
           transition: none;
@@ -258,7 +237,7 @@
       </div>
 
       <div class="hero">
-        <h1>You’ve been invited</h1>
+        <h1>You've been invited</h1>
         <p class="message">
           Open <strong>Dumpling House Rewards</strong> and enter this code during sign up to connect your
           referral.
@@ -275,8 +254,8 @@
         </div>
 
         <div class="row" style="margin-top: 10px">
-          <a class="btn btn-secondary btn-disabled" id="appStoreBtn" href="#" aria-disabled="true">
-            App Store (coming soon)
+          <a class="btn btn-secondary" id="appStoreBtn" href="https://apps.apple.com/us/app/dumpling-house-rewards/id6758052536" target="_blank" rel="noopener noreferrer">
+            Download on the App Store
           </a>
         </div>
 
@@ -294,9 +273,6 @@
           ·
           <a href="/terms.html" target="_blank" rel="noreferrer">Terms of Service</a>
         </div>
-        <div style="text-align: center;">
-          <a class="btn-beta" id="betaTestBtn" href="#" target="_blank" rel="noopener noreferrer">Beta Test</a>
-        </div>
       </div>
     </div>
 
@@ -310,12 +286,8 @@
       const referralCodeEl = document.getElementById("referralCode");
       referralCodeEl.textContent = code;
 
-      // App Store link (enable after submission by filling this in)
-      // Example: "https://apps.apple.com/app/id1234567890"
-      const APP_STORE_URL = "";
-
-      // TestFlight public link for beta testers (paste your link from App Store Connect → TestFlight → Public Link)
-      const TESTFLIGHT_PUBLIC_LINK = "https://testflight.apple.com/join/GJfArH64";
+      // App Store link
+      const APP_STORE_URL = "https://apps.apple.com/us/app/dumpling-house-rewards/id6758052536";
 
       // Deep link fallback (if the app is installed but Universal Links isn't set up yet)
       const deepLink = `restaurantdemo://referral?code=${encodeURIComponent(code)}`;
@@ -352,15 +324,7 @@
         }
       }
 
-      // Beta Test button (TestFlight)
-      const betaTestBtn = document.getElementById("betaTestBtn");
-      if (TESTFLIGHT_PUBLIC_LINK && /^https?:\/\//i.test(TESTFLIGHT_PUBLIC_LINK)) {
-        betaTestBtn.href = TESTFLIGHT_PUBLIC_LINK;
-      } else {
-        betaTestBtn.style.display = "none";
-      }
-
-      // App Store button (disabled by default until APP_STORE_URL is set)
+      // App Store button
       const appStoreBtn = document.getElementById("appStoreBtn");
       if (APP_STORE_URL && /^https?:\/\//i.test(APP_STORE_URL)) {
         appStoreBtn.classList.remove("btn-disabled");
@@ -395,8 +359,3 @@
     </script>
   </body>
 </html>
-
-
-
-
-
