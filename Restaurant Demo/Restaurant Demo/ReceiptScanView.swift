@@ -8,7 +8,6 @@ import UIKit
 import Combine
 import CoreImage
 import CoreImage.CIFilterBuiltins
-import Photos
 import CoreMedia
 
 struct ReceiptScanView: View {
@@ -53,8 +52,6 @@ struct ReceiptScanView: View {
     @State private var pendingErrorOutcome: ReceiptScanOutcome? = nil
     // Store last captured image for retry functionality
     @State private var lastCapturedImage: UIImage? = nil
-    // Admin debug: save preprocessed receipt images to Photos
-    @State private var savePreprocessedReceiptToPhotosDebug = false
     // Interstitial coordination: avoid infinite loops / stop on response
     @State private var serverHasResponded = false
     @State private var interstitialTimedOut = false
@@ -283,27 +280,6 @@ struct ReceiptScanView: View {
                     }
                     .padding(.horizontal, 24)
 
-                    #if DEBUG
-                    // Admin debug toggle: save preprocessed images to Photos to verify cropping
-                    VStack(alignment: .leading, spacing: 6) {
-                        Toggle(isOn: $savePreprocessedReceiptToPhotosDebug) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Save preprocessed receipt image to Photos (debug)")
-                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                                Text("Admin only. Saves the cropped/perspective-corrected image before upload so you can verify detection.")
-                                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                                    .foregroundColor(Theme.modernSecondary)
-                            }
-                        }
-                        .toggleStyle(SwitchToggleStyle(tint: Theme.energyOrange))
-                        .onChange(of: savePreprocessedReceiptToPhotosDebug) { newValue in
-                            if newValue {
-                                requestPhotoLibraryAddPermissionIfNeeded()
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 24)
-                    #endif
                 }
 
                 Spacer()
@@ -570,7 +546,7 @@ struct ReceiptScanView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 45.0, execute: timeoutItem)
 
         // Preprocess (crop/perspective-correct) ONLY for receipt scanning to reduce distractions.
-        preprocessReceiptImageForUpload(image, debugSaveToPhotos: userVM.isAdmin && savePreprocessedReceiptToPhotosDebug) { processedImage in
+        preprocessReceiptImageForUpload(image) { processedImage in
             // Client-side gate: prevent hallucinated totals by requiring the Subtotal/Tax/Total section to be visible
             receiptHasSubtotalTaxTotal(processedImage) { hasTotals in
                 guard hasTotals else {
@@ -2912,33 +2888,24 @@ private func receiptHasSubtotalTaxTotalSync(_ image: UIImage) -> Bool {
 
 /// Runs Vision rectangle detection + CoreImage perspective correction to isolate the receipt area.
 /// If anything fails, returns the original image (orientation-normalized) so scans never block.
-private func preprocessReceiptImageForUpload(_ image: UIImage, debugSaveToPhotos: Bool, completion: @escaping (UIImage) -> Void) {
+private func preprocessReceiptImageForUpload(_ image: UIImage, completion: @escaping (UIImage) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
         let normalized = normalizeImageOrientation(image)
         let downscaled = downscaleIfNeeded(normalized, maxDimension: 2000)
 
-        guard let processed = detectAndCorrectReceipt(in: downscaled, debugLog: debugSaveToPhotos) else {
+        guard let processed = detectAndCorrectReceipt(in: downscaled, debugLog: false) else {
             // Fallback: when rectangle detection fails, attempt a conservative text-box crop to reduce background.
             // This is still guarded by the Subtotal/Tax/Total OCR gate upstream (fail closed).
-            let heuristic = heuristicTextCropReceipt(downscaled, debugLog: debugSaveToPhotos)
+            let heuristic = heuristicTextCropReceipt(downscaled, debugLog: false)
             if heuristic != nil {
                 DebugLogger.debug("🧾 Receipt preprocessing fallback: using heuristic text crop (no rectangle detected)", category: "ReceiptScan")
             } else {
                 DebugLogger.debug("🧾 Receipt preprocessing skipped (no rectangle detected) - using original image", category: "ReceiptScan")
             }
-            if debugSaveToPhotos {
-                saveToPhotoLibrary(downscaled, label: "receipt-debug-original")
-                if let heuristic {
-                    saveToPhotoLibrary(heuristic, label: "receipt-debug-heuristic")
-                }
-            }
             DispatchQueue.main.async { completion(heuristic ?? downscaled) }
             return
         }
         DebugLogger.debug("🧾 Receipt preprocessing succeeded - using cropped/perspective-corrected image", category: "ReceiptScan")
-        if debugSaveToPhotos {
-            saveToPhotoLibrary(processed, label: "receipt-debug-processed")
-        }
         DispatchQueue.main.async { completion(processed) }
     }
 }
@@ -3276,39 +3243,6 @@ private func inflateQuadWithVerticalPadding(
     br = clamp(CGPoint(x: br.x - dir.x * extraBottom, y: br.y - dir.y * extraBottom))
 
     return (tl, tr, bl, br)
-}
-
-private func requestPhotoLibraryAddPermissionIfNeeded() {
-    // We only need Add-Only access for saving debug images.
-    if #available(iOS 14, *) {
-        let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
-        switch status {
-        case .authorized, .limited:
-            return
-        case .notDetermined:
-            PHPhotoLibrary.requestAuthorization(for: .addOnly) { _ in }
-        default:
-            DebugLogger.debug("📷 Photo library add-only permission not granted; debug saves may fail.", category: "ReceiptScan")
-        }
-    } else {
-        let status = PHPhotoLibrary.authorizationStatus()
-        switch status {
-        case .authorized:
-            return
-        case .notDetermined:
-            PHPhotoLibrary.requestAuthorization { _ in }
-        default:
-            DebugLogger.debug("📷 Photo library permission not granted; debug saves may fail.", category: "ReceiptScan")
-        }
-    }
-}
-
-private func saveToPhotoLibrary(_ image: UIImage, label: String) {
-    // Use UIImageWriteToSavedPhotosAlbum for simplicity; the label is logged only.
-    DispatchQueue.main.async {
-        UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
-        DebugLogger.debug("📷 Saved \(label) image to Photos (\(Int(image.size.width))x\(Int(image.size.height)))", category: "ReceiptScan")
-    }
 }
 
 // Animated dumpling rain view

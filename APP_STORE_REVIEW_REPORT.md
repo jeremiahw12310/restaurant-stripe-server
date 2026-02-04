@@ -59,7 +59,7 @@ The app is suitable for public release. A small fix was applied (UpdateRequiredV
 ### 2.3 Permissions & usage descriptions
 - **Camera:** “This app uses the camera to scan receipts and earn loyalty points.” ✅  
 - **Microphone:** “We need access to your microphone to capture your voice for chat.” ✅  
-- **Photo Library / Add:** Profile pictures and receipt images. ✅  
+- **Photo Library:** “This app accesses your photo library to select profile pictures and receipt images.” (Read only; app does not save images to Photos.) ✅  
 - **Speech Recognition:** “We use speech recognition so you can talk to Dumpling Hero hands-free…” ✅  
 
 - **Location:** Not used at runtime. Only static `CLLocationCoordinate2D` for “Open in Maps” / Google Maps. No `CLLocationManager` or location permission. ✅  

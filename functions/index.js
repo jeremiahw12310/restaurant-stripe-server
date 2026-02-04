@@ -22,6 +22,16 @@ app.use(cors());
 
 app.post('/analyze-receipt', upload.single('image'), async (req, res) => {
   try {
+    // 🚨 Cost hardening: this legacy Functions endpoint is not used by the released app.
+    // The iOS app uses the Render backend (POST /submit-receipt).
+    // In production, disable unless explicitly enabled via env flag.
+    if (process.env.NODE_ENV === 'production' && process.env.ENABLE_FUNCTIONS_ANALYZE_RECEIPT !== 'true') {
+      return res.status(410).json({
+        errorCode: 'ENDPOINT_DISABLED',
+        error: 'This endpoint is disabled in production.'
+      });
+    }
+
     // Initialize OpenAI client only when needed
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const imagePath = req.file.path;
