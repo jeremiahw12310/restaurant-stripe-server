@@ -355,17 +355,17 @@ class NotificationService: NSObject, ObservableObject {
             
             // Mark all notifications as read locally by creating new instances
             self.notifications = self.notifications.map { notification in
-                AppNotification(
-                    id: notification.id,
-                    data: [
-                        "userId": notification.userId,
-                        "title": notification.title,
-                        "body": notification.body,
-                        "createdAt": notification.createdAt,
-                        "read": true,
-                        "type": notification.type.rawValue
-                    ]
-                )
+                var data: [String: Any] = [
+                    "userId": notification.userId,
+                    "title": notification.title,
+                    "body": notification.body,
+                    "createdAt": notification.createdAt,
+                    "read": true,
+                    "type": notification.type.rawValue
+                ]
+                if let rid = notification.reservationId { data["reservationId"] = rid }
+                if let ph = notification.reservationPhone { data["phone"] = ph }
+                return AppNotification(id: notification.id, data: data)
             }
             // Set count to 0 immediately
             self.unreadNotificationCount = 0
@@ -528,13 +528,17 @@ struct AppNotification: Identifiable, Codable {
     let createdAt: Date
     let read: Bool
     let type: NotificationType
-    
+    /// Set for reservation_new notifications; used for Confirm/Call actions.
+    let reservationId: String?
+    let reservationPhone: String?
+
     enum NotificationType: String, Codable {
         case adminBroadcast = "admin_broadcast"
         case adminIndividual = "admin_individual"
         case system = "system"
         case referral = "referral"
         case rewardGift = "reward_gift"
+        case reservationNew = "reservation_new"
     }
     
     init(id: String, data: [String: Any]) {
@@ -590,5 +594,8 @@ struct AppNotification: Identifiable, Codable {
         } else {
             self.type = .system
         }
+
+        reservationId = data["reservationId"] as? String
+        reservationPhone = data["phone"] as? String
     }
 }

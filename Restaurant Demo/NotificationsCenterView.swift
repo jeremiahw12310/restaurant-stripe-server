@@ -2,7 +2,7 @@
 //  NotificationsCenterView.swift
 //  Restaurant Demo
 //
-//  Displays all notifications including referral bonuses and general notifications
+//  Displays all notifications including referral bonuses, reservation alerts, and general notifications
 //
 
 import SwiftUI
@@ -11,13 +11,17 @@ import FirebaseAuth
 struct NotificationsCenterView: View {
     @ObservedObject private var notificationService = NotificationService.shared
     @Environment(\.dismiss) private var dismiss
-    
+
     private var referralNotifications: [AppNotification] {
         notificationService.notifications.filter { $0.type == .referral }
     }
-    
+
+    private var reservationNotifications: [AppNotification] {
+        notificationService.notifications.filter { $0.type == .reservationNew }
+    }
+
     private var generalNotifications: [AppNotification] {
-        notificationService.notifications.filter { $0.type != .referral }
+        notificationService.notifications.filter { $0.type != .referral && $0.type != .reservationNew }
     }
     
     private var hasUnreadNotifications: Bool {
@@ -65,7 +69,12 @@ struct NotificationsCenterView: View {
                         icon: "person.badge.plus.fill"
                     )
                 }
-                
+
+                // Reservation Notifications (admin: Confirm / Call)
+                if !reservationNotifications.isEmpty {
+                    reservationSection(notifications: reservationNotifications)
+                }
+
                 // General Notifications Section
                 if !generalNotifications.isEmpty {
                     notificationSection(
@@ -86,6 +95,28 @@ struct NotificationsCenterView: View {
         }
     }
     
+    private func reservationSection(notifications: [AppNotification]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "calendar.badge.plus")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Theme.primaryGold)
+                Text("RESERVATIONS")
+                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .foregroundStyle(Theme.darkGoldGradient)
+                Rectangle()
+                    .fill(Color.white.opacity(0.15))
+                    .frame(height: 1)
+                    .cornerRadius(1)
+            }
+            VStack(spacing: 10) {
+                ForEach(notifications) { notification in
+                    ReservationNotificationCard(notification: notification)
+                }
+            }
+        }
+    }
+
     private func notificationSection(title: String, notifications: [AppNotification], icon: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             // Section Header
@@ -213,9 +244,11 @@ struct NotificationCard: View {
             return "info.circle.fill"
         case .rewardGift:
             return "gift.fill"
+        case .reservationNew:
+            return "calendar.badge.plus"
         }
     }
-    
+
     private var notificationIconColor: Color {
         switch notification.type {
         case .referral:
@@ -226,9 +259,11 @@ struct NotificationCard: View {
             return Theme.modernSecondary
         case .rewardGift:
             return Theme.energyOrange
+        case .reservationNew:
+            return Theme.energyOrange
         }
     }
-    
+
     private var notificationBackgroundColor: Color {
         switch notification.type {
         case .referral:
@@ -239,6 +274,8 @@ struct NotificationCard: View {
             return Theme.modernSecondary.opacity(0.1)
         case .rewardGift:
             return Theme.energyOrange.opacity(0.15)
+        case .reservationNew:
+            return Theme.energyOrange.opacity(0.15)
         }
     }
     
@@ -246,5 +283,151 @@ struct NotificationCard: View {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+// MARK: - Reservation Notification Card (Confirm / Call)
+
+struct ReservationNotificationCard: View {
+    let notification: AppNotification
+    @State private var isConfirming = false
+    @State private var confirmError: String?
+    private let notificationService = NotificationService.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(Theme.energyOrange.opacity(0.15))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: "calendar.badge.plus")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(Theme.energyOrange)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(notification.title)
+                        .font(.system(size: 16, weight: notification.read ? .medium : .bold, design: .rounded))
+                        .foregroundColor(Theme.modernPrimary)
+                    Text(notification.body)
+                        .font(.system(size: 14, weight: .regular, design: .rounded))
+                        .foregroundColor(Theme.modernSecondary)
+                        .lineLimit(3)
+                    Text(relativeTimeString(from: notification.createdAt))
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundColor(Theme.modernSecondary.opacity(0.7))
+                }
+                Spacer()
+                if !notification.read {
+                    Circle()
+                        .fill(Theme.primaryGold)
+                        .frame(width: 8, height: 8)
+                }
+            }
+
+            if let err = confirmError {
+                Text(err)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.red)
+            }
+
+            HStack(spacing: 12) {
+                if let id = notification.reservationId, !id.isEmpty {
+                    Button(action: { confirmReservation(id: id) }) {
+                        HStack(spacing: 6) {
+                            if isConfirming {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 14))
+                                Text("Confirm")
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            }
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.energyGreen))
+                    }
+                    .disabled(isConfirming)
+                }
+
+                if let phone = notification.reservationPhone, !phone.isEmpty,
+                   let url = URL(string: "tel:\(phone.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? phone)") {
+                    Button(action: { UIApplication.shared.open(url) }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "phone.fill")
+                                .font(.system(size: 14))
+                            Text("Call")
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.energyBlue))
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(notification.read ? Theme.modernCardSecondary.opacity(0.3) : Theme.modernCardSecondary.opacity(0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(notification.read ? Color.clear : Theme.primaryGold.opacity(0.3), lineWidth: 1.5)
+                )
+        )
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    private func relativeTimeString(from date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func confirmReservation(id: String) {
+        guard Auth.auth().currentUser != nil else {
+            confirmError = "Please sign in to confirm."
+            return
+        }
+        isConfirming = true
+        confirmError = nil
+        Auth.auth().currentUser?.getIDToken { token, err in
+            if err != nil {
+                DispatchQueue.main.async {
+                    isConfirming = false
+                    confirmError = "Sign-in error. Try again."
+                }
+                return
+            }
+            guard let token = token,
+                  let url = URL(string: "\(Config.backendURL)/reservations/\(id)") else {
+                DispatchQueue.main.async {
+                    isConfirming = false
+                    confirmError = "Invalid configuration."
+                }
+                return
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "PATCH"
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["status": "confirmed"])
+
+            URLSession.shared.dataTask(with: request) { _, response, _ in
+                DispatchQueue.main.async {
+                    isConfirming = false
+                    if let http = response as? HTTPURLResponse, http.statusCode == 200 {
+                        notificationService.markNotificationAsRead(notificationId: notification.id)
+                    } else {
+                        confirmError = "Failed to confirm. Try again."
+                    }
+                }
+            }.resume()
+        }
     }
 }

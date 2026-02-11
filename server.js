@@ -4179,6 +4179,207 @@ IMPORTANT:
   });
 
   // ---------------------------------------------------------------------------
+  // Reservations (create = any user; list/update = admin only)
+  // ---------------------------------------------------------------------------
+
+  /** Returns all user IDs where isAdmin === true (scan users collection). */
+  async function getAdminUids() {
+    const db = admin.firestore();
+    const snapshot = await db.collection('users').get();
+    const uids = [];
+    snapshot.docs.forEach((doc) => {
+      const data = doc.data() || {};
+      if (data.isAdmin === true) uids.push(doc.id);
+    });
+    return uids;
+  }
+
+  /**
+   * POST /reservations
+   * Authenticated user. Create a reservation; all admins receive an in-app notification.
+   * Body: customerName, phone, email?, date (YYYY-MM-DD), time, partySize, specialRequests?
+   */
+  app.post('/reservations', async (req, res) => {
+    try {
+      const userContext = await requireUser(req, res);
+      if (!userContext) return;
+
+      const { customerName, phone, email, date, time, partySize, specialRequests } = req.body || {};
+
+      if (!customerName || typeof customerName !== 'string' || customerName.trim().length === 0) {
+        return res.status(400).json({ error: 'customerName is required' });
+      }
+      if (!phone || typeof phone !== 'string' || phone.trim().length === 0) {
+        return res.status(400).json({ error: 'phone is required' });
+      }
+      if (!date || typeof date !== 'string' || date.trim().length === 0) {
+        return res.status(400).json({ error: 'date is required (YYYY-MM-DD)' });
+      }
+      if (!time || typeof time !== 'string' || time.trim().length === 0) {
+        return res.status(400).json({ error: 'time is required' });
+      }
+      const partySizeNum = typeof partySize === 'number' ? partySize : parseInt(partySize, 10);
+      if (Number.isNaN(partySizeNum) || partySizeNum < 1 || partySizeNum > 20) {
+        return res.status(400).json({ error: 'partySize must be between 1 and 20' });
+      }
+
+      const dateStr = date.trim();
+      const dateObj = new Date(dateStr + 'T12:00:00');
+      if (Number.isNaN(dateObj.getTime())) {
+        return res.status(400).json({ error: 'Invalid date format; use YYYY-MM-DD' });
+      }
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (dateObj < today) {
+        return res.status(400).json({ error: 'Reservation date must be today or in the future' });
+      }
+
+      const db = admin.firestore();
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const ref = db.collection('reservations').doc();
+      await ref.set({
+        userId: userContext.uid,
+        customerName: customerName.trim(),
+        phone: phone.trim(),
+        email: (email && typeof email === 'string') ? email.trim() : null,
+        date: dateStr,
+        time: time.trim(),
+        partySize: partySizeNum,
+        specialRequests: (specialRequests && typeof specialRequests === 'string') ? specialRequests.trim() : null,
+        status: 'pending',
+        createdAt: now,
+        updatedAt: now
+      });
+
+      const reservationId = ref.id;
+      const bodyText = `Party of ${partySizeNum}, ${dateStr} at ${time.trim()} – ${customerName.trim()}`;
+
+      const adminUids = await getAdminUids();
+      const batchSize = 450;
+      for (let i = 0; i < adminUids.length; i += batchSize) {
+        const batch = db.batch();
+        const chunk = adminUids.slice(i, i + batchSize);
+        for (const uid of chunk) {
+          const notifRef = db.collection('notifications').doc();
+          batch.set(notifRef, {
+            userId: uid,
+            title: 'New reservation',
+            body: bodyText,
+            type: 'reservation_new',
+            read: false,
+            createdAt: now,
+            reservationId,
+            phone: phone.trim()
+          });
+        }
+        await batch.commit();
+      }
+
+      console.log(`✅ Reservation ${reservationId} created by ${userContext.uid}; notified ${adminUids.length} admin(s)`);
+      return res.status(201).json({ id: reservationId, status: 'pending' });
+    } catch (error) {
+      console.error('❌ Error creating reservation:', error);
+      return res.status(500).json({ error: 'Failed to create reservation' });
+    }
+  });
+
+  /**
+   * GET /reservations
+   * Admin only. List reservations with optional status, limit, cursor. Sorted by date asc.
+   */
+  app.get('/reservations', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const db = admin.firestore();
+      const status = (req.query.status || '').toString().trim().toLowerCase();
+      const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
+      const cursor = (req.query.cursor || '').toString().trim();
+
+      let query;
+      if (status && ['pending', 'confirmed', 'cancelled'].includes(status)) {
+        query = db.collection('reservations').where('status', '==', status).orderBy('date', 'asc').orderBy('createdAt', 'asc').limit(limit);
+      } else {
+        query = db.collection('reservations').orderBy('date', 'asc').orderBy('createdAt', 'asc').limit(limit);
+      }
+      if (cursor) {
+        const cursorDoc = await db.collection('reservations').doc(cursor).get();
+        if (cursorDoc.exists) query = query.startAfter(cursorDoc);
+      }
+
+      const snapshot = await query.get();
+      const reservations = (snapshot.docs || []).map((doc) => {
+        const d = doc.data();
+        return {
+          id: doc.id,
+          userId: d.userId,
+          customerName: d.customerName,
+          phone: d.phone,
+          email: d.email || null,
+          date: d.date,
+          time: d.time,
+          partySize: d.partySize,
+          specialRequests: d.specialRequests || null,
+          status: d.status,
+          createdAt: d.createdAt,
+          updatedAt: d.updatedAt,
+          confirmedAt: d.confirmedAt || null,
+          confirmedBy: d.confirmedBy || null
+        };
+      });
+      const nextCursor = snapshot.docs.length > 0 ? snapshot.docs[snapshot.docs.length - 1].id : null;
+      return res.json({ reservations, nextCursor, hasMore: snapshot.docs.length === limit });
+    } catch (error) {
+      console.error('❌ Error listing reservations:', error);
+      return res.status(500).json({ error: 'Failed to list reservations' });
+    }
+  });
+
+  /**
+   * PATCH /reservations/:id
+   * Admin only. Update status to confirmed or cancelled; optional notes.
+   */
+  app.patch('/reservations/:id', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const id = (req.params.id || '').toString().trim();
+      if (!id) return res.status(400).json({ error: 'Reservation id is required' });
+
+      const { status, notes } = req.body || {};
+      if (!status || typeof status !== 'string' || !['confirmed', 'cancelled'].includes(status.trim().toLowerCase())) {
+        return res.status(400).json({ error: 'status must be "confirmed" or "cancelled"' });
+      }
+
+      const db = admin.firestore();
+      const ref = db.collection('reservations').doc(id);
+      const doc = await ref.get();
+      if (!doc.exists) return res.status(404).json({ error: 'Reservation not found' });
+
+      const update = {
+        status: status.trim().toLowerCase(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      };
+      if (status.trim().toLowerCase() === 'confirmed') {
+        update.confirmedAt = admin.firestore.FieldValue.serverTimestamp();
+        update.confirmedBy = adminContext.uid;
+      }
+      if (notes && typeof notes === 'string' && notes.trim().length > 0) {
+        update.notes = notes.trim();
+      }
+      await ref.update(update);
+
+      console.log(`✅ Reservation ${id} updated to ${update.status} by admin ${adminContext.uid}`);
+      return res.json({ id, status: update.status });
+    } catch (error) {
+      console.error('❌ Error updating reservation:', error);
+      return res.status(500).json({ error: 'Failed to update reservation' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
   // Admin-only Users Listing (server-side paging + search)
   // ---------------------------------------------------------------------------
   // ---------------------------------------------------------------------------

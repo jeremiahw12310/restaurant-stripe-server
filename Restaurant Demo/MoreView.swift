@@ -492,9 +492,11 @@ struct MoreView: View {
             return "info.circle.fill"
         case .rewardGift:
             return "gift.fill"
+        case .reservationNew:
+            return "calendar.badge.plus"
         }
     }
-    
+
     private func notificationIconColor(for type: AppNotification.NotificationType) -> Color {
         switch type {
         case .referral:
@@ -504,6 +506,8 @@ struct MoreView: View {
         case .system:
             return Theme.modernSecondary
         case .rewardGift:
+            return Theme.energyOrange
+        case .reservationNew:
             return Theme.energyOrange
         }
     }
@@ -517,6 +521,8 @@ struct MoreView: View {
         case .system:
             return Theme.modernSecondary.opacity(0.1)
         case .rewardGift:
+            return Theme.energyOrange.opacity(0.15)
+        case .reservationNew:
             return Theme.energyOrange.opacity(0.15)
         }
     }

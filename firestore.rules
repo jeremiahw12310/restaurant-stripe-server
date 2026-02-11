@@ -343,6 +343,11 @@ service cloud.firestore {
       allow write: if isAdmin(); // Only admins can manage promo slides
     }
     
+    // Reservations collection - server-only (backend creates/updates via Admin SDK)
+    match /reservations/{reservationId} {
+      allow read, write: if false;
+    }
+
     // Banned numbers collection - allow get for pre-auth ban checks, but disallow listing
     // (Prevents easy enumeration of all banned numbers.)
     match /bannedNumbers/{docId} {

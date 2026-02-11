@@ -66,11 +66,13 @@ struct HomeView: View {
     @State private var deepLinkReferralCode: String? = nil
     @State private var showReferralAwardAlert = false
     @State private var crowdAnimated = false
+    @State private var reservationAnimated = false
     @State private var locationAnimated = false
     @State private var adminAnimated = false
+    @State private var showReservationSheet = false
     // Back-compat convenience for read-only usages that haven’t been migrated yet
     private var cardAnimations: [Bool] {
-        [pointsAnimated, rewardsAnimated, crowdAnimated, locationAnimated, adminAnimated]
+        [pointsAnimated, rewardsAnimated, crowdAnimated, reservationAnimated, locationAnimated, adminAnimated]
     }
     @State private var gradientOffset: Double = 0
     @State private var heroOffset: CGFloat = 400 // Start off-screen to the right
@@ -309,6 +311,11 @@ struct HomeView: View {
                             .scaleEffect(crowdAnimated ? 1.0 : 0.8)
                             .opacity(crowdAnimated ? 1.0 : 0.0)
                             .animation(.spring(response: 0.6, dampingFraction: 0.8), value: crowdAnimated)
+                        
+                        // MARK: - Reservation Card
+                        ReservationCard(animate: $reservationAnimated) {
+                            showReservationSheet = true
+                        }
                         
                         // MARK: - Location Section
                         HomeLocationSection(
@@ -574,6 +581,10 @@ struct HomeView: View {
         }
         .sheet(isPresented: $showAdminNotifications) {
             AdminNotificationsView()
+        }
+        .sheet(isPresented: $showReservationSheet) {
+            ReservationSheetView()
+                .environmentObject(userVM)
         }
         .sheet(isPresented: $showRewardsScan) {
             AdminRewardsScanView()
@@ -1443,6 +1454,12 @@ struct HomeView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
             withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                 crowdAnimated = true
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                reservationAnimated = true
             }
         }
 
