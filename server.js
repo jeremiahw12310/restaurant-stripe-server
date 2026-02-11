@@ -2413,7 +2413,7 @@ DETAILED MENU INFORMATION:
 - Cup Water $1.00
 
 SPECIAL DIETARY INFORMATION:
-- Veggie dumplings include: cabbage, carrots, onions, celery, shiitake mushrooms, glass noodles
+- Veggie dumplings include: carrots, chives, corn, cabbage, mushroom
 - We don't have anything vegan
 - Everything has gluten
 - We aren't sure what has MSG
@@ -2676,7 +2676,7 @@ DETAILED MENU INFORMATION:
 - Cup Water $1.00
 
 SPECIAL DIETARY INFORMATION:
-- Veggie dumplings include: cabbage, carrots, onions, celery, shiitake mushrooms, glass noodles
+- Veggie dumplings include: carrots, chives, corn, cabbage, mushroom
 - We don't have anything vegan
 - Everything has gluten
 - We aren't sure what has MSG
