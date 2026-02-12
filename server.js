@@ -5623,6 +5623,7 @@ IMPORTANT:
       // Also filter by promotional preference if this is a promotional notification
       const tokensToSend = [];
       const targetUserIdsForLog = [];
+      const targetUserIdsForInApp = []; // All targeted users (with or without token) for in-app notifications
       let excludedAdminCount = 0;
       let missingFcmTokenCount = 0;
       let excludedPromotionalOptOutCount = 0;
@@ -5646,6 +5647,7 @@ IMPORTANT:
           }
         }
 
+        targetUserIdsForInApp.push(doc.id);
         const fcmToken = userData.fcmToken;
         if (fcmToken && typeof fcmToken === 'string' && fcmToken.length > 0) {
           tokensToSend.push(fcmToken);
@@ -5653,6 +5655,27 @@ IMPORTANT:
         } else {
           missingFcmTokenCount += 1;
         }
+      }
+
+      // Create in-app notifications for all targeted users (including those without FCM token)
+      // so they see the message and badge in More when they return to the app
+      const notificationType = targetType === 'all' ? 'admin_broadcast' : 'admin_individual';
+      const inAppBatchSize = 450;
+      for (let i = 0; i < targetUserIdsForInApp.length; i += inAppBatchSize) {
+        const batch = db.batch();
+        const batchIds = targetUserIdsForInApp.slice(i, i + inAppBatchSize);
+        for (const userId of batchIds) {
+          const notifRef = db.collection('notifications').doc();
+          batch.set(notifRef, {
+            userId,
+            title: trimmedTitle,
+            body: trimmedBody,
+            type: notificationType,
+            read: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+        }
+        await batch.commit();
       }
 
       if (tokensToSend.length === 0) {
@@ -5744,29 +5767,6 @@ IMPORTANT:
         totalTargeted: tokensToSend.length,
         excludedPromotionalOptOutCount: isPromotionalNotification ? excludedPromotionalOptOutCount : undefined
       });
-
-      // Create in-app notifications for each target user (batch in chunks)
-      const notificationType = targetType === 'all' ? 'admin_broadcast' : 'admin_individual';
-      const batchSize = 450;
-
-      for (let i = 0; i < targetUserIdsForLog.length; i += batchSize) {
-        const batch = db.batch();
-        const batchIds = targetUserIdsForLog.slice(i, i + batchSize);
-
-        for (const userId of batchIds) {
-          const notifRef = db.collection('notifications').doc();
-          batch.set(notifRef, {
-            userId,
-            title: trimmedTitle,
-            body: trimmedBody,
-            type: notificationType,
-            read: false,
-            createdAt: admin.firestore.FieldValue.serverTimestamp()
-          });
-        }
-
-        await batch.commit();
-      }
 
       console.log(`✅ Notification sent: ${successCount} success, ${failureCount} failed`);
 

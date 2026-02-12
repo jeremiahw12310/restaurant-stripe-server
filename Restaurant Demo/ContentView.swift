@@ -44,6 +44,11 @@ struct ContentView: View {
     @State private var pendingGiftedRewardForAlert: GiftedReward? = nil
     @AppStorage("lastAlertedGiftedRewardIds") private var lastAlertedGiftedRewardIdsData: Data = Data()
 
+    // Unread notifications popup when user returns to app (show once per increase)
+    @State private var showUnreadNotificationsAlert: Bool = false
+    @State private var pendingUnreadCountForAlert: Int = 0
+    @State private var lastSeenUnreadCountForAlert: Int = 0
+
     var body: some View {
         ZStack {
             // Dynamic themed background
@@ -119,10 +124,15 @@ struct ContentView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     checkForUnseenGiftedRewards()
                 }
+                // Give notification listener time to update, then check for unread popup
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    checkForUnreadNotificationsPopup()
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
                 maybeShowNotificationPrePromptIfNeeded()
                 checkForUnseenGiftedRewards()
+                checkForUnreadNotificationsPopup()
                 if sharedRewardsVM.showPendingRewardQRIfNeeded() {
                     selectedTab = 3
                 }
@@ -179,6 +189,17 @@ struct ContentView: View {
             if let reward = pendingGiftedRewardForAlert {
                 Text("Dumpling House sent you a free \(reward.rewardTitle)!")
             }
+        }
+        .alert("New Notifications", isPresented: $showUnreadNotificationsAlert) {
+            Button("View") {
+                lastSeenUnreadCountForAlert = pendingUnreadCountForAlert
+                selectedTab = 4
+            }
+            Button("OK", role: .cancel) {
+                lastSeenUnreadCountForAlert = pendingUnreadCountForAlert
+            }
+        } message: {
+            Text("You have \(pendingUnreadCountForAlert) new notification\(pendingUnreadCountForAlert == 1 ? "" : "s").")
         }
         .fullScreenCover(item: $sharedRewardsVM.pendingQRSuccess) { successData in
             RewardCardScreen(
@@ -353,6 +374,16 @@ struct ContentView: View {
         if let data = try? JSONEncoder().encode(ids) {
             lastAlertedGiftedRewardIdsData = data
         }
+    }
+
+    // MARK: - Unread Notifications Popup (when user returns to app)
+
+    /// Show a single popup when there are unread notifications and count increased since last seen
+    private func checkForUnreadNotificationsPopup() {
+        let count = notificationService.unreadNotificationCount
+        guard count > 0, count > lastSeenUnreadCountForAlert else { return }
+        pendingUnreadCountForAlert = count
+        showUnreadNotificationsAlert = true
     }
 }
 
