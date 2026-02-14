@@ -9,6 +9,7 @@ import Combine
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import CoreMedia
+import Photos
 
 struct ReceiptScanView: View {
     @StateObject private var userVM = UserViewModel()
@@ -27,14 +28,12 @@ struct ReceiptScanView: View {
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.accessibilityReduceMotion) var reduceMotion
     var onPointsEarned: ((Int) -> Void)? = nil
-    @State private var showLoadingOverlay = false
     @State private var showDumplingRain = false
     @State private var shouldSwitchToHome = false
     @State private var lastOrderNumber: String? = nil
     @State private var lastOrderDate: String? = nil
     // Combo interstitial + result
     @State private var isComboReady = false
-    @State private var isInterstitialDone = false
     @State private var hasStartedComboGeneration = false
     @State private var personalizedCombo: PersonalizedCombo?
     @State private var showComboResult = false
@@ -42,17 +41,13 @@ struct ReceiptScanView: View {
     @State private var presentedOutcome: ReceiptScanOutcome? = nil
     @State private var comboState: ComboGenerationState = .loading
     @State private var showReferral = false
-    // Interstitial control: allow early cut and clean looping
-    @State private var interstitialEarlyCutRequested = false
-    // Validation state to prevent premature success screen
+    // Validation state
     @State private var receiptPassedValidation = false
     @State private var pendingPoints: Int = 0
     @State private var pendingTotal: Double = 0.0
-    // Store pending error outcome if validation fails during interstitial
-    @State private var pendingErrorOutcome: ReceiptScanOutcome? = nil
     // Store last captured image for retry functionality
     @State private var lastCapturedImage: UIImage? = nil
-    // Interstitial coordination: avoid infinite loops / stop on response
+    // Server response coordination
     @State private var serverHasResponded = false
     @State private var interstitialTimedOut = false
     @State private var interstitialTimeoutWorkItem: DispatchWorkItem? = nil
@@ -62,9 +57,6 @@ struct ReceiptScanView: View {
             Color(.systemBackground)
                 .ignoresSafeArea()
             mainView
-            if isProcessing || showLoadingOverlay {
-                loadingOverlay
-            }
         }
         .onAppear {
             userVM.loadUserData()
@@ -90,9 +82,6 @@ struct ReceiptScanView: View {
                 .environmentObject(menuVM)
             }
         }
-        .onChange(of: showLoadingOverlay) { _, _ in
-            // Combo generation removed
-        }
         .onChange(of: shouldSwitchToHome) { newValue, _ in
             if newValue {
                 switchToHomeTab()
@@ -113,16 +102,15 @@ struct ReceiptScanView: View {
             )
         }
         .sheet(isPresented: $showCamera) {
-            CameraViewWithOverlay(image: $scannedImage) { image in
-                showCamera = false
+            CameraViewWithOverlay(image: $scannedImage) { image, liveTotalsConfirmed in
+                // Don't dismiss camera here — video plays in-place until result is ready
                 if let image = image {
                     // Guard: don't process if already processing
                     guard !isProcessing else {
                         DebugLogger.debug("⚠️ Image capture ignored - already processing", category: "ReceiptScan")
                         return
                     }
-                    showLoadingOverlay = true
-                    processReceiptImage(image)
+                    processReceiptImage(image, liveTotalsConfirmed: liveTotalsConfirmed)
                 }
             }
         }
@@ -131,33 +119,12 @@ struct ReceiptScanView: View {
                 // Clean up when camera sheet is dismissed
                 interstitialTimeoutWorkItem?.cancel()
                 interstitialTimeoutWorkItem = nil
-                cancellables.removeAll()
+                // Only clear Combine subs if server already responded (otherwise upload is in flight)
+                if serverHasResponded || !isProcessing {
+                    cancellables.removeAll()
+                }
             }
         }
-    }
-    
-    private var loadingOverlay: some View {
-        ZStack {
-            // Non-skippable interstitial using combo_gen video with double flash
-            VideoInterstitialView(
-                videoName: "scandump",
-                videoType: "mov",
-                flashStyle: .double,
-                earlyCutRequested: $interstitialEarlyCutRequested,
-                earlyCutLeadSeconds: 1.0
-            ) {
-                interstitialDidFinish()
-            }
-            .ignoresSafeArea()
-            
-            VStack(spacing: 32) {
-                Text(" ")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-            }
-        }
-        .transition(.opacity)
-        .zIndex(10)
     }
     
     private var mainView: some View {
@@ -263,19 +230,33 @@ struct ReceiptScanView: View {
 
                 // Admin-only old receipt testing toggle
                 if userVM.isAdmin {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Toggle(isOn: $userVM.oldReceiptTestingEnabled) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Allow old receipts for testing")
-                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                                Text("Admin only. Temporarily relaxes the 48-hour limit for this account. Tampering checks still apply.")
-                                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                                    .foregroundColor(Theme.modernSecondary)
+                    VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Toggle(isOn: $userVM.oldReceiptTestingEnabled) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Allow old receipts for testing")
+                                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                    Text("Admin only. Temporarily relaxes the 48-hour limit for this account. Tampering checks still apply.")
+                                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                                        .foregroundColor(Theme.modernSecondary)
+                                }
+                            }
+                            .toggleStyle(SwitchToggleStyle(tint: Theme.energyBlue))
+                            .onChange(of: userVM.oldReceiptTestingEnabled) { newValue in
+                                userVM.updateOldReceiptTestingEnabled(newValue)
                             }
                         }
-                        .toggleStyle(SwitchToggleStyle(tint: Theme.energyBlue))
-                        .onChange(of: userVM.oldReceiptTestingEnabled) { newValue in
-                            userVM.updateOldReceiptTestingEnabled(newValue)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Toggle(isOn: $userVM.saveScannedReceiptsToCameraRoll) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Save scanned receipts to camera roll")
+                                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                    Text("Admin debug only. Saves the exact image sent to the server (cropped or full). Remove before production.")
+                                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                                        .foregroundColor(Theme.modernSecondary)
+                                }
+                            }
+                            .toggleStyle(SwitchToggleStyle(tint: Theme.energyBlue))
                         }
                     }
                     .padding(.horizontal, 24)
@@ -511,18 +492,16 @@ struct ReceiptScanView: View {
         NotificationCenter.default.post(name: .switchToHomeTab, object: nil)
     }
     
-    private func processReceiptImage(_ image: UIImage, onTotalsGateFail: (() -> Void)? = nil) {
+    private func processReceiptImage(_ image: UIImage, liveTotalsConfirmed: Bool = false, onTotalsGateFail: (() -> Void)? = nil) {
         isProcessing = true
         errorMessage = ""
         scannedText = ""
         // Reset validation state for new scan
-        interstitialEarlyCutRequested = false
         receiptPassedValidation = false
         serverHasResponded = false
         interstitialTimedOut = false
         pendingPoints = 0
         pendingTotal = 0.0
-        pendingErrorOutcome = nil
         lastOrderNumber = nil
         lastOrderDate = nil
         interstitialTimeoutWorkItem?.cancel()
@@ -531,49 +510,29 @@ struct ReceiptScanView: View {
         lastCapturedImage = image
         let currentPoints = userVM.points
 
-        // 45s failsafe: if the server never responds, stop looping and show an error.
-        // This prevents infinite interstitial loops on hung requests.
+        // 45s failsafe: if the server never responds, dismiss camera and show an error.
         let timeoutItem = DispatchWorkItem {
             guard !self.serverHasResponded else { return }
             self.serverHasResponded = true
             self.interstitialTimedOut = true
             self.isProcessing = false
-            self.pendingErrorOutcome = .server
-            self.interstitialEarlyCutRequested = true
-            NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
+            self.showCamera = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                self.presentOutcome(.server)
+            }
         }
         interstitialTimeoutWorkItem = timeoutItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 45.0, execute: timeoutItem)
 
         // Preprocess (crop/perspective-correct) ONLY for receipt scanning to reduce distractions.
         preprocessReceiptImageForUpload(image) { processedImage in
-            // Client-side gate: prevent hallucinated totals by requiring the Subtotal/Tax/Total section to be visible
-            receiptHasSubtotalTaxTotal(processedImage) { hasTotals in
-                guard hasTotals else {
-                    DispatchQueue.main.async {
-                        // Cancel server timeout and stop the interstitial immediately with a clear outcome
-                        self.serverHasResponded = true
-                        self.interstitialTimeoutWorkItem?.cancel()
-                        self.interstitialTimeoutWorkItem = nil
-                        self.isProcessing = false
-                        self.showLoadingOverlay = false
-                        if let onTotalsGateFail {
-                            self.interstitialEarlyCutRequested = true
-                            NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
-                            // Small delay to ensure state is reset before reopening camera
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                onTotalsGateFail()
-                            }
-                        } else {
-                            self.errorMessage = "Make sure all receipt text is visible and try again."
-                            self.pendingErrorOutcome = .totalsNotVisible
-                            self.interstitialEarlyCutRequested = true
-                            NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
-                        }
-                    }
-                    return
-                }
+            // Admin debug: save the exact image being sent (cropped or full) to camera roll.
+            if self.userVM.saveScannedReceiptsToCameraRoll {
+                saveScannedReceiptImageToCameraRoll(processedImage)
+            }
 
+            // Upload handler — shared by both the live-confirmed and totals-gate paths.
+            let performUpload = {
                 uploadReceiptImage(processedImage) { result in
                     DispatchQueue.main.async {
                     self.isProcessing = false
@@ -589,16 +548,10 @@ struct ReceiptScanView: View {
                         let errorCode = json["errorCode"] as? String
                         let errorOutcome = mapErrorToOutcome(errorCode: errorCode, message: errorMessage)
                         self.errorMessage = errorMessage
-                        // If interstitial is still showing, store the error to show when it finishes
-                        if self.showLoadingOverlay {
-                            self.pendingErrorOutcome = errorOutcome
-                            // Stop interstitial immediately and show error
-                            self.interstitialEarlyCutRequested = true
-                            NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
-                        } else {
-                            // Interstitial already finished, show error immediately
-                            self.showLoadingOverlay = false
-                            presentOutcome(errorOutcome)
+                        // Dismiss camera sheet and present error after dismiss animation
+                        self.showCamera = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                            self.presentOutcome(errorOutcome)
                         }
                         return
                     }
@@ -621,28 +574,24 @@ struct ReceiptScanView: View {
                         self.lastOrderNumber = orderNumber
                         self.lastOrderDate = orderDate
 
-                        // ✅ Server already validated + awarded points atomically.
+                        // Server already validated + awarded points atomically.
                         self.receiptTotal = self.pendingTotal
                         self.pointsEarned = self.pendingPoints
                         self.receiptPassedValidation = true
-                        // Allow the interstitial to finish early now that the server work is done.
-                        self.interstitialEarlyCutRequested = true
-                        // Stop interstitial immediately (bypasses SwiftUI binding delay)
-                        NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
 
                         DebugLogger.debug("✅ Server awarded receipt points: \(self.pointsEarned), Total: \(self.receiptTotal)", category: "ReceiptScan")
+
+                        // Dismiss camera sheet and present success after dismiss animation
+                        self.showCamera = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                            self.presentOutcome(.success(points: self.pointsEarned, total: self.receiptTotal))
+                        }
                     } else {
                         self.errorMessage = "Unexpected server response. Please try again."
-                        let errorOutcome: ReceiptScanOutcome = .server
-                        // If interstitial is still showing, store the error to show when it finishes
-                        if self.showLoadingOverlay {
-                            self.pendingErrorOutcome = errorOutcome
-                            // Stop interstitial immediately and show error
-                            self.interstitialEarlyCutRequested = true
-                            NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
-                        } else {
-                            self.showLoadingOverlay = false
-                            presentOutcome(errorOutcome)
+                        // Dismiss camera sheet and present error after dismiss animation
+                        self.showCamera = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                            self.presentOutcome(.server)
                         }
                     }
                 case .failure(let error):
@@ -658,46 +607,20 @@ struct ReceiptScanView: View {
                     } else {
                         errorOutcome = .server
                     }
-                    // If interstitial is still showing, store the error to show when it finishes
-                    if self.showLoadingOverlay {
-                        self.pendingErrorOutcome = errorOutcome
-                        // Stop interstitial immediately and show error
-                        self.interstitialEarlyCutRequested = true
-                        NotificationCenter.default.post(name: .interstitialEarlyCutRequested, object: nil)
-                    } else {
-                        self.showLoadingOverlay = false
-                        presentOutcome(errorOutcome)
+                    // Dismiss camera sheet and present error after dismiss animation
+                    self.showCamera = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        self.presentOutcome(errorOutcome)
                     }
                 }
                     }
                 }
             }
-        }
-    }
 
-    private func interstitialDidFinish() {
-        isInterstitialDone = true
-        // Immediately hide overlay to prevent video restart
-        DispatchQueue.main.async {
-            self.showLoadingOverlay = false
-            
-            // Check if there's a pending error outcome (validation failed during interstitial)
-            if let errorOutcome = self.pendingErrorOutcome {
-                DebugLogger.debug("⚠️ Interstitial finished - showing error outcome that occurred during processing", category: "ReceiptScan")
-                self.pendingErrorOutcome = nil
-                self.presentOutcome(errorOutcome)
-                return
-            }
-            
-            // 🛡️ CRITICAL: Only show success if validation actually passed
-            guard self.receiptPassedValidation else {
-                DebugLogger.debug("⚠️ Interstitial finished but validation didn't pass - no error outcome stored, showing server error", category: "ReceiptScan")
-                // Fallback: if somehow we don't have an error outcome, show server error
-                self.presentOutcome(.server)
-                return
-            }
-            // Present success once interstitial completes
-            self.presentOutcome(.success(points: self.pointsEarned, total: self.receiptTotal))
+            // Server handles totals validation with superior OCR.
+            // Client-side gate removed -- it was blocking 90% of legitimate scans
+            // due to unreliable on-device OCR on thermal receipt paper.
+            performUpload()
         }
     }
 
@@ -752,7 +675,7 @@ struct ReceiptScanView: View {
     }
 
     private func maybeShowComboResult() {
-        if isComboReady && isInterstitialDone && presentedOutcome == nil {
+        if isComboReady && presentedOutcome == nil {
             showComboResult = true
         }
     }
@@ -916,7 +839,6 @@ struct ReceiptScanView: View {
             if let image = lastCapturedImage {
                 presentedOutcome = nil
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    self.showLoadingOverlay = true
                     self.processReceiptImage(image)
                 }
             } else {
@@ -1305,15 +1227,37 @@ private struct GoldBlobBackground: View {
 
 struct CameraViewWithOverlay: View {
     @Binding var image: UIImage?
-    var onImageCaptured: (UIImage?) -> Void
+    var onImageCaptured: (UIImage?, Bool) -> Void
     @Environment(\.dismiss) var dismiss
     @StateObject private var cameraController: CameraController
     @State private var isCapturing = false
+    @State private var cameraReady = false
+    @State private var showPreparingOverlay = true
+    @State private var overlayAppearedAt: Date = Date()
+    @State private var showPostCaptureVideo = false
     
-    init(image: Binding<UIImage?>, onImageCaptured: @escaping (UIImage?) -> Void) {
+    init(image: Binding<UIImage?>, onImageCaptured: @escaping (UIImage?, Bool) -> Void) {
         self._image = image
         self.onImageCaptured = onImageCaptured
         _cameraController = StateObject(wrappedValue: CameraController())
+    }
+
+    // MARK: Top status helpers
+
+    private func topStatusText(for phase: LiveScanPhase) -> String {
+        switch phase {
+        case .searching:  return "Looking for a receipt…"
+        case .tracking:   return "Focusing on receipt…"
+        case .locked, .capturing: return "Hold still — capturing!"
+        }
+    }
+
+    private func topStatusIcon(for phase: LiveScanPhase) -> String {
+        switch phase {
+        case .searching:  return "doc.text.magnifyingglass"
+        case .tracking:   return "viewfinder"
+        case .locked, .capturing: return "camera.fill"
+        }
     }
 
     var body: some View {
@@ -1322,19 +1266,50 @@ struct CameraViewWithOverlay: View {
             CameraPreviewView(cameraController: cameraController)
                 .ignoresSafeArea()
             
-            // Loading overlay
-            if !cameraController.isSetup && cameraController.errorMessage == nil {
-                Color.black.ignoresSafeArea()
-                    .overlay(
-                        VStack(spacing: 24) {
-                            ProgressView()
-                                .scaleEffect(1.8)
-                                .tint(.white)
-                            Text("Setting up camera...")
-                                .font(.system(size: 20, weight: .medium))
-                                .foregroundColor(.white)
+            // Preparing overlay (cream + text only; sparkles are in UnifiedSparkleOverlay)
+            if showPreparingOverlay {
+                ZStack {
+                    Theme.modernBackground.ignoresSafeArea()
+                        .opacity(cameraReady ? 0 : 1)
+                    
+                    VStack {
+                        Spacer()
+                        if !cameraReady {
+                            Text("Preparing...")
+                                .font(.system(size: 22, weight: .semibold, design: .rounded))
+                                .foregroundColor(Theme.modernSecondary)
+                                .transition(.opacity)
                         }
-                    )
+                        Spacer()
+                    }
+                    .opacity(cameraReady ? 0 : 1)
+                }
+                .onChange(of: cameraController.isSetup) { isSetup in
+                    if isSetup {
+                        let elapsed = Date().timeIntervalSince(overlayAppearedAt)
+                        let minimumDisplay: TimeInterval = 1.2
+                        let remainingDelay = max(0, minimumDisplay - elapsed)
+                        
+                        DispatchQueue.main.asyncAfter(deadline: .now() + remainingDelay) {
+                            withAnimation(.easeOut(duration: 0.8)) {
+                                cameraReady = true
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                                showPreparingOverlay = false
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                    cameraController.isReceiptDetectionEnabled = true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Post-capture video overlay (fades in over camera)
+            if showPostCaptureVideo {
+                LoopingVideoLayer(videoName: "scandump", videoType: "mov")
+                    .ignoresSafeArea()
+                    .transition(.opacity)
             }
             
             // Error overlay
@@ -1381,8 +1356,8 @@ struct CameraViewWithOverlay: View {
                     )
             }
             
-            // UI overlay (only show when camera is ready)
-            if cameraController.isSetup && cameraController.errorMessage == nil {
+            // UI overlay (only show when camera is ready and not in post-capture video)
+            if cameraController.isSetup && cameraController.errorMessage == nil && !showPostCaptureVideo {
                 GeometryReader { geometry in
                     VStack(spacing: 0) {
                         // Top section with cancel button
@@ -1410,6 +1385,26 @@ struct CameraViewWithOverlay: View {
                         }
                         .padding(.horizontal, 20)
                         .padding(.top, geometry.safeAreaInsets.top + 16)
+
+                        // Top contextual status — tells the user what's happening
+                        HStack(spacing: 8) {
+                            Image(systemName: topStatusIcon(for: cameraController.liveScanPhase))
+                                .font(.system(size: 14, weight: .semibold))
+                            Text(topStatusText(for: cameraController.liveScanPhase))
+                                .font(.system(size: 16, weight: .bold, design: .rounded))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 10)
+                        .background(
+                            Capsule()
+                                .fill(Color.black.opacity(0.35))
+                                .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
+                        )
+                        .id(cameraController.liveScanPhase)
+                        .transition(.opacity)
+                        .animation(.easeInOut(duration: 0.3), value: cameraController.liveScanPhase)
+                        .padding(.top, 12)
                         
                         Spacer()
                         
@@ -1499,12 +1494,34 @@ struct CameraViewWithOverlay: View {
                 }
             }
 
-            // Dim-outside + outline highlight (document-scanner style)
-            if cameraController.isSetup && cameraController.errorMessage == nil,
+            // Glow outline around detected receipt (hide during post-capture video)
+            if cameraController.isSetup && cameraController.errorMessage == nil && !showPostCaptureVideo,
                let quad = cameraController.detectedReceiptQuad {
-                LiveReceiptDimOverlay(quad: quad, previewLayer: cameraController.previewLayer)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
+                LiveReceiptGlowOverlay(
+                    quad: quad,
+                    previewLayer: cameraController.previewLayer,
+                    phase: cameraController.liveScanPhase
+                )
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.25), value: cameraController.detectedReceiptQuad != nil)
+            }
+
+            // Unified sparkles (same set: rise → float → organize → scatter on capture)
+            if cameraController.errorMessage == nil {
+                GeometryReader { geo in
+                    UnifiedSparkleOverlay(
+                        containerSize: geo.size,
+                        quad: showPreparingOverlay ? nil : cameraController.detectedReceiptQuad,
+                        previewLayer: cameraController.previewLayer,
+                        isPreparing: showPreparingOverlay,
+                        phase: cameraController.liveScanPhase,
+                        isCaptured: showPostCaptureVideo
+                    )
+                }
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
             }
         }
         .onAppear {
@@ -1527,7 +1544,16 @@ struct CameraViewWithOverlay: View {
                 }
                 if let capturedImage = capturedImage {
                     image = capturedImage
-                    onImageCaptured(capturedImage)
+                    // Capture this value before stopping the session
+                    let totalsConfirmed = cameraController.liveTotalsConfirmed
+                    // Fade in post-capture video and scatter sparkles
+                    withAnimation(.easeInOut(duration: 0.6)) {
+                        showPostCaptureVideo = true
+                    }
+                    // Stop the camera hardware (torch off, session released)
+                    cameraController.stopSession()
+                    // Notify parent to begin processing (but don't dismiss the sheet)
+                    onImageCaptured(capturedImage, totalsConfirmed)
                 }
             }
         }
@@ -1541,6 +1567,15 @@ struct CameraViewWithOverlay: View {
 
 // MARK: - Live auto-scan overlay
 
+/// Describes the current phase of the live receipt scan.
+/// Shared between `CameraController` and overlay views so the UI can react to phase changes.
+enum LiveScanPhase: Equatable {
+    case searching
+    case tracking
+    case locked
+    case capturing
+}
+
 // Must not be `private`/`fileprivate` because it is used by `CameraController`'s @Published properties.
 struct DetectedQuad: Equatable {
     let topLeft: CGPoint
@@ -1552,32 +1587,67 @@ struct DetectedQuad: Equatable {
     let score: Double
 }
 
-private struct LiveReceiptDimOverlay: View {
+/// Draws a multi-layered glow outline around the detected receipt quad.
+/// Replaces the old dimming overlay so the camera feed stays fully visible,
+/// which is less confusing for users. The glow color shifts based on scan phase:
+/// white while tracking, green when locked / capturing.
+private struct LiveReceiptGlowOverlay: View {
     let quad: DetectedQuad
     let previewLayer: AVCaptureVideoPreviewLayer
+    let phase: LiveScanPhase
+
+    private var glowColor: Color {
+        switch phase {
+        case .searching, .tracking:
+            return Theme.primaryGold
+        case .locked, .capturing:
+            return .green
+        }
+    }
+
+    /// True when the glow should pulse (pre-lock phases only).
+    private var shouldPulse: Bool {
+        phase == .searching || phase == .tracking
+    }
 
     var body: some View {
-        Canvas { context, size in
-            let quadPath = quadPathInLayerCoordinates()
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            // Sine pulse: oscillates 0.20 … 0.40 over ~1.5s; holds steady once locked.
+            let pulse = shouldPulse ? 0.30 + 0.10 * sin(t * 4.2) : 0.30
 
-            // Dim everything outside the quad using even-odd fill.
-            var mask = Path()
-            mask.addRect(CGRect(origin: .zero, size: size))
-            mask.addPath(quadPath)
+            Canvas { context, size in
+                let quadPath = quadPathInLayerCoordinates()
 
-            context.fill(
-                mask,
-                with: .color(Color.black.opacity(0.45)),
-                style: FillStyle(eoFill: true)
-            )
+                // Outer glow: wide, heavily blurred, pulsing opacity (amplified)
+                context.drawLayer { ctx in
+                    ctx.addFilter(.blur(radius: 14))
+                    ctx.stroke(
+                        quadPath,
+                        with: .color(glowColor.opacity(pulse)),
+                        style: StrokeStyle(lineWidth: 20, lineCap: .round, lineJoin: .round)
+                    )
+                }
 
-            // Subtle outline for clarity
-            context.stroke(
-                quadPath,
-                with: .color(Color.white.opacity(0.92)),
-                style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
-            )
+                // Mid glow: medium width, moderate blur (amplified)
+                context.drawLayer { ctx in
+                    ctx.addFilter(.blur(radius: 7))
+                    ctx.stroke(
+                        quadPath,
+                        with: .color(glowColor.opacity(0.45)),
+                        style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round)
+                    )
+                }
+
+                // Inner crisp stroke
+                context.stroke(
+                    quadPath,
+                    with: .color(glowColor.opacity(0.92)),
+                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
+                )
+            }
         }
+        .animation(.easeInOut(duration: 0.25), value: phase)
     }
 
     private func quadPathInLayerCoordinates() -> Path {
@@ -1602,33 +1672,981 @@ private struct LiveReceiptDimOverlay: View {
     }
 }
 
+// MARK: - Preparing sparkle overlay (rising sparkles during camera setup)
+
+/// A sparkle that rises from the bottom of the screen during the "Preparing..." phase.
+private enum PreparingSparkleMotionPhase {
+    case launch
+    case float
+}
+
+private struct RisingSparkle: Identifiable {
+    let id = UUID()
+    var x: CGFloat
+    var y: CGFloat
+    var driftX: CGFloat           // slight horizontal wobble
+    var driftY: CGFloat           // upward velocity (negative)
+    var size: CGFloat
+    var baseOpacity: Double
+    var opacity: Double
+    var blur: CGFloat
+    var age: Double               // 0…1 normalised lifetime
+    var wanderPhase: Double
+    var wanderSpeed: Double
+    var wanderAmplitude: CGFloat
+    var motionPhase: PreparingSparkleMotionPhase
+    var launchTicks: Int
+    var targetY: CGFloat
+}
+
+/// Overlay that spawns gold sparkles rising from the bottom of the screen.
+/// Used during the "Preparing..." phase before the camera is ready.
+private struct PreparingSparkleOverlay: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var sparkles: [RisingSparkle] = []
+    @State private var tickCount: Int = 0
+
+    private let maxSparkles = 18
+    private let sparkleColor = Color(red: 0.85, green: 0.65, blue: 0.25)
+
+    var body: some View {
+        if reduceMotion {
+            EmptyView()
+        } else {
+            GeometryReader { geo in
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                    Canvas { context, size in
+                        for sparkle in sparkles {
+                            // Bloom halo
+                            let bloomSize = sparkle.size * 2.5
+                            let bloomRect = CGRect(
+                                x: sparkle.x - bloomSize / 2,
+                                y: sparkle.y - bloomSize / 2,
+                                width: bloomSize,
+                                height: bloomSize
+                            )
+                            context.drawLayer { ctx in
+                                ctx.addFilter(.blur(radius: sparkle.blur * 2.0))
+                                ctx.fill(
+                                    Path(ellipseIn: bloomRect),
+                                    with: .color(sparkleColor.opacity(sparkle.opacity * 0.30))
+                                )
+                            }
+
+                            // Main sparkle dot
+                            let mainRect = CGRect(
+                                x: sparkle.x - sparkle.size / 2,
+                                y: sparkle.y - sparkle.size / 2,
+                                width: sparkle.size,
+                                height: sparkle.size
+                            )
+                            context.drawLayer { ctx in
+                                ctx.addFilter(.blur(radius: sparkle.blur))
+                                ctx.fill(
+                                    Path(ellipseIn: mainRect),
+                                    with: .color(sparkleColor.opacity(sparkle.opacity))
+                                )
+                            }
+                        }
+                    }
+                    .onChange(of: timeline.date) { _ in
+                        tickRising(containerSize: geo.size)
+                    }
+                }
+            }
+        }
+    }
+
+    private func tickRising(containerSize: CGSize) {
+        tickCount += 1
+        let w = max(1, containerSize.width)
+        let h = max(1, containerSize.height)
+        let centerBandMidY = h * 0.36
+        let centerBandHalfHeight = h * 0.16
+
+        // Advance existing sparkles
+        sparkles = sparkles.compactMap { s in
+            var s = s
+            s.wanderPhase += 1.0 / 30.0
+
+            switch s.motionPhase {
+            case .launch:
+                let wobbleX = sin(s.wanderPhase * s.wanderSpeed) * s.wanderAmplitude
+                s.x += s.driftX + wobbleX * 0.25
+                s.y += s.driftY
+                s.launchTicks += 1
+                s.age += 0.009
+
+                // After a short upward launch, settle into gentle floating.
+                if s.launchTicks >= 30 || s.y <= s.targetY {
+                    s.motionPhase = .float
+                    s.driftX = CGFloat.random(in: -0.20...0.20)
+                    s.driftY = CGFloat.random(in: -0.12...0.12)
+                    s.wanderSpeed = Double.random(in: 1.0...2.0)
+                    s.wanderAmplitude = CGFloat.random(in: 0.6...1.6)
+                }
+
+            case .float:
+                let wobbleX = sin(s.wanderPhase * s.wanderSpeed) * s.wanderAmplitude
+                let wobbleY = cos(s.wanderPhase * s.wanderSpeed * 0.85) * s.wanderAmplitude * 0.45
+                s.x += s.driftX + wobbleX * 0.20
+                s.y += s.driftY + wobbleY * 0.15
+                s.age += 0.004
+
+                // Gently nudge toward the center band; no hard clamp so sparkles never form a line.
+                let minY = centerBandMidY - centerBandHalfHeight
+                let maxY = centerBandMidY + centerBandHalfHeight
+                if s.y < minY {
+                    s.driftY += 0.02
+                } else if s.y > maxY {
+                    s.driftY -= 0.02
+                }
+                s.driftY = min(0.18, max(-0.18, s.driftY))
+
+                // Wrap X only; Y stays unclamped so positions stay naturally spread.
+                if s.x < -20 { s.x = w + 10 }
+                if s.x > w + 20 { s.x = -10 }
+            }
+
+            // Fade in quickly, then hold, then fade out near lifetime end.
+            let fadeIn = min(1.0, s.age / 0.08)
+            let fadeOutStart = 0.78
+            let fadeOut: Double
+            if s.age <= fadeOutStart {
+                fadeOut = 1.0
+            } else {
+                fadeOut = max(0.0, 1.0 - ((s.age - fadeOutStart) / (1.0 - fadeOutStart)))
+            }
+            s.opacity = s.baseOpacity * fadeIn * fadeOut
+            return s.age < 1.0 ? s : nil
+        }
+
+        // Maintain population — launch wave first, then lightly refill.
+        let available = max(0, maxSparkles - sparkles.count)
+        let spawnLimit = tickCount < 30 ? min(1, available) : min(2, available)
+        var spawned = 0
+        while sparkles.count < maxSparkles && spawned < spawnLimit {
+            let baseOp = Double.random(in: 0.35...0.75)
+            let targetY = CGFloat.random(in: h * 0.28...h * 0.50)
+            let sparkle = RisingSparkle(
+                x: CGFloat.random(in: 0...w),
+                y: h + CGFloat.random(in: 10...40),
+                driftX: CGFloat.random(in: -0.35...0.35),
+                driftY: CGFloat.random(in: -11.0...(-7.2)),
+                size: CGFloat.random(in: 5...13),
+                baseOpacity: baseOp,
+                opacity: 0,
+                blur: CGFloat.random(in: 1.0...3.5),
+                age: 0,
+                wanderPhase: Double.random(in: 0...(.pi * 2)),
+                wanderSpeed: Double.random(in: 1.5...3.0),
+                wanderAmplitude: CGFloat.random(in: 0.8...2.2),
+                motionPhase: .launch,
+                launchTicks: 0,
+                targetY: targetY
+            )
+            sparkles.append(sparkle)
+            spawned += 1
+        }
+    }
+}
+
+// MARK: - Unified sparkle overlay (same set: rise → float everywhere → organize around receipt)
+
+private enum UnifiedSparkleMode {
+    case rising
+    case floating
+    case converging
+    case edge
+    case scattering
+}
+
+private struct UnifiedSparkle: Identifiable {
+    let id = UUID()
+    var x: CGFloat
+    var y: CGFloat
+    var targetX: CGFloat
+    var targetY: CGFloat
+    var driftX: CGFloat
+    var driftY: CGFloat
+    var size: CGFloat
+    var baseOpacity: Double
+    var opacity: Double
+    var blur: CGFloat
+    var age: Double
+    var mode: UnifiedSparkleMode
+    var launchTicks: Int
+    var riseTargetY: CGFloat
+    var wanderPhase: Double
+    var wanderSpeedX: Double
+    var wanderSpeedY: Double
+    var wanderAmplitudeX: CGFloat
+    var wanderAmplitudeY: CGFloat
+    var edgeDriftX: CGFloat
+    var edgeDriftY: CGFloat
+}
+
+private struct UnifiedSparkleOverlay: View {
+    let containerSize: CGSize
+    let quad: DetectedQuad?
+    let previewLayer: AVCaptureVideoPreviewLayer
+    let isPreparing: Bool
+    let phase: LiveScanPhase
+    let isCaptured: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var sparkles: [UnifiedSparkle] = []
+    @State private var wasQuadPresent: Bool = false
+    @State private var tickCount: Int = 0
+    @State private var didTriggerScatter: Bool = false
+
+    private let maxSparkles = 25
+    private let lerpFactor: CGFloat = 0.10
+    private let arrivalThreshold: CGFloat = 3.0
+
+    private var effectiveMaxSparkles: Int {
+        ProcessInfo.processInfo.isLowPowerModeEnabled ? 12 : maxSparkles
+    }
+
+    private var sparkleColor: Color {
+        switch phase {
+        case .searching, .tracking: return Color(red: 0.85, green: 0.65, blue: 0.25)
+        case .locked, .capturing: return .green
+        }
+    }
+
+    var body: some View {
+        if reduceMotion {
+            EmptyView()
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                Canvas { context, size in
+                    for sparkle in sparkles {
+                        let bloomSize = sparkle.size * 2.5
+                        let bloomRect = CGRect(x: sparkle.x - bloomSize/2, y: sparkle.y - bloomSize/2, width: bloomSize, height: bloomSize)
+                        context.drawLayer { ctx in
+                            ctx.addFilter(.blur(radius: sparkle.blur * 2.0))
+                            ctx.fill(Path(ellipseIn: bloomRect), with: .color(sparkleColor.opacity(sparkle.opacity * 0.30)))
+                        }
+                        let mainRect = CGRect(x: sparkle.x - sparkle.size/2, y: sparkle.y - sparkle.size/2, width: sparkle.size, height: sparkle.size)
+                        context.drawLayer { ctx in
+                            ctx.addFilter(.blur(radius: sparkle.blur))
+                            ctx.fill(Path(ellipseIn: mainRect), with: .color(sparkleColor.opacity(sparkle.opacity)))
+                        }
+                    }
+                }
+                .onChange(of: timeline.date) { _ in
+                    tickUnified()
+                }
+            }
+        }
+    }
+
+    private func tickUnified() {
+        tickCount += 1
+        let w = max(1, containerSize.width)
+        let h = max(1, containerSize.height)
+        let corners = quadCornersInLayerCoordinates()
+
+        // Trigger scatter once on capture
+        if isCaptured && !didTriggerScatter {
+            didTriggerScatter = true
+            transitionToScatter(w: w, h: h)
+        }
+
+        if !isPreparing && !isCaptured {
+            let quadPresent = quad != nil
+            if quadPresent && !wasQuadPresent, let c = corners {
+                transitionToEdge(corners: c)
+            } else if !quadPresent && wasQuadPresent {
+                transitionToFloat()
+            }
+            wasQuadPresent = quadPresent
+        }
+
+        sparkles = sparkles.compactMap { s in
+            var s = s
+            s.wanderPhase += 1.0 / 30.0
+
+            switch s.mode {
+            case .rising:
+                let wobbleX = sin(s.wanderPhase * s.wanderSpeedX) * s.wanderAmplitudeX
+                s.x += s.driftX + wobbleX * 0.25
+                s.y += s.driftY
+                s.launchTicks += 1
+                s.age += 0.009
+                let fadeIn = min(1.0, s.age / 0.08)
+                let fadeOut = max(0, 1.0 - s.age)
+                s.opacity = s.baseOpacity * fadeIn * fadeOut
+                if s.launchTicks >= 42 || s.y <= s.riseTargetY {
+                    s.mode = .floating
+                    s.driftX = CGFloat.random(in: -0.55...0.55)
+                    s.driftY = CGFloat.random(in: -0.55...0.55)
+                    s.wanderSpeedX = Double.random(in: 1.5...3.0)
+                    s.wanderSpeedY = Double.random(in: 1.5...3.0)
+                    s.wanderAmplitudeX = CGFloat.random(in: 0.8...2.2)
+                    s.wanderAmplitudeY = CGFloat.random(in: 0.8...2.2)
+                }
+
+            case .floating:
+                let wx = sin(s.wanderPhase * s.wanderSpeedX) * s.wanderAmplitudeX
+                let wy = cos(s.wanderPhase * s.wanderSpeedY) * s.wanderAmplitudeY
+                s.x += s.driftX + wx * 0.5
+                s.y += s.driftY + wy * 0.5
+                s.age += 0.008
+                s.opacity = s.baseOpacity * max(0, 1.0 - s.age)
+                if s.x < -20 { s.x = w + 10 }
+                if s.x > w + 20 { s.x = -10 }
+                if s.y < -20 { s.y = h + 10 }
+                if s.y > h + 20 { s.y = -10 }
+
+            case .converging:
+                let dx = s.targetX - s.x
+                let dy = s.targetY - s.y
+                s.x += dx * lerpFactor
+                s.y += dy * lerpFactor
+                s.age += 0.012
+                s.opacity = min(0.90, s.baseOpacity * (0.7 + 0.3 * min(1.0, s.age / 0.3)))
+                if hypot(dx, dy) < arrivalThreshold {
+                    s.mode = .edge
+                    s.age = 0
+                }
+
+            case .edge:
+                s.x += s.edgeDriftX
+                s.y += s.edgeDriftY
+                s.age += 0.025
+                s.opacity = max(0, 0.90 * (1.0 - s.age))
+
+            case .scattering:
+                s.x += s.driftX
+                s.y += s.driftY
+                s.age += 0.028
+                s.opacity = max(0, s.baseOpacity * (1.0 - s.age))
+            }
+            return s.age < 1.0 ? s : nil
+        }
+
+        // Don't spawn new sparkles when scattering — let them all fade out
+        guard !isCaptured else { return }
+
+        if isPreparing {
+            let limit = tickCount < 30 ? 1 : 2
+            for _ in 0..<limit where sparkles.count < effectiveMaxSparkles {
+                sparkles.append(spawnRisingSparkle(w: w, h: h))
+            }
+        } else {
+            while sparkles.count < effectiveMaxSparkles {
+                if let s = spawnUnifiedSparkle(corners: corners, w: w, h: h) {
+                    sparkles.append(s)
+                } else { break }
+            }
+        }
+    }
+
+    private func transitionToScatter(w: CGFloat, h: CGFloat) {
+        let cx = w / 2
+        let cy = h / 2
+        sparkles = sparkles.map { s in
+            var s = s
+            // Compute outward direction from screen center
+            let dx = s.x - cx
+            let dy = s.y - cy
+            let dist = max(1, hypot(dx, dy))
+            let nx = dx / dist
+            let ny = dy / dist
+            let speed = CGFloat.random(in: 3.0...6.0)
+            s.driftX = nx * speed
+            s.driftY = ny * speed
+            s.mode = .scattering
+            s.age = 0
+            s.baseOpacity = s.opacity // preserve current brightness as starting point
+            return s
+        }
+    }
+
+    private func transitionToEdge(corners: [CGPoint]) {
+        sparkles = sparkles.map { s in
+            var s = s
+            let target = randomPointOnEdge(corners: corners)
+            s.targetX = target.x
+            s.targetY = target.y
+            s.mode = .converging
+            let (nx, ny) = outwardNormal(at: target, corners: corners)
+            let speed = CGFloat.random(in: 0.5...1.0)
+            s.edgeDriftX = nx * speed
+            s.edgeDriftY = ny * speed
+            return s
+        }
+    }
+
+    private func transitionToFloat() {
+        let w = max(1, containerSize.width)
+        let h = max(1, containerSize.height)
+        sparkles = sparkles.map { s in
+            var s = s
+            s.targetX = CGFloat.random(in: 0...w)
+            s.targetY = CGFloat.random(in: 0...h)
+            s.mode = .floating
+            s.driftX = CGFloat.random(in: -0.55...0.55)
+            s.driftY = CGFloat.random(in: -0.55...0.55)
+            s.age = max(0, s.age - 0.3)
+            s.baseOpacity = Double.random(in: 0.3...0.7)
+            return s
+        }
+    }
+
+    private func spawnRisingSparkle(w: CGFloat, h: CGFloat) -> UnifiedSparkle {
+        let baseOp = Double.random(in: 0.35...0.75)
+        return UnifiedSparkle(
+            x: CGFloat.random(in: 0...w),
+            y: h + CGFloat.random(in: 10...40),
+            targetX: 0, targetY: 0,
+            driftX: CGFloat.random(in: -0.35...0.35),
+            driftY: CGFloat.random(in: -12.5...(-9.0)),
+            size: CGFloat.random(in: 5...13),
+            baseOpacity: baseOp, opacity: 0, blur: CGFloat.random(in: 1.0...3.5),
+            age: 0, mode: .rising, launchTicks: 0,
+            riseTargetY: CGFloat.random(in: h * 0.12...h * 0.38),
+            wanderPhase: Double.random(in: 0...(.pi * 2)),
+            wanderSpeedX: Double.random(in: 1.5...3.0), wanderSpeedY: Double.random(in: 1.5...3.0),
+            wanderAmplitudeX: CGFloat.random(in: 0.8...2.2), wanderAmplitudeY: CGFloat.random(in: 0.5...1.5),
+            edgeDriftX: 0, edgeDriftY: 0
+        )
+    }
+
+    private func spawnUnifiedSparkle(corners: [CGPoint]?, w: CGFloat, h: CGFloat) -> UnifiedSparkle? {
+        if let c = corners, c.count == 4 {
+            let target = randomPointOnEdge(corners: c)
+            let (nx, ny) = outwardNormal(at: target, corners: c)
+            let speed = CGFloat.random(in: 0.5...1.0)
+            return UnifiedSparkle(
+                x: target.x, y: target.y, targetX: target.x, targetY: target.y,
+                driftX: 0, driftY: 0,
+                size: CGFloat.random(in: 6...14),
+                baseOpacity: 0.90, opacity: 0.90, blur: CGFloat.random(in: 1.5...4.0),
+                age: 0, mode: .edge, launchTicks: 0, riseTargetY: 0,
+                wanderPhase: 0, wanderSpeedX: 0, wanderSpeedY: 0, wanderAmplitudeX: 0, wanderAmplitudeY: 0,
+                edgeDriftX: nx * speed, edgeDriftY: ny * speed
+            )
+        }
+        let baseOp = Double.random(in: 0.3...0.7)
+        return UnifiedSparkle(
+            x: CGFloat.random(in: 0...w), y: CGFloat.random(in: 0...h),
+            targetX: CGFloat.random(in: 0...w), targetY: CGFloat.random(in: 0...h),
+            driftX: CGFloat.random(in: -0.55...0.55), driftY: CGFloat.random(in: -0.55...0.55),
+            size: CGFloat.random(in: 5...12),
+            baseOpacity: baseOp, opacity: baseOp, blur: CGFloat.random(in: 1.0...3.0),
+            age: Double.random(in: 0...0.5), mode: .floating, launchTicks: 0, riseTargetY: 0,
+            wanderPhase: Double.random(in: 0...(.pi * 2)),
+            wanderSpeedX: Double.random(in: 1.5...3.0), wanderSpeedY: Double.random(in: 1.5...3.0),
+            wanderAmplitudeX: CGFloat.random(in: 0.8...2.2), wanderAmplitudeY: CGFloat.random(in: 0.8...2.2),
+            edgeDriftX: 0, edgeDriftY: 0
+        )
+    }
+
+    private func randomPointOnEdge(corners: [CGPoint]) -> CGPoint {
+        let edgeIdx = Int.random(in: 0..<4)
+        let a = corners[edgeIdx], b = corners[(edgeIdx + 1) % 4]
+        let t = CGFloat.random(in: 0.0...1.0)
+        return CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
+    }
+
+    private func outwardNormal(at point: CGPoint, corners: [CGPoint]) -> (CGFloat, CGFloat) {
+        let cx = corners.map(\.x).reduce(0, +) / 4
+        let cy = corners.map(\.y).reduce(0, +) / 4
+        var bestDist: CGFloat = .greatestFiniteMagnitude
+        var bestNx: CGFloat = 0, bestNy: CGFloat = 0
+        for i in 0..<4 {
+            let a = corners[i], b = corners[(i + 1) % 4]
+            let midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2
+            let dist = hypot(point.x - midX, point.y - midY)
+            if dist < bestDist {
+                bestDist = dist
+                let edgeDx = b.x - a.x, edgeDy = b.y - a.y
+                let len = hypot(edgeDx, edgeDy)
+                guard len > 0 else { continue }
+                var nx = -edgeDy / len, ny = edgeDx / len
+                if nx * (cx - point.x) + ny * (cy - point.y) > 0 { nx = -nx; ny = -ny }
+                bestNx = nx; bestNy = ny
+            }
+        }
+        return (bestNx, bestNy)
+    }
+
+    private func quadCornersInLayerCoordinates() -> [CGPoint]? {
+        guard let quad = quad else { return nil }
+        func toLayer(_ p: CGPoint) -> CGPoint {
+            let devicePoint = CGPoint(x: p.x, y: 1.0 - p.y)
+            return previewLayer.layerPointConverted(fromCaptureDevicePoint: devicePoint)
+        }
+        return [toLayer(quad.topLeft), toLayer(quad.topRight), toLayer(quad.bottomRight), toLayer(quad.bottomLeft)]
+    }
+}
+
+// MARK: - Ambient sparkle system (unified free-float + edge convergence)
+
+/// Sparkle behaviour mode. Transitions: `.floating` → `.converging` → `.edge` (when quad appears)
+/// and `.edge`/`.converging` → `.floating` (when quad disappears).
+private enum SparkleMode {
+    case floating    // drifting freely across the camera frame
+    case converging  // lerping toward a target point on the quad edge
+    case edge        // arrived on edge, drifting outward
+}
+
+private struct AmbientSparkle: Identifiable {
+    let id = UUID()
+    var x: CGFloat
+    var y: CGFloat
+    var targetX: CGFloat
+    var targetY: CGFloat
+    var driftX: CGFloat           // base drift velocity (float mode)
+    var driftY: CGFloat
+    var size: CGFloat             // base diameter
+    var baseOpacity: Double       // starting opacity for the current mode
+    var opacity: Double           // current rendered opacity
+    var blur: CGFloat
+    var mode: SparkleMode
+    var age: Double               // 0…1 normalised lifetime
+    // Sinusoidal wandering (float mode)
+    var wanderPhase: Double
+    var wanderSpeedX: Double
+    var wanderSpeedY: Double
+    var wanderAmplitudeX: CGFloat
+    var wanderAmplitudeY: CGFloat
+    // Outward drift once on quad edge
+    var edgeDriftX: CGFloat
+    var edgeDriftY: CGFloat
+}
+
+/// A single overlay that renders gold sparkles in two modes:
+/// 1. **Free-floating** – sparkles drift lazily across the entire camera frame (no receipt detected).
+/// 2. **Edge-aligned** – sparkles smoothly converge onto the detected receipt quad edges and emit outward.
+/// The transition between modes uses per-tick linear interpolation for a fluid, organic feel.
+private struct AmbientSparkleOverlay: View {
+    let quad: DetectedQuad?
+    let previewLayer: AVCaptureVideoPreviewLayer
+    let containerSize: CGSize
+    let phase: LiveScanPhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var sparkles: [AmbientSparkle] = []
+    @State private var wasQuadPresent: Bool = false
+
+    private let maxSparkles = 25
+    /// Each tick the sparkle moves 10 % of the remaining distance toward its target.
+    private let lerpFactor: CGFloat = 0.10
+    /// Distance below which a converging sparkle snaps to `.edge` mode.
+    private let arrivalThreshold: CGFloat = 3.0
+
+    private var isLowPower: Bool {
+        ProcessInfo.processInfo.isLowPowerModeEnabled
+    }
+    private var effectiveMaxSparkles: Int {
+        isLowPower ? 12 : maxSparkles
+    }
+    private var effectiveMaxBlur: CGFloat {
+        isLowPower ? 2.5 : 4.0
+    }
+
+    /// Sparkle color follows the same phase logic as the glow outline:
+    /// gold while searching/tracking, green when locked/capturing.
+    private var sparkleColor: Color {
+        switch phase {
+        case .searching, .tracking:
+            return Color(red: 0.85, green: 0.65, blue: 0.25)
+        case .locked, .capturing:
+            return .green
+        }
+    }
+
+    var body: some View {
+        if reduceMotion {
+            EmptyView()
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                Canvas { context, size in
+                    for sparkle in sparkles {
+                        // --- Bloom halo (larger, softer, behind main dot) ---
+                        let bloomSize = sparkle.size * 2.5
+                        let bloomRect = CGRect(
+                            x: sparkle.x - bloomSize / 2,
+                            y: sparkle.y - bloomSize / 2,
+                            width: bloomSize,
+                            height: bloomSize
+                        )
+                        context.drawLayer { ctx in
+                            ctx.addFilter(.blur(radius: sparkle.blur * 2.0))
+                            ctx.fill(
+                                Path(ellipseIn: bloomRect),
+                                with: .color(sparkleColor.opacity(sparkle.opacity * 0.30))
+                            )
+                        }
+
+                        // --- Main sparkle ---
+                        let mainRect = CGRect(
+                            x: sparkle.x - sparkle.size / 2,
+                            y: sparkle.y - sparkle.size / 2,
+                            width: sparkle.size,
+                            height: sparkle.size
+                        )
+                        context.drawLayer { ctx in
+                            ctx.addFilter(.blur(radius: sparkle.blur))
+                            ctx.fill(
+                                Path(ellipseIn: mainRect),
+                                with: .color(sparkleColor.opacity(sparkle.opacity))
+                            )
+                        }
+                    }
+                }
+                .onChange(of: timeline.date) { _ in
+                    tick()
+                }
+            }
+        }
+    }
+
+    // MARK: - Tick (runs every frame, ~30 fps)
+
+    private func tick() {
+        let quadPresent = quad != nil
+        let corners = quadPresent ? quadCornersInLayerCoordinates() : nil
+
+        // --- Detect phase transition ---
+        if quadPresent && !wasQuadPresent, let c = corners {
+            transitionToEdge(corners: c)
+        } else if !quadPresent && wasQuadPresent {
+            transitionToFloat()
+        }
+        wasQuadPresent = quadPresent
+
+        // --- Advance every sparkle ---
+        sparkles = sparkles.compactMap { s in
+            var s = s
+            switch s.mode {
+            case .floating:
+                s.wanderPhase += 1.0 / 30.0
+                let wx = sin(s.wanderPhase * s.wanderSpeedX) * s.wanderAmplitudeX
+                let wy = cos(s.wanderPhase * s.wanderSpeedY) * s.wanderAmplitudeY
+                s.x += s.driftX + wx * 0.3
+                s.y += s.driftY + wy * 0.3
+
+                s.age += 0.008           // ~125 ticks ≈ ~4 s lifetime
+                s.opacity = s.baseOpacity * max(0, 1.0 - s.age)
+
+                // Wrap around screen edges so sparkles never disappear abruptly
+                let w = max(1, containerSize.width)
+                let h = max(1, containerSize.height)
+                if s.x < -20 { s.x = w + 10 }
+                if s.x > w + 20 { s.x = -10 }
+                if s.y < -20 { s.y = h + 10 }
+                if s.y > h + 20 { s.y = -10 }
+
+            case .converging:
+                let dx = s.targetX - s.x
+                let dy = s.targetY - s.y
+                s.x += dx * lerpFactor
+                s.y += dy * lerpFactor
+
+                s.age += 0.012
+                // Brighten as they approach their target
+                s.opacity = min(0.90, s.baseOpacity * (0.7 + 0.3 * min(1.0, s.age / 0.3)))
+
+                if hypot(dx, dy) < arrivalThreshold {
+                    s.mode = .edge
+                    s.age = 0             // reset for edge lifetime
+                }
+
+            case .edge:
+                s.x += s.edgeDriftX
+                s.y += s.edgeDriftY
+                s.age += 0.025           // ~40 ticks ≈ ~1.3 s
+                s.opacity = max(0, 0.90 * (1.0 - s.age))
+            }
+            return s.age < 1.0 ? s : nil
+        }
+
+        // --- Maintain sparkle population ---
+        while sparkles.count < effectiveMaxSparkles {
+            if let s = spawnSparkle(quadCorners: corners) {
+                sparkles.append(s)
+            } else {
+                break
+            }
+        }
+    }
+
+    // MARK: - Phase transitions
+
+    /// Quad just appeared – redirect every sparkle toward a random point on the quad edges.
+    private func transitionToEdge(corners: [CGPoint]) {
+        sparkles = sparkles.map { s in
+            var s = s
+            let target = randomPointOnEdge(corners: corners)
+            s.targetX = target.x
+            s.targetY = target.y
+            s.mode = .converging
+            let (nx, ny) = outwardNormal(at: target, corners: corners)
+            let speed = CGFloat.random(in: 0.5...1.0)
+            s.edgeDriftX = nx * speed
+            s.edgeDriftY = ny * speed
+            return s
+        }
+    }
+
+    /// Quad disappeared – return every sparkle to free-float wandering.
+    private func transitionToFloat() {
+        let w = max(1, containerSize.width)
+        let h = max(1, containerSize.height)
+        sparkles = sparkles.map { s in
+            var s = s
+            s.targetX = CGFloat.random(in: 0...w)
+            s.targetY = CGFloat.random(in: 0...h)
+            s.mode = .floating
+            s.driftX = CGFloat.random(in: -0.3...0.3)
+            s.driftY = CGFloat.random(in: -0.3...0.3)
+            s.age = max(0, s.age - 0.3) // pull back age so they don't die immediately
+            s.baseOpacity = Double.random(in: 0.3...0.7)
+            return s
+        }
+    }
+
+    // MARK: - Spawning
+
+    private func spawnSparkle(quadCorners: [CGPoint]?) -> AmbientSparkle? {
+        if let corners = quadCorners, corners.count == 4 {
+            return spawnEdgeSparkle(corners: corners)
+        } else {
+            return spawnFloatingSparkle()
+        }
+    }
+
+    private func spawnFloatingSparkle() -> AmbientSparkle {
+        let w = max(1, containerSize.width)
+        let h = max(1, containerSize.height)
+        let baseOp = Double.random(in: 0.3...0.7)
+        return AmbientSparkle(
+            x: CGFloat.random(in: 0...w),
+            y: CGFloat.random(in: 0...h),
+            targetX: CGFloat.random(in: 0...w),
+            targetY: CGFloat.random(in: 0...h),
+            driftX: CGFloat.random(in: -0.3...0.3),
+            driftY: CGFloat.random(in: -0.3...0.3),
+            size: CGFloat.random(in: 5...12),
+            baseOpacity: baseOp,
+            opacity: baseOp,
+            blur: CGFloat.random(in: 1.0...3.0),
+            mode: .floating,
+            age: Double.random(in: 0...0.5),           // stagger ages for visual variety
+            wanderPhase: Double.random(in: 0...(.pi * 2)),
+            wanderSpeedX: Double.random(in: 1.5...3.0),
+            wanderSpeedY: Double.random(in: 1.5...3.0),
+            wanderAmplitudeX: CGFloat.random(in: 0.5...1.5),
+            wanderAmplitudeY: CGFloat.random(in: 0.5...1.5),
+            edgeDriftX: 0,
+            edgeDriftY: 0
+        )
+    }
+
+    private func spawnEdgeSparkle(corners: [CGPoint]) -> AmbientSparkle? {
+        guard corners.count == 4 else { return nil }
+        let target = randomPointOnEdge(corners: corners)
+        let (nx, ny) = outwardNormal(at: target, corners: corners)
+        let speed = CGFloat.random(in: 0.5...1.0)
+        return AmbientSparkle(
+            x: target.x,
+            y: target.y,
+            targetX: target.x,
+            targetY: target.y,
+            driftX: 0,
+            driftY: 0,
+            size: CGFloat.random(in: 6...14),
+            baseOpacity: 0.90,
+            opacity: 0.90,
+            blur: CGFloat.random(in: 1.5...effectiveMaxBlur),
+            mode: .edge,
+            age: 0,
+            wanderPhase: 0,
+            wanderSpeedX: 0,
+            wanderSpeedY: 0,
+            wanderAmplitudeX: 0,
+            wanderAmplitudeY: 0,
+            edgeDriftX: nx * speed,
+            edgeDriftY: ny * speed
+        )
+    }
+
+    // MARK: - Geometry helpers
+
+    /// Pick a random point along one of the four quad edges.
+    private func randomPointOnEdge(corners: [CGPoint]) -> CGPoint {
+        let edgeIdx = Int.random(in: 0..<4)
+        let a = corners[edgeIdx]
+        let b = corners[(edgeIdx + 1) % 4]
+        let t = CGFloat.random(in: 0.0...1.0)
+        return CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
+    }
+
+    /// Compute the outward-facing unit normal at a point near the quad edges.
+    private func outwardNormal(at point: CGPoint, corners: [CGPoint]) -> (CGFloat, CGFloat) {
+        let cx = corners.map(\.x).reduce(0, +) / 4
+        let cy = corners.map(\.y).reduce(0, +) / 4
+        var bestDist: CGFloat = .greatestFiniteMagnitude
+        var bestNx: CGFloat = 0
+        var bestNy: CGFloat = 0
+
+        for i in 0..<4 {
+            let a = corners[i]
+            let b = corners[(i + 1) % 4]
+            let midX = (a.x + b.x) / 2
+            let midY = (a.y + b.y) / 2
+            let dist = hypot(point.x - midX, point.y - midY)
+            if dist < bestDist {
+                bestDist = dist
+                let edgeDx = b.x - a.x
+                let edgeDy = b.y - a.y
+                let len = hypot(edgeDx, edgeDy)
+                guard len > 0 else { continue }
+                var nx = -edgeDy / len
+                var ny =  edgeDx / len
+                // Flip if the normal points inward (toward center)
+                if nx * (cx - point.x) + ny * (cy - point.y) > 0 {
+                    nx = -nx
+                    ny = -ny
+                }
+                bestNx = nx
+                bestNy = ny
+            }
+        }
+        return (bestNx, bestNy)
+    }
+
+    private func quadCornersInLayerCoordinates() -> [CGPoint]? {
+        guard let quad = quad else { return nil }
+        func toLayer(_ p: CGPoint) -> CGPoint {
+            let devicePoint = CGPoint(x: p.x, y: 1.0 - p.y)
+            return previewLayer.layerPointConverted(fromCaptureDevicePoint: devicePoint)
+        }
+        return [toLayer(quad.topLeft), toLayer(quad.topRight),
+                toLayer(quad.bottomRight), toLayer(quad.bottomLeft)]
+    }
+}
+
+// Host view that updates the preview layer in layoutSubviews so the layer always gets valid bounds
+private class CameraPreviewHostView: UIView {
+    weak var cameraController: CameraController?
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard let controller = cameraController,
+              let preview = controller.previewLayer else { return }
+        if preview.superlayer == nil {
+            preview.videoGravity = .resizeAspectFill
+            layer.addSublayer(preview)
+        }
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        if preview.frame != bounds {
+            preview.frame = bounds
+        }
+        if let connection = preview.connection, connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
+    }
+}
+
 // Camera preview view
 struct CameraPreviewView: UIViewRepresentable {
     let cameraController: CameraController
     
     func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .black // Set background to black instead of white
-        
+        let view = CameraPreviewHostView()
+        view.backgroundColor = .black
+        view.cameraController = cameraController
         return view
     }
     
     func updateUIView(_ uiView: UIView, context: Context) {
-        // Check if preview layer exists and isn't already added
-        if cameraController.previewLayer.superlayer == nil {
-            cameraController.previewLayer.frame = uiView.bounds
-            cameraController.previewLayer.videoGravity = .resizeAspectFill
-            uiView.layer.addSublayer(cameraController.previewLayer)
+        guard let host = uiView as? CameraPreviewHostView else { return }
+        host.cameraController = cameraController
+        host.setNeedsLayout()
+        host.layoutIfNeeded()
+    }
+}
+
+// MARK: - Looping Video Layer (post-capture interstitial)
+
+private class LoopingVideoHostView: UIView {
+    var playerLayer: AVPlayerLayer?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        playerLayer?.frame = bounds
+    }
+}
+
+private struct LoopingVideoLayer: UIViewRepresentable {
+    let videoName: String
+    let videoType: String
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UIView {
+        let host = LoopingVideoHostView()
+        host.backgroundColor = .black
+
+        // Ambient audio to avoid AirPods auto-connect
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default, options: [])
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {}
+
+        guard let path = Bundle.main.path(forResource: videoName, ofType: videoType) else { return host }
+        let url = URL(fileURLWithPath: path)
+        let item = AVPlayerItem(url: url)
+        let player = AVPlayer(playerItem: item)
+        player.isMuted = true
+
+        let layer = AVPlayerLayer(player: player)
+        layer.videoGravity = .resizeAspectFill
+        host.layer.addSublayer(layer)
+        host.playerLayer = layer
+
+        context.coordinator.player = player
+        context.coordinator.playerItem = item
+
+        // Loop on end
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.didReachEnd),
+            name: .AVPlayerItemDidPlayToEndTime,
+            object: item
+        )
+
+        player.play()
+        return host
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        guard let host = uiView as? LoopingVideoHostView else { return }
+        host.setNeedsLayout()
+    }
+
+    class Coordinator: NSObject {
+        var player: AVPlayer?
+        var playerItem: AVPlayerItem?
+
+        @objc func didReachEnd() {
+            player?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+            player?.play()
         }
-        
-        // Update frame if needed
-        DispatchQueue.main.async {
-            if cameraController.previewLayer.frame != uiView.bounds {
-                cameraController.previewLayer.frame = uiView.bounds
+
+        deinit {
+            if let item = playerItem {
+                NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: item)
             }
-            if let connection = cameraController.previewLayer.connection, connection.isVideoOrientationSupported {
-                connection.videoOrientation = .portrait
-            }
+            player?.pause()
+            player = nil
         }
     }
 }
@@ -1653,6 +2671,7 @@ class CameraController: NSObject, ObservableObject {
             }
         }
         currentExposureBias = 0
+        isReceiptDetectionEnabled = false
         if captureSession.isRunning {
             captureSession.stopRunning()
         }
@@ -1672,6 +2691,7 @@ class CameraController: NSObject, ObservableObject {
     @Published var liveScanStatusText: String = "Finding receipt…"
     var isAutoScanEnabled: Bool = true
     var autoTorchEnabled: Bool = true
+    var isReceiptDetectionEnabled: Bool = false
 
     private let videoQueue = DispatchQueue(label: "camera.video.frames.queue", qos: .userInitiated)
     private let visionQueue = DispatchQueue(label: "camera.vision.queue", qos: .userInitiated)
@@ -1689,7 +2709,7 @@ class CameraController: NSObject, ObservableObject {
     private var lastCandidateAt: CFTimeInterval = 0
     private var lastGoodQuadAt: CFTimeInterval = 0
     private let quadHoldGraceSeconds: CFTimeInterval = 0.85
-    private let lockDelaySeconds: CFTimeInterval = 0.20 // was 0.35
+    private let lockDelaySeconds: CFTimeInterval = 1.0
     private var lockedQuad: DetectedQuad? = nil
     private var statusCandidateText: String? = nil
     private var statusCandidateSince: CFTimeInterval = 0
@@ -1729,17 +2749,39 @@ class CameraController: NSObject, ObservableObject {
     private var lastTotalsCheckAt: CFTimeInterval = 0
     private var totalsHintCandidate: Bool = false
     private var totalsHintPassed: Bool = false
+    private var lastFastTotalsHintResult: Bool? = nil
     private let fastTotalsCheckInterval: CFTimeInterval = 0.22 // fast hint (~4.5 fps)
     private let totalsCheckInterval: CFTimeInterval = 0.30 // full hint (~3.3 fps)
     private let ocrQueue = DispatchQueue(label: "camera.ocr.totals.queue", qos: .utility)
+    private var lastCaptureBlockedLogAt: CFTimeInterval = 0
 
-    private enum LiveScanPhase {
-        case searching
-        case tracking
-        case locked
-        case capturing
-    }
+    /// Timestamp when auto-capture was first deferred because totals OCR hadn't confirmed yet.
+    /// Reset when phase returns to `.searching` or camera is set up fresh.
+    private var captureHeldForTotalsAt: CFTimeInterval = 0
+    private let maxTotalsWaitSeconds: CFTimeInterval = 2.5
+
+    // Uses file-level LiveScanPhase enum (shared with overlay views).
     private var phase: LiveScanPhase = .searching
+    /// Published mirror of `phase` so SwiftUI views can react to scan-phase changes.
+    @Published var liveScanPhase: LiveScanPhase = .searching
+
+    /// Updates both the internal `phase` and the `@Published liveScanPhase` (main-thread safe).
+    private func setPhase(_ newPhase: LiveScanPhase) {
+        self.phase = newPhase
+        if Thread.isMainThread {
+            self.liveScanPhase = newPhase
+        } else {
+            DispatchQueue.main.async {
+                self.liveScanPhase = newPhase
+            }
+        }
+    }
+
+    /// Whether the live-frame OCR confirmed totals keywords (and optionally amounts) are visible.
+    /// Used to bypass the post-capture totals gate when the live scan already confirmed.
+    var liveTotalsConfirmed: Bool {
+        totalsHintPassed || totalsHintCandidate
+    }
 
     func setLiveScanROI(fromLayerRect layerRect: CGRect) {
         // Convert from preview-layer coordinates -> AVFoundation normalized (top-left origin),
@@ -1800,13 +2842,16 @@ class CameraController: NSObject, ObservableObject {
         }
         
         // Reset auto-scan state for clean start
-        phase = .searching
+        setPhase(.searching)
         stabilityScore = 0
         hasTriggeredAutoCapture = false
         totalsHintCandidate = false
         totalsHintPassed = false
+        lastFastTotalsHintResult = nil
         lastFastTotalsCheckAt = 0
         lastTotalsCheckAt = 0
+        lastCaptureBlockedLogAt = 0
+        captureHeldForTotalsAt = 0
         trackedQuadRaw = nil
         smoothedQuad = nil
         lockedQuad = nil
@@ -1997,20 +3042,18 @@ extension CameraController {
 
             let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
             let context = CIContext()
-            let scale: CGFloat = 0.38 // more aggressive downscale for speed
+            let scale: CGFloat = 0.60 // prioritize OCR reliability so text gate can unlock capture
             let transform = CGAffineTransform(scaleX: scale, y: scale)
             let scaledImage = ciImage.transformed(by: transform)
 
-            // Focus on the bottom slice to reduce OCR work.
-            let height = scaledImage.extent.height
-            let cropRect = CGRect(x: 0, y: 0, width: scaledImage.extent.width, height: height * 0.45)
-            guard let cgImage = context.createCGImage(scaledImage, from: cropRect) else {
+            // Run fast OCR on the full frame so either header ("Dumpling House")
+            // or totals text can unlock capture.
+            guard let cgImage = context.createCGImage(scaledImage, from: scaledImage.extent) else {
                 completion(false)
                 return
             }
 
-            let uiImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: imageOrientation(from: orientation))
-            let hasTotalsHint = fastTotalsHintFromImage(uiImage)
+            let hasTotalsHint = fastTotalsHintFromImage(cgImage, preferredOrientation: orientation)
             completion(hasTotalsHint)
         }
     }
@@ -2061,25 +3104,41 @@ extension CameraController {
     }
 
     /// Very fast keyword-only OCR hint (no amounts required).
-    private func fastTotalsHintFromImage(_ image: UIImage) -> Bool {
-        guard let cgImage = image.cgImage else { return false }
-
+    /// Tries a small orientation fallback set because live buffers can report different
+    /// orientation metadata across devices/camera pipelines.
+    private func fastTotalsHintFromImage(_ cgImage: CGImage, preferredOrientation: CGImagePropertyOrientation) -> Bool {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .fast
         request.usesLanguageCorrection = false
-        request.minimumTextHeight = 0.02
-        request.regionOfInterest = CGRect(x: 0.0, y: 0.0, width: 1.0, height: 0.55)
+        request.minimumTextHeight = 0.010
+        request.regionOfInterest = CGRect(x: 0.0, y: 0.0, width: 1.0, height: 1.0)
 
-        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
-        do {
-            try handler.perform([request])
-        } catch {
-            return false
+        func hasReceiptSignal(for orientation: CGImagePropertyOrientation) -> Bool {
+            let handler = VNImageRequestHandler(cgImage: cgImage, orientation: orientation, options: [:])
+            do {
+                try handler.perform([request])
+            } catch {
+                return false
+            }
+
+            let strings = request.results?.compactMap { $0.topCandidates(1).first?.string } ?? []
+            let text = strings.joined(separator: " ").lowercased()
+            let hasTotalsKeyword =
+                text.contains("total") ||
+                text.contains("subtotal") ||
+                text.contains("sub total") ||
+                text.contains("tax") ||
+                text.contains("amount due")
+            // Use a partial root to handle common OCR misses like "dumplng"/"dumplingh".
+            let hasRestaurantKeyword = text.contains("dumpl")
+            return hasTotalsKeyword || hasRestaurantKeyword
         }
 
-        let strings = request.results?.compactMap { $0.topCandidates(1).first?.string } ?? []
-        let text = strings.joined(separator: " ").lowercased()
-        return text.contains("total") || text.contains("subtotal") || text.contains("sub total") || text.contains("tax")
+        let orientations: [CGImagePropertyOrientation] = [preferredOrientation, .up, .right, .left]
+        for candidate in orientations {
+            if hasReceiptSignal(for: candidate) { return true }
+        }
+        return false
     }
 }
 
@@ -2115,6 +3174,8 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                 }
             }
         }
+
+        guard isReceiptDetectionEnabled else { return }
 
         // Throttle Vision work
         let now = CACurrentMediaTime()
@@ -2211,22 +3272,31 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                         } else if self.phase == .tracking || self.phase == .locked {
                             self.applyStatusText("Hold steady…")
                         } else {
-                            self.applyStatusText("Finding receipt…", force: true)
+                            if isBrightLowContrast {
+                                self.applyStatusText("Too close — back up a little", force: true)
+                            } else {
+                                self.applyStatusText("Finding receipt…", force: true)
+                            }
                         }
                     }
                 } else {
                     // True loss: reset.
-                    self.phase = .searching
+                    self.setPhase(.searching)
                     self.lockedQuad = nil
                     self.totalsHintCandidate = false
                     self.totalsHintPassed = false
-                    self.lastFastTotalsCheckAt = 0
-                    self.lastTotalsCheckAt = 0
+                    self.lastFastTotalsHintResult = nil
+                    self.captureHeldForTotalsAt = 0
+                    self.lastCaptureBlockedLogAt = 0
                     self.lastFastTotalsCheckAt = 0
                     self.lastTotalsCheckAt = 0
                     DispatchQueue.main.async {
                         self.detectedReceiptQuad = nil
-                        self.applyStatusText("Finding receipt…", force: true)
+                        if isBrightLowContrast {
+                            self.applyStatusText("Too close — back up a little", force: true)
+                        } else {
+                            self.applyStatusText("Finding receipt…", force: true)
+                        }
                     }
                     self.trackedQuadRaw = nil
                     self.smoothedQuad = nil
@@ -2314,13 +3384,20 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                         self.applyStatusText("Hold steady…")
                     }
                 } else {
-                    self.phase = .searching
+                    self.setPhase(.searching)
                     self.lockedQuad = nil
                     self.totalsHintCandidate = false
                     self.totalsHintPassed = false
+                    self.lastFastTotalsHintResult = nil
+                    self.captureHeldForTotalsAt = 0
+                    self.lastCaptureBlockedLogAt = 0
                     DispatchQueue.main.async {
                         self.detectedReceiptQuad = nil
-                        self.applyStatusText("Finding receipt…", force: true)
+                        if isBrightLowContrast {
+                            self.applyStatusText("Too close — back up a little", force: true)
+                        } else {
+                            self.applyStatusText("Finding receipt…", force: true)
+                        }
                     }
                     self.trackedQuadRaw = nil
                     self.smoothedQuad = nil
@@ -2425,6 +3502,11 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                 chosenRaw = top.quad
             }
 
+            // Normalise corner labels by spatial position before any tracking/smoothing.
+            // Vision can swap which corner is "topLeft" between frames; without this the EMA
+            // interpolates between mismatched corners and produces crossed/triangle shapes.
+            chosenRaw = self.normalizeCornerOrder(chosenRaw)
+
             // Update tracking state when quad changes
             let previousTracked = self.trackedQuadRaw
             self.trackedQuadRaw = chosenRaw
@@ -2444,7 +3526,11 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
             // was fixed at 0.22
             if let prev = self.smoothedQuad {
                 let rawDelta = avgCornerDelta(chosenRaw, prev)
-                let alpha: CGFloat = rawDelta > 0.05 ? 0.55 : (rawDelta > 0.02 ? 0.38 : 0.22)
+                let baseAlpha: CGFloat = rawDelta > 0.05 ? 0.55 : (rawDelta > 0.02 ? 0.38 : 0.22)
+                // When stability is high, heavily dampen the alpha so the overlay resists
+                // drifting to slightly-offset detections (e.g. Vision catching a shadow/edge).
+                // Genuine movement drops stability quickly, which removes this cap.
+                let alpha: CGFloat = self.stabilityScore >= 12 ? min(baseAlpha, 0.10) : baseAlpha
                 let tl = lerp(prev.topLeft, chosenRaw.topLeft, alpha)
                 let tr = lerp(prev.topRight, chosenRaw.topRight, alpha)
                 let bl = lerp(prev.bottomLeft, chosenRaw.bottomLeft, alpha)
@@ -2472,12 +3558,15 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
             guard let publishQuad = self.smoothedQuad else { return }
             self.lastGoodQuadAt = CACurrentMediaTime()
             if self.phase == .searching {
-                self.phase = .tracking
-                // Reset totals hint when starting to track
-                self.totalsHintCandidate = false
-                self.totalsHintPassed = false
-                self.lastFastTotalsCheckAt = 0
-                self.lastTotalsCheckAt = 0
+                self.setPhase(.tracking)
+                // Preserve a valid hint when entering tracking so capture isn't blocked.
+                // If we don't have one yet, clear hint state and restart timing windows.
+                if !self.totalsHintCandidate {
+                    self.totalsHintPassed = false
+                    self.lastFastTotalsCheckAt = 0
+                    self.lastTotalsCheckAt = 0
+                    self.lastFastTotalsHintResult = nil
+                }
             }
 
             // Lock behavior: once locked, stop updating the quad (freeze highlight) and commit to capture.
@@ -2516,13 +3605,15 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                 self.trackedQuadBestStability = self.stabilityScore
             }
 
-            // Fast totals hint first, then full hint (throttled)
-            if self.stabilityScore >= 12 && !self.totalsHintCandidate && !self.hasTriggeredAutoCapture {
+            // Fast totals hint first, then full hint (throttled).
+            // Start early (stability 6) so OCR has time before the capture gate at 18.
+            if self.stabilityScore >= 6 && !self.totalsHintCandidate && !self.hasTriggeredAutoCapture {
                 if (now - self.lastFastTotalsCheckAt) >= self.fastTotalsCheckInterval {
                     self.lastFastTotalsCheckAt = now
                     self.checkFastTotalsHintOnLiveFrame(pixelBuffer, orientation: orientation) { [weak self] hasTotalsHint in
                         guard let self else { return }
                         DispatchQueue.main.async {
+                            self.lastFastTotalsHintResult = hasTotalsHint
                             self.totalsHintCandidate = hasTotalsHint
                             if !hasTotalsHint {
                                 self.totalsHintPassed = false
@@ -2546,19 +3637,27 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                 }
             }
             
+            let (trueLongSideForStatus, _) = trueQuadDimensions(publishQuad)
             DispatchQueue.main.async {
                 self.detectedReceiptQuad = publishQuad
                 if self.hasTriggeredAutoCapture {
                     self.applyStatusText("Capturing…", force: true)
-                } else if self.stabilityScore >= 18 {
-                    // Guide user if totals are missing
-                    if self.totalsHintPassed || self.totalsHintCandidate {
+                } else {
+                    let bb = publishQuad.boundingBox
+                    let quadSmall = max(bb.width, bb.height) < 0.40
+                    if isBrightLowContrast && quadSmall {
+                        self.applyStatusText("Too close — back up a little")
+                    } else if trueLongSideForStatus < 0.45 {
+                        self.applyStatusText("Hold phone closer to receipt")
+                    } else if self.stabilityScore >= 18 && !self.totalsHintCandidate {
+                        self.applyStatusText("Point at a receipt to scan")
+                    } else if self.stabilityScore >= 18 && ambiguous && self.totalsHintCandidate {
+                        self.applyStatusText("Center just one receipt")
+                    } else if self.stabilityScore >= 18 {
                         self.applyStatusText("Hold steady…")
                     } else {
-                        self.applyStatusText("Move receipt down to include totals")
+                        self.applyStatusText("Hold steady…")
                     }
-                } else {
-                    self.applyStatusText("Finding receipt…", force: true)
                 }
             }
 
@@ -2566,9 +3665,16 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
             if self.stabilityScore >= 18 && !self.hasTriggeredAutoCapture { // was 24
                 // Use true quad geometry (rotation-invariant) for gating tilted receipts.
                 let (trueLongSide, trueAspect) = trueQuadDimensions(publishQuad)
+                let geometryReady = trueLongSide >= 0.45 && trueAspect <= 0.78
+                let textReady = self.totalsHintCandidate
+                // If OCR says this is a receipt and stability is very high, allow capture
+                // even when Vision still marks the scene as slightly ambiguous.
+                let ambiguityReady = !ambiguous || (textReady && self.stabilityScore >= 24)
                 // Relaxed thresholds: was longSide >= 0.52 && aspect <= 0.72
-                if trueLongSide >= 0.45 && trueAspect <= 0.78 && !ambiguous {
-                    self.phase = .locked
+                if geometryReady && ambiguityReady && textReady {
+                    // Capture when stable + receipt-like geometry + receipt text detected.
+                    // totalsHintCandidate ensures we don't snap random non-receipt objects.
+                    self.setPhase(.locked)
                     self.lockedQuad = publishQuad
                     self.hasTriggeredAutoCapture = true
                     DispatchQueue.main.async {
@@ -2578,12 +3684,55 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
                     DispatchQueue.main.asyncAfter(deadline: .now() + self.lockDelaySeconds) {
                         // If something external cancelled auto scan, respect it.
                         guard self.isAutoScanEnabled else { return }
-                        self.phase = .capturing
+                        self.setPhase(.capturing)
                         self.shouldAutoCapture = true
+                    }
+                } else if geometryReady && !textReady {
+                    if (now - self.lastCaptureBlockedLogAt) >= 0.8 {
+                        self.lastCaptureBlockedLogAt = now
+                        let hint = self.lastFastTotalsHintResult.map { $0 ? "true" : "false" } ?? "nil"
+                        DebugLogger.debug(
+                            "🧾 Capture blocked: awaiting text hint (stability=\(self.stabilityScore), longSide=\(String(format: "%.2f", trueLongSide)), aspect=\(String(format: "%.2f", trueAspect)), lastFastHint=\(hint))",
+                            category: "ReceiptScan"
+                        )
+                    }
+                } else if geometryReady && ambiguous && textReady {
+                    if (now - self.lastCaptureBlockedLogAt) >= 0.8 {
+                        self.lastCaptureBlockedLogAt = now
+                        DebugLogger.debug(
+                            "🧾 Capture waiting: ambiguous candidates (stability=\(self.stabilityScore), longSide=\(String(format: "%.2f", trueLongSide)), aspect=\(String(format: "%.2f", trueAspect)))",
+                            category: "ReceiptScan"
+                        )
                     }
                 }
             }
         }
+    }
+
+    /// Normalises corner labels by spatial position so the EMA never interpolates
+    /// between mismatched corners when Vision swaps its labelling between frames.
+    /// Top two corners (highest Y in Vision coords) are sorted by X → topLeft / topRight.
+    /// Bottom two corners (lowest Y) are sorted by X → bottomLeft / bottomRight.
+    private func normalizeCornerOrder(_ raw: DetectedQuad) -> DetectedQuad {
+        var pts = [raw.topLeft, raw.topRight, raw.bottomRight, raw.bottomLeft]
+        // Vision coordinates: origin bottom-left, Y increases upward.
+        // Sort descending by Y so the two highest-Y points come first (top of receipt).
+        pts.sort { $0.y > $1.y }
+
+        // Top pair (indices 0, 1): lower X → topLeft
+        let tl = pts[0].x <= pts[1].x ? pts[0] : pts[1]
+        let tr = pts[0].x <= pts[1].x ? pts[1] : pts[0]
+        // Bottom pair (indices 2, 3): lower X → bottomLeft
+        let bl = pts[2].x <= pts[3].x ? pts[2] : pts[3]
+        let br = pts[2].x <= pts[3].x ? pts[3] : pts[2]
+
+        return DetectedQuad(
+            topLeft: tl, topRight: tr,
+            bottomLeft: bl, bottomRight: br,
+            boundingBox: raw.boundingBox,
+            confidence: raw.confidence,
+            score: raw.score
+        )
     }
 
     private struct LumaStats {
@@ -2884,29 +4033,141 @@ private func receiptHasSubtotalTaxTotalSync(_ image: UIImage) -> Bool {
     return false
 }
 
-// MARK: - Receipt image preprocessing (Option B: detect receipt rectangle + perspective correction)
+// MARK: - Receipt image preprocessing (Option B: detect receipt rectangle + guarded crop selection)
 
-/// Runs Vision rectangle detection + CoreImage perspective correction to isolate the receipt area.
-/// If anything fails, returns the original image (orientation-normalized) so scans never block.
+/// Runs Vision rectangle detection and selects the safest cropped candidate for upload.
+/// If crop confidence is low (likely header loss), retries with expanded crop, then falls back to full image.
 private func preprocessReceiptImageForUpload(_ image: UIImage, completion: @escaping (UIImage) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
         let normalized = normalizeImageOrientation(image)
         let downscaled = downscaleIfNeeded(normalized, maxDimension: 2000)
 
-        guard let processed = detectAndCorrectReceipt(in: downscaled, debugLog: false) else {
-            // Fallback: when rectangle detection fails, attempt a conservative text-box crop to reduce background.
-            // This is still guarded by the Subtotal/Tax/Total OCR gate upstream (fail closed).
-            let heuristic = heuristicTextCropReceipt(downscaled, debugLog: false)
-            if heuristic != nil {
-                DebugLogger.debug("🧾 Receipt preprocessing fallback: using heuristic text crop (no rectangle detected)", category: "ReceiptScan")
-            } else {
-                DebugLogger.debug("🧾 Receipt preprocessing skipped (no rectangle detected) - using original image", category: "ReceiptScan")
+        // Height retention: how much of the original image height the crop preserves.
+        func heightRetention(_ candidate: UIImage) -> CGFloat {
+            guard downscaled.size.height > 0 else { return 1.0 }
+            return candidate.size.height / downscaled.size.height
+        }
+
+        // --- Primary crop attempt ---
+        if let primaryCrop = detectAndCorrectReceipt(
+            in: downscaled,
+            debugLog: false,
+            cropScale: 1.08,
+            extraTopPaddingFraction: 0.35,
+            extraBottomPaddingFraction: 0.26
+        ) {
+            let retention = heightRetention(primaryCrop)
+
+            // Good retention (>= 55%): crop almost certainly includes header. Accept.
+            if retention >= 0.55 {
+                DebugLogger.debug("🧾 Preprocessing: primary crop ACCEPTED (height retention \(String(format: "%.0f", retention * 100))%)", category: "ReceiptScan")
+                DispatchQueue.main.async { completion(primaryCrop) }
+                return
             }
-            DispatchQueue.main.async { completion(heuristic ?? downscaled) }
+
+            // Borderline retention (< 55%): surprisingly tight crop.
+            // Use OCR hint as tiebreaker — if header text found, accept primary crop.
+            if topRegionLikelyContainsRestaurantName(primaryCrop) {
+                DebugLogger.debug("🧾 Preprocessing: primary crop ACCEPTED (tight but OCR found header, retention \(String(format: "%.0f", retention * 100))%)", category: "ReceiptScan")
+                DispatchQueue.main.async { completion(primaryCrop) }
+                return
+            }
+
+            // Primary crop is tight AND OCR missed header — try expanded crop.
+            DebugLogger.debug("🧾 Preprocessing: primary crop too tight & no header (retention \(String(format: "%.0f", retention * 100))%), trying expanded crop", category: "ReceiptScan")
+            if let expandedCrop = detectAndCorrectReceipt(
+                in: downscaled,
+                debugLog: false,
+                cropScale: 1.12,
+                extraTopPaddingFraction: 0.52,
+                extraBottomPaddingFraction: 0.32
+            ) {
+                // Always accept the expanded crop — its generous padding makes header loss very unlikely.
+                let expRetention = heightRetention(expandedCrop)
+                DebugLogger.debug("🧾 Preprocessing: expanded crop ACCEPTED (retention \(String(format: "%.0f", expRetention * 100))%)", category: "ReceiptScan")
+                DispatchQueue.main.async { completion(expandedCrop) }
+                return
+            }
+
+            // Expanded crop detection failed — fall back to full image.
+            DebugLogger.debug("🧾 Preprocessing: expanded crop detection failed, using full image fallback", category: "ReceiptScan")
+            DispatchQueue.main.async { completion(downscaled) }
             return
         }
-        DebugLogger.debug("🧾 Receipt preprocessing succeeded - using cropped/perspective-corrected image", category: "ReceiptScan")
-        DispatchQueue.main.async { completion(processed) }
+
+        // No rectangle detected at all — send full image.
+        DebugLogger.debug("🧾 Preprocessing: no rectangle detected, using full image fallback", category: "ReceiptScan")
+        DispatchQueue.main.async { completion(downscaled) }
+    }
+}
+
+/// Fast, conservative OCR hint for whether the restaurant name is visible near the top.
+/// Returns true when we have enough signal that a crop likely includes the Dumpling House header.
+private func topRegionLikelyContainsRestaurantName(_ image: UIImage) -> Bool {
+    guard let cgImage = image.cgImage else { return false }
+
+    let cropHeight = max(1, Int(CGFloat(cgImage.height) * 0.42))
+    let topRect = CGRect(x: 0, y: 0, width: cgImage.width, height: cropHeight)
+    guard let topCG = cgImage.cropping(to: topRect) else { return false }
+
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .fast
+    request.usesLanguageCorrection = false
+    request.minimumTextHeight = 0.015
+
+    let handler = VNImageRequestHandler(cgImage: topCG, orientation: .up, options: [:])
+    do {
+        try handler.perform([request])
+    } catch {
+        return false
+    }
+
+    let text = request.results?
+        .compactMap { $0.topCandidates(1).first?.string.lowercased() }
+        .joined(separator: " ") ?? ""
+
+    let hasDumplingHouse = text.contains("dumpling house")
+    let hasSplitWords = text.contains("dumpling") && text.contains("house")
+    return hasDumplingHouse || hasSplitWords
+}
+
+/// Saves the given image to the camera roll. Used only when admin toggle "Save scanned receipts to camera roll" is on.
+/// Request add-only photo library permission; saves asynchronously so upload is not blocked.
+private func saveScannedReceiptImageToCameraRoll(_ image: UIImage) {
+    guard let data = image.jpegData(compressionQuality: 0.95) else { return }
+    DispatchQueue.global(qos: .utility).async {
+        let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+        let requestAuth = {
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { newStatus in
+                guard newStatus == .authorized || newStatus == .limited else {
+                    DebugLogger.debug("🧾 Save to camera roll: permission denied", category: "ReceiptScan")
+                    return
+                }
+                performSave(data: data)
+            }
+        }
+        switch status {
+        case .authorized, .limited:
+            performSave(data: data)
+        case .notDetermined:
+            requestAuth()
+        case .denied, .restricted:
+            DebugLogger.debug("🧾 Save to camera roll: permission denied or restricted", category: "ReceiptScan")
+        @unknown default:
+            requestAuth()
+        }
+    }
+    func performSave(data: Data) {
+        PHPhotoLibrary.shared().performChanges({
+            let request = PHAssetCreationRequest.forAsset()
+            request.addResource(with: .photo, data: data, options: nil)
+        }) { success, error in
+            if success {
+                DebugLogger.debug("🧾 Save to camera roll: saved image sent to server", category: "ReceiptScan")
+            } else {
+                DebugLogger.debug("🧾 Save to camera roll failed: \(error?.localizedDescription ?? "unknown")", category: "ReceiptScan")
+            }
+        }
     }
 }
 
@@ -3005,7 +4266,13 @@ private func downscaleIfNeeded(_ image: UIImage, maxDimension: CGFloat) -> UIIma
     }
 }
 
-private func detectAndCorrectReceipt(in image: UIImage, debugLog: Bool) -> UIImage? {
+private func detectAndCorrectReceipt(
+    in image: UIImage,
+    debugLog: Bool,
+    cropScale: CGFloat = 1.08,
+    extraTopPaddingFraction: CGFloat = 0.35,
+    extraBottomPaddingFraction: CGFloat = 0.26
+) -> UIImage? {
     guard let cgImage = image.cgImage else { return nil }
 
     // Detect rectangles
@@ -3059,75 +4326,100 @@ private func detectAndCorrectReceipt(in image: UIImage, debugLog: Bool) -> UIIma
         return pow(area, 1.25) * (0.6 + 0.4 * conf) * (0.55 + 0.45 * aspectScore) * (0.65 + 0.35 * centerScore)
     }
 
-    let best = observations.max { a, b in
-        candidateScore(a) < candidateScore(b)
-    }
+    // Sort candidates by score (descending) and try the top 3.
+    let sorted = observations.sorted { candidateScore($0) > candidateScore($1) }
+    let topCandidates = Array(sorted.prefix(3))
 
-    guard let rect = best else { return nil }
-
-    // Guardrail: if the best candidate is too small or too square-ish, skip cropping.
-    // This prevents "random square/rectangle" crops when Vision latches onto a high-contrast patch.
-    let bb = rect.boundingBox
-    let area = Double(bb.width * bb.height)
-    let w = Double(bb.width)
-    let h = Double(bb.height)
-    let longSide = max(w, h)
-    let aspect = longSide > 0 ? min(w, h) / longSide : 0.0 // 1.0 = square, smaller = longer rectangle
-
-    // Accept long receipts even if area is modest (narrow width), as long as the long side fills most of the frame.
-    let looksLikeLongReceipt = (longSide >= 0.70 && aspect <= 0.55)
-    // Otherwise require a minimum area to avoid cropping random patches.
-    let areaTooSmall = area < 0.06
-    let tooSquare = aspect > 0.80
-
-    if tooSquare || (areaTooSmall && !looksLikeLongReceipt) {
-        if debugLog {
-            DebugLogger.debug("🧾 Receipt preprocessing guard: rejecting best rectangle (area=\(String(format: "%.3f", area)), aspect=\(String(format: "%.3f", aspect)), longSide=\(String(format: "%.3f", longSide)), conf=\(String(format: "%.2f", rect.confidence)))", category: "ReceiptScan")
-        }
-        return nil
-    }
-
-    // Perspective correction using CoreImage
     let ciImage = CIImage(cgImage: cgImage)
     let extent = ciImage.extent
-    let width = extent.width
-    let height = extent.height
+    let imgWidth = extent.width
+    let imgHeight = extent.height
 
     func denorm(_ p: CGPoint) -> CGPoint {
-        // VNRectangleObservation points are normalized with origin at bottom-left, which matches CoreImage coordinates.
-        CGPoint(x: p.x * width, y: p.y * height)
+        CGPoint(x: p.x * imgWidth, y: p.y * imgHeight)
     }
 
-    var topLeft = denorm(rect.topLeft)
-    var topRight = denorm(rect.topRight)
-    var bottomLeft = denorm(rect.bottomLeft)
-    var bottomRight = denorm(rect.bottomRight)
+    for (index, rect) in topCandidates.enumerated() {
+        // Guardrail: if this candidate is too small or too square-ish, skip it.
+        let bb = rect.boundingBox
+        let area = Double(bb.width * bb.height)
+        let w = Double(bb.width)
+        let h = Double(bb.height)
+        let longSide = max(w, h)
+        let aspect = longSide > 0 ? min(w, h) / longSide : 0.0
 
-    // Inflate the quad so we don't clip header/totals due to tight detection.
-    // Add extra bottom padding to ensure Subtotal/Tax/Total section is never cropped.
-    (topLeft, topRight, bottomLeft, bottomRight) = inflateQuadWithVerticalPadding(
-        topLeft: topLeft,
-        topRight: topRight,
-        bottomLeft: bottomLeft,
-        bottomRight: bottomRight,
-        scale: 1.08,
-        extraTopPaddingFraction: 0.10,
-        extraBottomPaddingFraction: 0.26, // Increased to protect totals section
-        bounds: extent
-    )
+        let looksLikeLongReceipt = (longSide >= 0.70 && aspect <= 0.55)
+        let areaTooSmall = area < 0.06
+        let tooSquare = aspect > 0.80
 
-    let filter = CIFilter.perspectiveCorrection()
-    filter.inputImage = ciImage
-    filter.topLeft = topLeft
-    filter.topRight = topRight
-    filter.bottomLeft = bottomLeft
-    filter.bottomRight = bottomRight
+        if tooSquare || (areaTooSmall && !looksLikeLongReceipt) {
+            if debugLog {
+                DebugLogger.debug("🧾 Crop candidate #\(index): geometry rejected (area=\(String(format: "%.3f", area)), aspect=\(String(format: "%.3f", aspect)), longSide=\(String(format: "%.3f", longSide)))", category: "ReceiptScan")
+            }
+            continue
+        }
 
-    guard let output = filter.outputImage else { return nil }
+        var topLeft = denorm(rect.topLeft)
+        var topRight = denorm(rect.topRight)
+        var bottomLeft = denorm(rect.bottomLeft)
+        var bottomRight = denorm(rect.bottomRight)
 
-    let context = CIContext(options: nil)
-    guard let outCG = context.createCGImage(output, from: output.extent) else { return nil }
-    return UIImage(cgImage: outCG, scale: 1.0, orientation: .up)
+        (topLeft, topRight, bottomLeft, bottomRight) = inflateQuadWithVerticalPadding(
+            topLeft: topLeft,
+            topRight: topRight,
+            bottomLeft: bottomLeft,
+            bottomRight: bottomRight,
+            scale: cropScale,
+            extraTopPaddingFraction: extraTopPaddingFraction,
+            extraBottomPaddingFraction: extraBottomPaddingFraction,
+            bounds: extent
+        )
+
+        let allX = [topLeft.x, topRight.x, bottomLeft.x, bottomRight.x]
+        let allY = [topLeft.y, topRight.y, bottomLeft.y, bottomRight.y]
+        let minX = max(allX.min()!, extent.minX)
+        let minY = max(allY.min()!, extent.minY)
+        let maxX = min(allX.max()!, extent.maxX)
+        let maxY = min(allY.max()!, extent.maxY)
+        // Convert from CIImage coords (origin bottom-left) to CGImage coords (origin top-left).
+        let flippedY = imgHeight - maxY
+        let cropRect = CGRect(x: minX, y: flippedY, width: maxX - minX, height: maxY - minY)
+
+        guard cropRect.width > 0, cropRect.height > 0 else { continue }
+        guard let croppedCG = cgImage.cropping(to: cropRect) else { continue }
+
+        DebugLogger.debug("🧾 Crop candidate #\(index): cropRect=(\(String(format: "%.0f", cropRect.origin.x)), \(String(format: "%.0f", cropRect.origin.y)), \(String(format: "%.0f", cropRect.width))x\(String(format: "%.0f", cropRect.height))) in \(cgImage.width)x\(cgImage.height)", category: "ReceiptScan")
+
+        // Post-crop text sanity check: reject crops that contain no receipt-like text.
+        let textLineCount = fastTextLineCount(croppedCG)
+        if textLineCount < 3 {
+            DebugLogger.debug("🧾 Crop candidate #\(index): rejected (only \(textLineCount) text lines, need >= 3)", category: "ReceiptScan")
+            continue
+        }
+
+        DebugLogger.debug("🧾 Crop candidate #\(index): ACCEPTED (\(textLineCount) text lines, area=\(String(format: "%.3f", area)))", category: "ReceiptScan")
+        return UIImage(cgImage: croppedCG, scale: 1.0, orientation: .up)
+    }
+
+    // No candidate passed geometry + text checks.
+    return nil
+}
+
+/// Fast text-line count on a CGImage. Used as a post-crop sanity check to reject
+/// non-text regions (table edges, shadows, etc.) before upload.
+private func fastTextLineCount(_ cgImage: CGImage) -> Int {
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .fast
+    request.usesLanguageCorrection = false
+    request.minimumTextHeight = 0.01
+
+    let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
+    do {
+        try handler.perform([request])
+    } catch {
+        return 0
+    }
+    return request.results?.count ?? 0
 }
 
 private func inflateQuad(

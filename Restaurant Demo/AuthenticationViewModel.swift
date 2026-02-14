@@ -462,6 +462,7 @@ class AuthenticationViewModel: ObservableObject {
             "points": 0, 
             "isNewUser": true, // Mark as new user for welcome popup
             "hasReceivedWelcomePoints": false, // Ensure welcome points not received yet
+            "hasCompletedIntroduction": false, // Track if user has completed the app walkthrough
             "accountCreatedDate": FieldValue.serverTimestamp(),
             "createdAt": FieldValue.serverTimestamp() // Keep both for backward compatibility
         ]

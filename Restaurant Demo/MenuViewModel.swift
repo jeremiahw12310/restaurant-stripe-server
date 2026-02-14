@@ -287,6 +287,11 @@ class MenuViewModel: ObservableObject {
         // Load cached allergy tags immediately (stale-while-revalidate).
         // This prevents the item detail sheet from rendering with empty tags on app launch.
         preloadAllergyTagsFromCacheIfNeeded()
+
+        // Eager fetch: if allergy tags cache is stale or missing, start fetch now (don't wait for 2s delay).
+        if dataCacheManager.isAllergyTagsStale() {
+            fetchAllergyTags()
+        }
         
         // Defer static data loading
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
@@ -322,10 +327,14 @@ class MenuViewModel: ObservableObject {
             guard let self = self else { return }
             defer { self.isLoadingAllergyTagsFromCache = false }
 
-            guard let cached, !cached.isEmpty else { return }
-            // Only fill if we don't already have tags (avoid overwriting fresher network/admin results).
-            if self.allergyTags.isEmpty {
-                self.allergyTags = cached
+            if let cached, !cached.isEmpty {
+                // Only fill if we don't already have tags (avoid overwriting fresher network/admin results).
+                if self.allergyTags.isEmpty {
+                    self.allergyTags = cached
+                }
+            } else {
+                // Cache empty or missing: fetch from network so we don't rely on 2s delay.
+                self.fetchAllergyTags()
             }
         }
     }
@@ -337,15 +346,14 @@ class MenuViewModel: ObservableObject {
     func ensureAllergyTagsLoaded() {
         preloadAllergyTagsFromCacheIfNeeded()
 
-        // Always refresh if stale; otherwise only fetch if we still have no data after cache load attempt.
+        // Always refresh if stale; otherwise fetch if we have no tags to show.
         if dataCacheManager.isAllergyTagsStale() {
             fetchAllergyTags()
             return
         }
 
-        // If cache load is still running, don't trigger a redundant fetch yet.
-        guard !isLoadingAllergyTagsFromCache else { return }
-
+        // When we have no tags in memory, always trigger a fetch (even if cache load is still in progress).
+        // fetchAllergyTags() guards with isFetchingAllergyTags, so duplicate calls are safe.
         if allergyTags.isEmpty {
             fetchAllergyTags()
         }

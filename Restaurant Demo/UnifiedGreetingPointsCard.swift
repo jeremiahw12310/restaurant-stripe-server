@@ -10,6 +10,7 @@ struct UnifiedGreetingPointsCard: View {
     let onScan: () -> Void
     let onDirections: () -> Void
     let onRefer: () -> Void
+    let onReserve: () -> Void
     let onAdminOffice: (() -> Void)?
 
     private var firstName: String { userVM.firstName.isEmpty ? "Friend" : userVM.firstName }
@@ -195,6 +196,8 @@ struct UnifiedGreetingPointsCard: View {
                         onRefer()
                         NotificationCenter.default.post(name: Notification.Name("presentReferral"), object: nil)
                     })
+                    // Reserve a Table
+                    smallActionButton(title: "Reserve a Table", icon: "calendar.badge.plus", color: Theme.primaryGold, action: onReserve)
                 }
             }
             .opacity(animate ? 1.0 : 0.0)
@@ -332,6 +335,7 @@ struct UnifiedGreetingPointsCard_Previews: PreviewProvider {
             onScan: {},
             onDirections: {},
             onRefer: {},
+            onReserve: {},
             onAdminOffice: nil
         )
         .environmentObject(UserViewModel())

@@ -25,27 +25,38 @@ struct ReservationCard: View {
                         .foregroundStyle(Theme.darkGoldGradient)
                 }
 
-                Text("Pick a date and time")
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundColor(Theme.modernSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                HStack(spacing: 8) {
-                    Text("Reserve")
-                        .font(.system(size: 14, weight: .black, design: .rounded))
-                        .foregroundColor(.white)
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.white)
+                // Live indicator: seating status
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 8, height: 8)
+                    Text("Seating available")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundColor(Theme.modernSecondary)
+                    Text("·")
+                        .foregroundColor(Theme.modernSecondary)
+                    Text("Open now")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundColor(Theme.modernSecondary)
+                    Spacer()
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(Theme.energyOrange)
-                        .shadow(color: Theme.energyOrange.opacity(0.4), radius: 8, x: 0, y: 4)
-                )
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Full-width premium CTA
+                HStack(spacing: 8) {
+                    Text("Reserve Now")
+                        .font(.system(size: 30, weight: .black, design: .rounded))
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 26, weight: .bold))
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Theme.darkGoldGradient)
+                        .shadow(color: Theme.goldShadow, radius: 10, x: 0, y: 4)
+                )
             }
             .padding(28)
             .background(

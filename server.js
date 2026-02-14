@@ -4337,6 +4337,55 @@ IMPORTANT:
   });
 
   /**
+   * GET /reservations/mine
+   * Authenticated user. Returns the caller's own upcoming, non-cancelled reservations.
+   */
+  app.get('/reservations/mine', async (req, res) => {
+    try {
+      const userContext = await requireUser(req, res);
+      if (!userContext) return;
+
+      const db = admin.firestore();
+      const today = new Date();
+      const todayStr = today.toISOString().slice(0, 10); // YYYY-MM-DD
+
+      const snapshot = await db.collection('reservations')
+        .where('userId', '==', userContext.uid)
+        .where('date', '>=', todayStr)
+        .orderBy('date', 'asc')
+        .limit(10)
+        .get();
+
+      const reservations = (snapshot.docs || [])
+        .map((doc) => {
+          const d = doc.data();
+          return {
+            id: doc.id,
+            userId: d.userId,
+            customerName: d.customerName,
+            phone: d.phone,
+            email: d.email || null,
+            date: d.date,
+            time: d.time,
+            partySize: d.partySize,
+            specialRequests: d.specialRequests || null,
+            status: d.status,
+            createdAt: d.createdAt,
+            updatedAt: d.updatedAt,
+            confirmedAt: d.confirmedAt || null,
+            confirmedBy: d.confirmedBy || null
+          };
+        })
+        .filter((r) => r.status !== 'cancelled');
+
+      return res.json({ reservations });
+    } catch (error) {
+      console.error('❌ Error fetching user reservations:', error);
+      return res.status(500).json({ error: 'Failed to fetch reservations' });
+    }
+  });
+
+  /**
    * PATCH /reservations/:id
    * Admin only. Update status to confirmed or cancelled; optional notes.
    */
@@ -4370,6 +4419,42 @@ IMPORTANT:
         update.notes = notes.trim();
       }
       await ref.update(update);
+
+      // Notify the customer about the status change
+      try {
+        const resData = doc.data();
+        const customerUid = resData.userId;
+        if (customerUid) {
+          const now = admin.firestore.FieldValue.serverTimestamp();
+          const finalStatus = status.trim().toLowerCase();
+          const dateStr = resData.date || '';
+          const timeStr = resData.time || '';
+          const party = resData.partySize || 0;
+
+          let notifTitle, notifBody, notifType;
+          if (finalStatus === 'confirmed') {
+            notifTitle = 'Reservation Confirmed';
+            notifBody = `Your reservation for ${party} on ${dateStr} at ${timeStr} has been confirmed. See you then!`;
+            notifType = 'reservation_confirmed';
+          } else {
+            notifTitle = 'Reservation Update';
+            notifBody = `Your reservation for ${party} on ${dateStr} at ${timeStr} has been cancelled. Please contact us for questions.`;
+            notifType = 'reservation_cancelled';
+          }
+
+          await db.collection('notifications').add({
+            userId: customerUid,
+            title: notifTitle,
+            body: notifBody,
+            type: notifType,
+            read: false,
+            createdAt: now,
+            reservationId: id
+          });
+        }
+      } catch (notifErr) {
+        console.error('⚠️ Failed to send reservation status notification:', notifErr);
+      }
 
       console.log(`✅ Reservation ${id} updated to ${update.status} by admin ${adminContext.uid}`);
       return res.json({ id, status: update.status });

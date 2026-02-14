@@ -69,7 +69,8 @@ service cloud.firestore {
         'hasFcmToken',
         'fcmToken',
         'fcmTokenUpdatedAt',
-        'promotionalNotificationsEnabled'
+        'promotionalNotificationsEnabled',
+        'hasCompletedIntroduction'
       ]);
     }
 

@@ -989,6 +989,8 @@ struct HomeAdminSection: View {
     var openRewardTierAdmin: (() -> Void)? = nil
     // Closure to open admin notifications (NEW)
     var openAdminNotifications: (() -> Void)? = nil
+    // Closure to test the account walkthrough
+    var testWalkthrough: (() -> Void)? = nil
 
     var body: some View {
         // Only render if user is admin or employee
@@ -1113,6 +1115,34 @@ struct HomeAdminSection: View {
                                             )
                                         )
                                         .shadow(color: .orange.opacity(0.3), radius: 8, x: 0, y: 4)
+                                )
+                            }
+                        }
+                        
+                        // Test Walkthrough Button (admin only)
+                        if let testWalkthrough = testWalkthrough {
+                            Button(action: testWalkthrough) {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "figure.walk")
+                                        .font(.title2)
+                                        .foregroundColor(.white)
+
+                                    Text("Test Walkthrough")
+                                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                                        .foregroundColor(.white)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .fill(
+                                            LinearGradient(
+                                                gradient: Gradient(colors: [.cyan, .blue]),
+                                                startPoint: .leading,
+                                                endPoint: .trailing
+                                            )
+                                        )
+                                        .shadow(color: .cyan.opacity(0.3), radius: 8, x: 0, y: 4)
                                 )
                             }
                         }

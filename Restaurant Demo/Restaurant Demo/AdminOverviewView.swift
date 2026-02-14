@@ -15,7 +15,8 @@ struct AdminOverviewView: View {
     @State private var showSuspiciousFlags = false
     @State private var showBannedHistory = false
     @State private var showSendRewards = false
-    
+    @State private var showReservations = false
+
     // Swipe to dismiss state
     @State private var dragOffset: CGFloat = 0
     @State private var isAtTop: Bool = true
@@ -129,6 +130,9 @@ struct AdminOverviewView: View {
             }
             .sheet(isPresented: $showSendRewards) {
                 AdminSendRewardsView()
+            }
+            .sheet(isPresented: $showReservations) {
+                AdminReservationsView()
             }
         }
     }
@@ -396,7 +400,17 @@ struct AdminOverviewView: View {
             ) {
                 showNotifications = true
             }
-            
+
+            // Reservations
+            ActionButton(
+                title: "Reservations",
+                subtitle: "View and confirm table reservations",
+                icon: "calendar.badge.clock",
+                gradient: [.teal, .mint]
+            ) {
+                showReservations = true
+            }
+
             // Reward History
             ActionButton(
                 title: "Reward History",

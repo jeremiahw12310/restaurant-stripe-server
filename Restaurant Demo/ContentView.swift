@@ -11,6 +11,8 @@ extension Notification.Name {
     static let navigateToRewardsTab = Notification.Name("navigateToRewardsTab")
     /// Posted by ChatbotView when user taps "OPEN" on rewards card. HomeView dismisses chatbot and presents rewards to avoid sheet-on-sheet lag.
     static let showRewardsFromChatbot = Notification.Name("showRewardsFromChatbot")
+    /// Posted by HomeView (after sequential animations) or admin test button to trigger the app walkthrough.
+    static let showWalkthrough = Notification.Name("showWalkthrough")
 }
 
 struct ContentView: View {
@@ -48,6 +50,10 @@ struct ContentView: View {
     @State private var showUnreadNotificationsAlert: Bool = false
     @State private var pendingUnreadCountForAlert: Int = 0
     @State private var lastSeenUnreadCountForAlert: Int = 0
+    
+    // App walkthrough state
+    @State private var showWalkthrough: Bool = false
+    @State private var walkthroughIncludesWelcome: Bool = false
 
     var body: some View {
         ZStack {
@@ -154,6 +160,13 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .navigateToRewardsTab)) { _ in
                 selectedTab = 3
             }
+            .onReceive(NotificationCenter.default.publisher(for: .showWalkthrough)) { notif in
+                guard !showWalkthrough else { return }
+                walkthroughIncludesWelcome = (notif.userInfo?["includeWelcome"] as? Bool) ?? false
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    showWalkthrough = true
+                }
+            }
             // Ban alert removed - banned users are redirected to deletion screen in LaunchView
             .onChange(of: selectedTab) { _, newTab in
                 updateThemeContext(for: newTab)
@@ -161,6 +174,26 @@ struct ContentView: View {
                 os_signpost(.event, log: perfLog, name: "TabSwitch", "%{public}d", newTab)
             }
         }
+        .overlay(
+            ZStack {
+                if showWalkthrough {
+                    WalkthroughOverlayView(
+                        includeWelcome: walkthroughIncludesWelcome,
+                        onComplete: { dismissWalkthrough() },
+                        onStepChanged: { tab in
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                selectedTab = tab
+                            }
+                        },
+                        onClaimWelcomePoints: {
+                            NotificationCenter.default.post(name: Notification.Name("claimWelcomePoints"), object: nil)
+                        }
+                    )
+                    .transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.3), value: showWalkthrough)
+        )
         .sheet(isPresented: $showNotificationPrePrompt) {
             NotificationPrePermissionView()
         }
@@ -207,6 +240,19 @@ struct ContentView: View {
                 successData: successData,
                 onDismiss: { sharedRewardsVM.pendingQRSuccess = nil }
             )
+        }
+    }
+    
+    // MARK: - Walkthrough
+    
+    private func dismissWalkthrough() {
+        // Mark complete in both UserDefaults (local) and Firestore (remote)
+        userVM.markIntroductionCompleted()
+        
+        // Fade out overlay and return to Home tab
+        withAnimation(.easeInOut(duration: 0.3)) {
+            showWalkthrough = false
+            selectedTab = 0
         }
     }
     

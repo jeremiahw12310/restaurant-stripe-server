@@ -262,7 +262,20 @@ struct ItemDetailView: View {
         let tags: [AllergyTag] = item.allergyTagIDs.compactMap { tagById[$0] }.filter { $0.isAvailable }
         
         return Group {
-            if !tags.isEmpty {
+            if item.allergyTagIDs.isEmpty {
+                EmptyView()
+            } else if tags.isEmpty {
+                // Item has allergy tag IDs but definitions aren't loaded yet.
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Allergy Info")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.white)
+                    Text("Loading allergy info…")
+                        .font(.system(size: 14))
+                        .foregroundColor(.white.opacity(0.7))
+                }
+                .padding(.top, 2)
+            } else {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Allergy Info")
                         .font(.system(size: 16, weight: .bold))

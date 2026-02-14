@@ -27,11 +27,59 @@ class UserViewModel: ObservableObject {
     @Published var isEmployee: Bool = false // Employee status
     @Published var isBanned: Bool = false // Ban status
     @Published var oldReceiptTestingEnabled: Bool = false // Admin-only: allow scanning old receipts for testing
+    @Published var saveScannedReceiptsToCameraRoll: Bool = false // Admin-only debug: save the exact image sent to server (remove before production)
     @Published var phoneNumber: String = "" // Phone number
     @Published var accountCreatedDate: Date = Date() // Account creation date
     @Published var hasAccountCreatedDate: Bool = false // True only when loaded from Firestore
     @Published var hasReceivedWelcomePoints: Bool = false // Track if user has received welcome points
     @Published var isNewUser: Bool = false // Track if this is a new user who should see welcome popup
+    @Published var hasCompletedIntroduction: Bool = false // Track if user has completed the app walkthrough
+    
+    // MARK: - Introduction Persistence Helpers
+    
+    /// Per-user UserDefaults key so the walkthrough "completed" flag survives
+    /// Firestore write failures and is available instantly on cold launch.
+    private static func introductionDefaultsKey(for uid: String) -> String {
+        "hasCompletedIntroduction_\(uid)"
+    }
+    
+    /// Call this whenever the walkthrough is completed or skipped.
+    /// Writes `true` to both UserDefaults (instant, local) and Firestore (cross-device).
+    func markIntroductionCompleted() {
+        self.hasCompletedIntroduction = true
+        
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        
+        // 1. Save to UserDefaults FIRST – this is the reliable local fallback
+        UserDefaults.standard.set(true, forKey: UserViewModel.introductionDefaultsKey(for: uid))
+        
+        // 2. Persist to Firestore (merge so the field is created if it didn't exist)
+        let db = Firestore.firestore()
+        db.collection("users").document(uid).setData([
+            "hasCompletedIntroduction": true
+        ], merge: true) { error in
+            if let error = error {
+                DebugLogger.debug("❌ Error persisting walkthrough completion: \(error.localizedDescription)", category: "User")
+            } else {
+                DebugLogger.debug("✅ Walkthrough marked as completed in Firestore", category: "User")
+            }
+        }
+    }
+    
+    /// Call when the walkthrough is about to be shown – ensures the field exists
+    /// in Firestore for pre-v1.1 accounts that don't have it yet.
+    func ensureIntroductionFieldExists() {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        
+        let db = Firestore.firestore()
+        db.collection("users").document(uid).setData([
+            "hasCompletedIntroduction": false
+        ], merge: true) { error in
+            if let error = error {
+                DebugLogger.debug("❌ Error ensuring introduction field: \(error.localizedDescription)", category: "User")
+            }
+        }
+    }
     
     // MARK: - User Preferences
     @Published var likesSpicyFood: Bool = false
@@ -161,6 +209,18 @@ class UserViewModel: ObservableObject {
                 self.phoneNumber = data["phone"] as? String ?? ""
                 self.hasReceivedWelcomePoints = data["hasReceivedWelcomePoints"] as? Bool ?? false
                 self.isNewUser = data["isNewUser"] as? Bool ?? false
+                // Walkthrough completion: check Firestore first, then UserDefaults as a fallback.
+                // UserDefaults survives Firestore write failures and is available instantly on cold launch.
+                if let completed = data["hasCompletedIntroduction"] as? Bool {
+                    self.hasCompletedIntroduction = completed
+                }
+                // If Firestore didn't say true, check local UserDefaults (in case the Firestore write failed previously)
+                if !self.hasCompletedIntroduction {
+                    let localKey = UserViewModel.introductionDefaultsKey(for: uid)
+                    if UserDefaults.standard.bool(forKey: localKey) {
+                        self.hasCompletedIntroduction = true
+                    }
+                }
                 
                 // Check if user is banned - just set flag (LaunchView handles showing deletion screen)
                 let isBanned = data["isBanned"] as? Bool ?? false
@@ -583,6 +643,8 @@ class UserViewModel: ObservableObject {
             // Clear both v3 and v4 referral cache formats (the app currently uses v4 in ContentView).
             UserDefaults.standard.removeObject(forKey: "referral_cache_v3_\(uid)")
             UserDefaults.standard.removeObject(forKey: "referral_cache_v4_\(uid)")
+            // Clear walkthrough completion flag so a new account on this device sees the walkthrough
+            UserDefaults.standard.removeObject(forKey: UserViewModel.introductionDefaultsKey(for: uid))
         }
         // Clear persisted active reward card (cross-account leak prevention)
         UserDefaults.standard.removeObject(forKey: "persistedActiveReward")
@@ -610,6 +672,7 @@ class UserViewModel: ObservableObject {
         self.phoneNumber = ""
         self.hasReceivedWelcomePoints = false
         self.isNewUser = false
+        self.hasCompletedIntroduction = false
         
         // Finally, sign out from Firebase Auth
         try? Auth.auth().signOut()

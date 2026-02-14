@@ -70,6 +70,8 @@ struct HomeView: View {
     @State private var locationAnimated = false
     @State private var adminAnimated = false
     @State private var showReservationSheet = false
+    @StateObject private var reservationVM = UserReservationViewModel()
+    @State private var yourReservationAnimated = false
     // Back-compat convenience for read-only usages that haven’t been migrated yet
     private var cardAnimations: [Bool] {
         [pointsAnimated, rewardsAnimated, crowdAnimated, reservationAnimated, locationAnimated, adminAnimated]
@@ -94,14 +96,8 @@ struct HomeView: View {
     // Animation coordination states
     @State private var launchAnimationComplete = false
     
-    // MARK: - Integrated Welcome State
-    @State private var showIntegratedWelcome = false
-    @State private var welcomeAnimationComplete = false
-    @State private var welcomeConfettiPieces: [WelcomeConfettiPiece] = []
-    @State private var welcomeConfettiTimer: Timer? = nil
-    @State private var welcomeContentVisible = false
-    @State private var welcomePointsVisible = false
-    @State private var welcomeMessageVisible = false
+    // MARK: - Welcome Points State
+    @State private var welcomePointsClaimed = false
     @State private var showWelcomeBlockedAlert = false
     
     // Points earned animation states
@@ -239,6 +235,7 @@ struct HomeView: View {
                                 DebugLogger.debug("🔗 HomeView: onRefer closure invoked", category: "Home")
                                 showReferral = true
                             },
+                            onReserve: { showReservationSheet = true },
                             onAdminOffice: { showAdminOffice = true }
                         )
                         .environmentObject(userVM)
@@ -312,6 +309,11 @@ struct HomeView: View {
                             .opacity(crowdAnimated ? 1.0 : 0.0)
                             .animation(.spring(response: 0.6, dampingFraction: 0.8), value: crowdAnimated)
                         
+                        // MARK: - Your Reservation Status Card
+                        if let res = reservationVM.reservation {
+                            YourReservationCard(reservation: res, animate: $yourReservationAnimated)
+                        }
+                        
                         // MARK: - Reservation Card
                         ReservationCard(animate: $reservationAnimated) {
                             showReservationSheet = true
@@ -335,7 +337,10 @@ struct HomeView: View {
                             openAdminOffice: { showAdminOffice = true },
                             openRewardsScan: { showRewardsScan = true },
                             openRewardTierAdmin: { showRewardTierAdmin = true },
-                            openAdminNotifications: { showAdminNotifications = true }
+                            openAdminNotifications: { showAdminNotifications = true },
+                            testWalkthrough: {
+                                NotificationCenter.default.post(name: .showWalkthrough, object: nil, userInfo: ["includeWelcome": true])
+                            }
                         )
                         .environmentObject(userVM)
 
@@ -468,8 +473,6 @@ struct HomeView: View {
                 timer?.cancel()
                 glimmerTimer?.invalidate()
                 glimmerTimer = nil
-                welcomeConfettiTimer?.invalidate()
-                welcomeConfettiTimer = nil
             }
         
         let notifications = lifecycle
@@ -547,6 +550,9 @@ struct HomeView: View {
             .onReceive(NotificationCenter.default.publisher(for: .showLifetimePoints)) { _ in
                 showLifetimePointsSheet = true
             }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("claimWelcomePoints"))) { _ in
+                claimWelcomePoints()
+            }
         
         return running
         .sheet(isPresented: $showAccountCustomization) {
@@ -582,7 +588,10 @@ struct HomeView: View {
         .sheet(isPresented: $showAdminNotifications) {
             AdminNotificationsView()
         }
-        .sheet(isPresented: $showReservationSheet) {
+        .sheet(isPresented: $showReservationSheet, onDismiss: {
+            // Refresh user reservations when sheet closes (new reservation may have been created)
+            reservationVM.load()
+        }) {
             ReservationSheetView()
                 .environmentObject(userVM)
         }
@@ -618,129 +627,6 @@ struct HomeView: View {
         } message: {
             Text("Select your preferred navigation app to get directions to Dumpling House")
         }
-        .overlay(
-            // Integrated Welcome Overlay - shown for new users
-            ZStack {
-                if showIntegratedWelcome {
-                    // Semi-transparent background - darker for better text contrast
-                    Color.black.opacity(0.75)
-                        .ignoresSafeArea()
-                        .transition(.opacity)
-                    
-                    // Confetti pieces
-                    ForEach(welcomeConfettiPieces) { piece in
-                        Circle()
-                            .fill(piece.color)
-                            .frame(width: 8, height: 8)
-                            .position(x: piece.x, y: piece.y)
-                            .rotationEffect(.degrees(piece.rotation))
-                            .scaleEffect(piece.scale)
-                    }
-                    
-                    // Main welcome content
-                    VStack(spacing: 24) {
-                        Spacer()
-                        
-                        // Welcome icon
-                        ZStack {
-                            Circle()
-                                .fill(
-                                    LinearGradient(
-                                        colors: [Color(red: 0.85, green: 0.65, blue: 0.25), Color(red: 0.75, green: 0.55, blue: 0.15)],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-                                )
-                                .frame(width: 80, height: 80)
-                                .shadow(color: Color.black.opacity(0.2), radius: 10, x: 0, y: 5)
-                            
-                            Image(systemName: "party.popper.fill")
-                                .font(.system(size: 40, weight: .bold))
-                                .foregroundColor(.white)
-                        }
-                        .scaleEffect(welcomeContentVisible ? 1.1 : 0.8)
-                        .opacity(welcomeContentVisible ? 1 : 0)
-                        
-                        // Welcome text
-                        VStack(spacing: 6) {
-                            Text("Welcome to")
-                                .font(.system(size: 22, weight: .medium, design: .rounded))
-                                .foregroundColor(.white)
-                            
-                            Text("Dumpling House")
-                                .font(.system(size: 34, weight: .bold, design: .rounded))
-                                .foregroundColor(.white)
-                            
-                            Text("Rewards")
-                                .font(.system(size: 28, weight: .black, design: .rounded))
-                                .foregroundStyle(Theme.darkGoldGradient)
-                        }
-                        .multilineTextAlignment(.center)
-                        .opacity(welcomeContentVisible ? 1 : 0)
-                        .offset(y: welcomeContentVisible ? 0 : 20)
-                        
-                        // Points earned
-                        VStack(spacing: 12) {
-                            Text("+5")
-                                .font(.system(size: 48, weight: .bold, design: .rounded))
-                                .foregroundColor(Color(red: 0.85, green: 0.65, blue: 0.25))
-                                .scaleEffect(welcomePointsVisible ? 1.2 : 0.8)
-                            
-                            Text("Welcome Points!")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundColor(.white.opacity(0.9))
-                        }
-                        .opacity(welcomePointsVisible ? 1 : 0)
-                        .offset(y: welcomePointsVisible ? 0 : 20)
-                        
-                        // Message
-                        VStack(spacing: 16) {
-                            Text("Thanks for signing up!")
-                                .font(.system(size: 20, weight: .semibold))
-                                .foregroundColor(.white)
-                                .multilineTextAlignment(.center)
-                            
-                            Text("Scan receipts to earn more points and unlock exclusive rewards.")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(.white.opacity(0.8))
-                                .multilineTextAlignment(.center)
-                                .lineLimit(3)
-                        }
-                        .padding(.horizontal, 32)
-                        .opacity(welcomeMessageVisible ? 1 : 0)
-                        .offset(y: welcomeMessageVisible ? 0 : 20)
-                        
-                        Spacer()
-                        
-                        // Done button
-                        Button(action: {
-                            dismissIntegratedWelcome()
-                        }) {
-                            Text("Let's Go!")
-                                .font(.system(size: 18, weight: .bold, design: .rounded))
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 16)
-                                .background(
-                                    LinearGradient(
-                                        colors: [Color(red: 0.85, green: 0.65, blue: 0.25), Color(red: 0.75, green: 0.55, blue: 0.15)],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
-                                .cornerRadius(25)
-                                .shadow(color: Color(red: 0.75, green: 0.55, blue: 0.15).opacity(0.4), radius: 8, x: 0, y: 4)
-                        }
-                        .padding(.horizontal, 40)
-                        .padding(.bottom, 60)
-                        .opacity(welcomeMessageVisible ? 1 : 0)
-                        .offset(y: welcomeMessageVisible ? 0 : 20)
-                    }
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                }
-            }
-            .animation(.spring(response: 0.6, dampingFraction: 0.8), value: showIntegratedWelcome)
-        )
         .sheet(isPresented: $showOrderHandoff) {
             if let url = URL(string: "https://dumplinghousetn.kwickmenu.com/") {
                 SimplifiedSafariView(
@@ -827,8 +713,6 @@ struct HomeView: View {
             timer = nil
             glimmerTimer?.invalidate()
             glimmerTimer = nil
-            welcomeConfettiTimer?.invalidate()
-            welcomeConfettiTimer = nil
             withAnimation(.easeInOut(duration: 0.2)) {
                 glimmerOpacity = 0
             }
@@ -1271,6 +1155,9 @@ struct HomeView: View {
             userVM.loadUserData()
         }
         
+        // Load user's active reservations
+        reservationVM.load()
+        
         // Staff listener for any pending reward redemption (drives the priority scanner card)
         adminPendingRewardsVM.setListeningEnabled(userVM.isAdmin || userVM.isEmployee)
         
@@ -1281,94 +1168,36 @@ struct HomeView: View {
         }
     }
     
-    /// Checks if the user should see the integrated welcome and shows it, or starts normal animations
+    /// Checks if the user should see the welcome + walkthrough or just the walkthrough, or neither
     private func checkAndShowIntegratedWelcome() {
-        // Determine if user should see welcome
-        // New user OR user with 0 points who hasn't received welcome points yet
+        // Determine if user should see welcome (new user who hasn't received points)
         let shouldShowWelcome = userVM.isNewUser || (userVM.points == 0 && !userVM.hasReceivedWelcomePoints && !userVM.isLoading)
         
         DebugLogger.debug("🎉 HomeView: checkAndShowIntegratedWelcome - isNewUser: \(userVM.isNewUser), points: \(userVM.points), hasReceivedWelcomePoints: \(userVM.hasReceivedWelcomePoints), shouldShowWelcome: \(shouldShowWelcome)", category: "Home")
         
-        if shouldShowWelcome && !welcomeAnimationComplete {
-            // Show integrated welcome first
-            showIntegratedWelcome = true
-            startWelcomeAnimations()
+        if shouldShowWelcome && !welcomePointsClaimed {
+            // New user: show walkthrough with welcome step (step 0), then start animations
+            DebugLogger.debug("📖 HomeView: Posting walkthrough with welcome for new user", category: "Home")
+            NotificationCenter.default.post(name: .showWalkthrough, object: nil, userInfo: ["includeWelcome": true])
+            // Start HomeView animations immediately so content is visible behind the overlay
+            let remainingDelay = max(0, 1.0)
+            DispatchQueue.main.asyncAfter(deadline: .now() + remainingDelay) {
+                startSequentialAnimations()
+            }
         } else {
-            // Normal flow - start sequential animations after launch delay
-            let remainingDelay = max(0, 1.0) // Reduced delay since we already waited 0.5s
+            // Normal flow - start sequential animations, walkthrough check happens at the end
+            let remainingDelay = max(0, 1.0)
             DispatchQueue.main.asyncAfter(deadline: .now() + remainingDelay) {
                 startSequentialAnimations()
             }
         }
     }
     
-    /// Starts the welcome celebration animations
-    private func startWelcomeAnimations() {
-        // Create confetti pieces
-        createWelcomeConfetti()
+    /// Claims welcome points for a new user (called via notification from WalkthroughOverlayView)
+    private func claimWelcomePoints() {
+        guard !welcomePointsClaimed else { return }
+        welcomePointsClaimed = true
         
-        // Animate content in sequence
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            withAnimation(.spring(response: 0.7, dampingFraction: 0.8)) {
-                welcomeContentVisible = true
-            }
-        }
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            withAnimation(.spring(response: 0.6, dampingFraction: 0.7)) {
-                welcomePointsVisible = true
-            }
-        }
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            withAnimation(.spring(response: 0.6, dampingFraction: 0.7)) {
-                welcomeMessageVisible = true
-            }
-        }
-    }
-    
-    /// Creates confetti pieces for the welcome animation
-    private func createWelcomeConfetti() {
-        let confettiColors: [Color] = [.red, .blue, .green, .yellow, .purple, .orange, .pink]
-        welcomeConfettiPieces = []
-        
-        for _ in 0..<50 {
-            let piece = WelcomeConfettiPiece(
-                x: Double.random(in: 0...UIScreen.main.bounds.width),
-                y: -50,
-                rotation: Double.random(in: 0...360),
-                scale: Double.random(in: 0.5...1.5),
-                color: confettiColors.randomElement() ?? .red,
-                velocity: Double.random(in: 100...300),
-                angularVelocity: Double.random(in: -5...5)
-            )
-            welcomeConfettiPieces.append(piece)
-        }
-        
-        // Start confetti animation
-        welcomeConfettiTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
-            DispatchQueue.main.async {
-                for i in welcomeConfettiPieces.indices {
-                    welcomeConfettiPieces[i].y += welcomeConfettiPieces[i].velocity * 0.05
-                    welcomeConfettiPieces[i].rotation += welcomeConfettiPieces[i].angularVelocity
-                }
-                
-                // Remove confetti that has fallen off screen
-                welcomeConfettiPieces.removeAll { piece in
-                    piece.y > UIScreen.main.bounds.height + 50
-                }
-                
-                // Stop animation when all confetti is gone
-                if welcomeConfettiPieces.isEmpty {
-                    welcomeConfettiTimer?.invalidate()
-                    welcomeConfettiTimer = nil
-                }
-            }
-        }
-    }
-    
-    /// Dismisses the welcome and starts the main HomeView animations
-    private func dismissIntegratedWelcome() {
         // Add welcome points
         userVM.addWelcomePoints { success, blockedReason in
             if success {
@@ -1398,25 +1227,6 @@ struct HomeView: View {
                     DebugLogger.debug("✅ Updated user status after welcome", category: "Home")
                 }
             }
-        }
-        
-        // Stop confetti timer
-        welcomeConfettiTimer?.invalidate()
-        welcomeConfettiTimer = nil
-        
-        // Mark welcome as complete
-        welcomeAnimationComplete = true
-        
-        // Fade out welcome overlay
-        withAnimation(.easeInOut(duration: 0.3)) {
-            showIntegratedWelcome = false
-        }
-        
-        // Start the normal HomeView animations after welcome fades
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            // Set initial points for animation (will animate from current)
-            animatedPoints = Double(userVM.points)
-            startSequentialAnimations()
         }
     }
     
@@ -1457,7 +1267,13 @@ struct HomeView: View {
             }
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                yourReservationAnimated = true
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
             withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                 reservationAnimated = true
             }
@@ -1492,6 +1308,34 @@ struct HomeView: View {
                 }
             }
         }
+        
+        // Check if walkthrough should show after all entrance animations complete
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            checkAndShowWalkthrough()
+        }
+    }
+    
+    // MARK: - App Walkthrough
+    
+    /// Checks if the user should see the app walkthrough and posts a notification to ContentView
+    private func checkAndShowWalkthrough() {
+        guard !userVM.hasCompletedIntroduction else {
+            DebugLogger.debug("📖 HomeView: Walkthrough already completed, skipping", category: "Home")
+            return
+        }
+        
+        // Don't show if user data is still loading
+        guard !userVM.isLoading else {
+            DebugLogger.debug("📖 HomeView: User still loading, skipping walkthrough check", category: "Home")
+            return
+        }
+        
+        // Ensure the hasCompletedIntroduction field exists in Firestore for pre-v1.1 accounts
+        // that don't have it yet. Safe to call because we only reach here when hasCompletedIntroduction is false.
+        userVM.ensureIntroductionFieldExists()
+        
+        DebugLogger.debug("📖 HomeView: Posting walkthrough notification to ContentView", category: "Home")
+        NotificationCenter.default.post(name: .showWalkthrough, object: nil)
     }
     
     private func startCountingAnimation(to finalValue: Double) {
@@ -1588,18 +1432,6 @@ struct HomeView: View {
     }
     
 
-}
-
-// MARK: - Welcome Confetti Model
-struct WelcomeConfettiPiece: Identifiable {
-    let id = UUID()
-    var x: Double
-    var y: Double
-    var rotation: Double
-    var scale: Double
-    var color: Color
-    var velocity: Double
-    var angularVelocity: Double
 }
 
 #Preview {
