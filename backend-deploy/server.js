@@ -6510,13 +6510,13 @@ IMPORTANT:
 
       const db = admin.firestore();
       const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
       const todayStr = today.toISOString().slice(0, 10); // YYYY-MM-DD
 
+      // Query by userId only to avoid Firestore composite index requirement
       const snapshot = await db.collection('reservations')
         .where('userId', '==', userContext.uid)
-        .where('date', '>=', todayStr)
-        .orderBy('date', 'asc')
-        .limit(10)
+        .limit(50)
         .get();
 
       const reservations = (snapshot.docs || [])
@@ -6539,11 +6539,13 @@ IMPORTANT:
             confirmedBy: d.confirmedBy || null
           };
         })
-        .filter((r) => r.status !== 'cancelled');
+        .filter((r) => r.status !== 'cancelled' && r.date >= todayStr)
+        .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+        .slice(0, 10);
 
       return res.json({ reservations });
     } catch (error) {
-      logger.error('❌ Error fetching user reservations:', error);
+      logger.error('❌ Error fetching user reservations:', error?.message || error, error?.stack);
       return res.status(500).json({ error: 'Failed to fetch reservations' });
     }
   });
