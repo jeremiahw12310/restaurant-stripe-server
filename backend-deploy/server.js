@@ -6628,6 +6628,21 @@ IMPORTANT:
       }
       await ref.update(update);
 
+      // Clear admin "new reservation" notifications for this reservation (v1.1 – they go away once acted on)
+      try {
+        const adminNotifsSnap = await db.collection('notifications').where('reservationId', '==', id).get();
+        const toDelete = adminNotifsSnap.docs.filter(d => (d.data().type || '') === 'reservation_new');
+        const BATCH_SIZE = 500;
+        for (let i = 0; i < toDelete.length; i += BATCH_SIZE) {
+          const batch = db.batch();
+          toDelete.slice(i, i + BATCH_SIZE).forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+        if (toDelete.length > 0) logger.info(`Cleared ${toDelete.length} reservation_new notification(s) for reservation ${id}`);
+      } catch (clearErr) {
+        logger.error('⚠️ Failed to clear admin reservation notifications:', clearErr);
+      }
+
       // Notify the customer about the status change
       try {
         const resData = doc.data();
@@ -6696,6 +6711,21 @@ IMPORTANT:
       const party = resData.partySize || 0;
 
       await ref.delete();
+
+      // Clear admin "new reservation" notifications for this reservation (v1.1 – they go away once acted on)
+      try {
+        const adminNotifsSnap = await db.collection('notifications').where('reservationId', '==', id).get();
+        const toDelete = adminNotifsSnap.docs.filter(d => (d.data().type || '') === 'reservation_new');
+        const BATCH_SIZE = 500;
+        for (let i = 0; i < toDelete.length; i += BATCH_SIZE) {
+          const batch = db.batch();
+          toDelete.slice(i, i + BATCH_SIZE).forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+        if (toDelete.length > 0) logger.info(`Cleared ${toDelete.length} reservation_new notification(s) for reservation ${id}`);
+      } catch (clearErr) {
+        logger.error('⚠️ Failed to clear admin reservation notifications:', clearErr);
+      }
 
       if (customerUid) {
         try {
