@@ -170,6 +170,46 @@ final class AdminReservationsViewModel: ObservableObject {
         updateStatus(id: id, status: "cancelled", onDone: onDone)
     }
 
+    func deleteReservation(id: String, onDone: @escaping (Bool) -> Void) {
+        guard Auth.auth().currentUser != nil else {
+            actionError = "Please sign in."
+            onDone(false)
+            return
+        }
+        Auth.auth().currentUser?.getIDToken { token, err in
+            if err != nil {
+                DispatchQueue.main.async {
+                    self.actionError = "Sign-in error."
+                    onDone(false)
+                }
+                return
+            }
+            guard let token = token,
+                  let url = URL(string: "\(Config.backendURL)/reservations/\(id)") else {
+                DispatchQueue.main.async {
+                    self.actionError = "Invalid configuration."
+                    onDone(false)
+                }
+                return
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "DELETE"
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            URLSession.shared.dataTask(with: request) { _, response, _ in
+                DispatchQueue.main.async {
+                    if let http = response as? HTTPURLResponse, http.statusCode == 200 {
+                        self.actionError = nil
+                        self.loadReservations()
+                        onDone(true)
+                    } else {
+                        self.actionError = "Failed to delete."
+                        onDone(false)
+                    }
+                }
+            }.resume()
+        }
+    }
+
     private func updateStatus(id: String, status: String, onDone: @escaping (Bool) -> Void) {
         guard Auth.auth().currentUser != nil else {
             actionError = "Please sign in."
@@ -306,14 +346,40 @@ struct AdminReservationsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var reservationsByDate: [(String, [AdminReservation])] {
+        let grouped = Dictionary(grouping: viewModel.reservations) { $0.date }
+        let sortedKeys = grouped.keys.sorted()
+        return sortedKeys.map { (key: $0, list: grouped[$0] ?? []) }
+    }
+
+    private func sectionTitle(for dateStr: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let d = formatter.date(from: dateStr) else { return dateStr }
+        if Calendar.current.isDateInToday(d) { return "Today" }
+        if Calendar.current.isDateInTomorrow(d) { return "Tomorrow" }
+        let display = DateFormatter()
+        display.dateFormat = "EEEE, MMM d"
+        return display.string(from: d)
+    }
+
     private var listContent: some View {
         ScrollView {
-            LazyVStack(spacing: 12) {
-                ForEach(viewModel.reservations) { res in
-                    ReservationRowView(
-                        reservation: res,
-                        viewModel: viewModel
-                    )
+            LazyVStack(alignment: .leading, spacing: 16) {
+                ForEach(reservationsByDate, id: \.0) { dateStr, reservations in
+                    Section {
+                        ForEach(reservations) { res in
+                            ReservationRowView(
+                                reservation: res,
+                                viewModel: viewModel
+                            )
+                        }
+                    } header: {
+                        Text(sectionTitle(for: dateStr))
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.secondary)
+                            .padding(.top, dateStr == reservationsByDate.first?.0 ? 0 : 8)
+                    }
                 }
                 if viewModel.hasMore && !viewModel.isLoading {
                     ProgressView()
@@ -337,8 +403,10 @@ struct ReservationRowView: View {
     @ObservedObject var viewModel: AdminReservationsViewModel
     @State private var isConfirming = false
     @State private var isCancelling = false
+    @State private var isDeleting = false
     @State private var showConfirmAlert = false
     @State private var showCancelAlert = false
+    @State private var showDeleteAlert = false
     @State private var showSuccessBanner = false
     @State private var successMessage = ""
 
@@ -421,6 +489,24 @@ struct ReservationRowView: View {
                     .disabled(isConfirming || isCancelling)
                 }
 
+                Button(action: { showDeleteAlert = true }) {
+                    HStack(spacing: 4) {
+                        if isDeleting {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "trash.fill")
+                            Text("Delete")
+                                .font(.caption.weight(.semibold))
+                        }
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.red))
+                }
+                .disabled(isConfirming || isCancelling || isDeleting)
+
                 if !reservation.phone.isEmpty,
                    let url = URL(string: "tel:\(reservation.phone.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? reservation.phone)") {
                     Button(action: { UIApplication.shared.open(url) }) {
@@ -478,6 +564,24 @@ struct ReservationRowView: View {
             Button("Go Back", role: .cancel) {}
         } message: {
             Text("Cancel \(reservation.customerName)'s reservation for \(reservation.date) at \(reservation.time)? The customer will be notified.")
+        }
+        .alert("Delete Reservation", isPresented: $showDeleteAlert) {
+            Button("Delete", role: .destructive) {
+                isDeleting = true
+                viewModel.deleteReservation(id: reservation.id) { success in
+                    isDeleting = false
+                    if success {
+                        successMessage = "Reservation deleted — customer has been notified"
+                        withAnimation { showSuccessBanner = true }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            withAnimation { showSuccessBanner = false }
+                        }
+                    }
+                }
+            }
+            Button("Go Back", role: .cancel) {}
+        } message: {
+            Text("Permanently delete this reservation? The customer can be notified.")
         }
     }
 

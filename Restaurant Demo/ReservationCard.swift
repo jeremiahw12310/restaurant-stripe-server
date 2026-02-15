@@ -25,17 +25,9 @@ struct ReservationCard: View {
                         .foregroundStyle(Theme.darkGoldGradient)
                 }
 
-                // Live indicator: seating status
+                // Seating status (no open/closed claim)
                 HStack(spacing: 6) {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 8, height: 8)
                     Text("Seating available")
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .foregroundColor(Theme.modernSecondary)
-                    Text("·")
-                        .foregroundColor(Theme.modernSecondary)
-                    Text("Open now")
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
                         .foregroundColor(Theme.modernSecondary)
                     Spacer()

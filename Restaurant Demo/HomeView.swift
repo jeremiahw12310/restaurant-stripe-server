@@ -70,6 +70,7 @@ struct HomeView: View {
     @State private var locationAnimated = false
     @State private var adminAnimated = false
     @State private var showReservationSheet = false
+    @State private var selectedReservationForDetail: UserReservation?
     @StateObject private var reservationVM = UserReservationViewModel()
     @State private var yourReservationAnimated = false
     // Back-compat convenience for read-only usages that haven’t been migrated yet
@@ -264,6 +265,17 @@ struct HomeView: View {
                         .padding(.top, 6)
                         .padding(.bottom, 4)
                         
+                        // MARK: - Your Reservation Status Card
+                        if let res = reservationVM.reservation {
+                            YourReservationCard(
+                                reservation: res,
+                                animate: $yourReservationAnimated,
+                                onTap: {
+                                    selectedReservationForDetail = res
+                                }
+                            )
+                        }
+                        
                         // MARK: - Gifted Reward Banner (if user has active gifts)
                         if let firstGift = activeGifts.first {
                             HomeGiftedRewardBannerCard(
@@ -308,11 +320,6 @@ struct HomeView: View {
                             .scaleEffect(crowdAnimated ? 1.0 : 0.8)
                             .opacity(crowdAnimated ? 1.0 : 0.0)
                             .animation(.spring(response: 0.6, dampingFraction: 0.8), value: crowdAnimated)
-                        
-                        // MARK: - Your Reservation Status Card
-                        if let res = reservationVM.reservation {
-                            YourReservationCard(reservation: res, animate: $yourReservationAnimated)
-                        }
                         
                         // MARK: - Reservation Card
                         ReservationCard(animate: $reservationAnimated) {
@@ -594,6 +601,18 @@ struct HomeView: View {
         }) {
             ReservationSheetView()
                 .environmentObject(userVM)
+        }
+        .sheet(item: $selectedReservationForDetail, onDismiss: {
+            reservationVM.load()
+        }) { res in
+            ReservationDetailView(
+                reservation: res,
+                onDismiss: { selectedReservationForDetail = nil },
+                onCancelSuccess: {
+                    reservationVM.load()
+                    selectedReservationForDetail = nil
+                }
+            )
         }
         .sheet(isPresented: $showRewardsScan) {
             AdminRewardsScanView()
@@ -1254,6 +1273,13 @@ struct HomeView: View {
             }
         }
         
+        // Your Reservation card (under Just For You, above carousel)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                yourReservationAnimated = true
+            }
+        }
+        
         // Animate rewards card
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
@@ -1264,12 +1290,6 @@ struct HomeView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
             withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                 crowdAnimated = true
-            }
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
-            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                yourReservationAnimated = true
             }
         }
 

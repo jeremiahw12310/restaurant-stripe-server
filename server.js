@@ -4388,6 +4388,49 @@ IMPORTANT:
   });
 
   /**
+   * PATCH /reservations/mine/:id
+   * Authenticated user. Cancel own reservation only (status: "cancelled"). Ownership required.
+   */
+  app.patch('/reservations/mine/:id', async (req, res) => {
+    try {
+      const userContext = await requireUser(req, res);
+      if (!userContext) return;
+
+      const id = (req.params.id || '').toString().trim();
+      if (!id) return res.status(400).json({ error: 'Reservation id is required' });
+
+      const { status } = req.body || {};
+      if (!status || typeof status !== 'string' || status.trim().toLowerCase() !== 'cancelled') {
+        return res.status(400).json({ error: 'Only status "cancelled" is allowed for self-service' });
+      }
+
+      const db = admin.firestore();
+      const ref = db.collection('reservations').doc(id);
+      const doc = await ref.get();
+      if (!doc.exists) return res.status(404).json({ error: 'Reservation not found' });
+
+      const data = doc.data();
+      if (data.userId !== userContext.uid) {
+        return res.status(403).json({ error: 'Not your reservation' });
+      }
+      if (data.status === 'cancelled') {
+        return res.status(400).json({ error: 'Reservation is already cancelled' });
+      }
+
+      await ref.update({
+        status: 'cancelled',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      console.log(`✅ Reservation ${id} cancelled by owner ${userContext.uid}`);
+      return res.status(200).json({ id, status: 'cancelled' });
+    } catch (error) {
+      console.error('❌ Error cancelling reservation (mine):', error);
+      return res.status(500).json({ error: 'Failed to cancel reservation' });
+    }
+  });
+
+  /**
    * PATCH /reservations/:id
    * Admin only. Update status to confirmed or cancelled; optional notes.
    */
@@ -4463,6 +4506,134 @@ IMPORTANT:
     } catch (error) {
       console.error('❌ Error updating reservation:', error);
       return res.status(500).json({ error: 'Failed to update reservation' });
+    }
+  });
+
+  /**
+   * DELETE /reservations/:id
+   * Admin only. Permanently remove the reservation document. Optionally notify the customer.
+   */
+  app.delete('/reservations/:id', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const id = (req.params.id || '').toString().trim();
+      if (!id) return res.status(400).json({ error: 'Reservation id is required' });
+
+      const db = admin.firestore();
+      const ref = db.collection('reservations').doc(id);
+      const doc = await ref.get();
+      if (!doc.exists) return res.status(404).json({ error: 'Reservation not found' });
+
+      const resData = doc.data();
+      const customerUid = resData.userId;
+      const dateStr = resData.date || '';
+      const timeStr = resData.time || '';
+      const party = resData.partySize || 0;
+
+      await ref.delete();
+
+      if (customerUid) {
+        try {
+          await db.collection('notifications').add({
+            userId: customerUid,
+            title: 'Reservation Removed',
+            body: `Your reservation for ${party} on ${dateStr} at ${timeStr} has been removed. Please contact us with any questions.`,
+            type: 'reservation_cancelled',
+            read: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            reservationId: id
+          });
+        } catch (notifErr) {
+          console.error('⚠️ Failed to send reservation-deleted notification:', notifErr);
+        }
+      }
+
+      console.log(`✅ Reservation ${id} deleted by admin ${adminContext.uid}`);
+      return res.status(200).json({ id, deleted: true });
+    } catch (error) {
+      console.error('❌ Error deleting reservation:', error);
+      return res.status(500).json({ error: 'Failed to delete reservation' });
+    }
+  });
+
+  /**
+   * POST /cron/reservation-reminders
+   * Cron-only. Sends day-before and day-of in-app reminders for reservations.
+   * Secured by CRON_SECRET (header X-Cron-Secret or Authorization: Bearer <secret>).
+   */
+  app.post('/cron/reservation-reminders', async (req, res) => {
+    const secret = process.env.CRON_SECRET || '';
+    const headerSecret = req.headers['x-cron-secret'] || '';
+    const authHeader = req.headers.authorization || '';
+    const bearerSecret = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    if (!secret || (headerSecret !== secret && bearerSecret !== secret)) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    try {
+      const db = admin.firestore();
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0, 10);
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+
+      let dayBeforeCount = 0;
+      let dayOfCount = 0;
+
+      const tomorrowSnap = await db.collection('reservations')
+        .where('date', '==', tomorrowStr)
+        .limit(100)
+        .get();
+
+      for (const doc of tomorrowSnap.docs) {
+        const d = doc.data();
+        if (d.status === 'cancelled' || d.reminderDayBeforeSent === true) continue;
+        const userId = d.userId;
+        if (!userId) continue;
+        await db.collection('notifications').add({
+          userId,
+          title: 'Reservation Reminder',
+          body: `Your table for ${d.partySize || 0} is reserved for tomorrow, ${tomorrowStr} at ${d.time || ''}. See you then!`,
+          type: 'reservation_confirmed',
+          read: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          reservationId: doc.id
+        });
+        await doc.ref.update({ reminderDayBeforeSent: true });
+        dayBeforeCount++;
+      }
+
+      const todaySnap = await db.collection('reservations')
+        .where('date', '==', todayStr)
+        .limit(100)
+        .get();
+
+      for (const doc of todaySnap.docs) {
+        const d = doc.data();
+        if (d.status === 'cancelled' || d.reminderDayOfSent === true) continue;
+        const userId = d.userId;
+        if (!userId) continue;
+        await db.collection('notifications').add({
+          userId,
+          title: 'Reservation Today',
+          body: `Your reservation is today at ${d.time || ''} for ${d.partySize || 0}. We look forward to seeing you!`,
+          type: 'reservation_confirmed',
+          read: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          reservationId: doc.id
+        });
+        await doc.ref.update({ reminderDayOfSent: true });
+        dayOfCount++;
+      }
+
+      console.log(`✅ Reservation reminders: ${dayBeforeCount} day-before, ${dayOfCount} day-of`);
+      return res.json({ ok: true, dayBeforeCount, dayOfCount });
+    } catch (error) {
+      console.error('❌ Error sending reservation reminders:', error);
+      return res.status(500).json({ error: 'Failed to send reminders' });
     }
   });
 

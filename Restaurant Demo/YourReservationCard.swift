@@ -18,6 +18,7 @@ struct UserReservation: Identifiable {
     let partySize: Int
     let status: String    // "pending" | "confirmed"
     let specialRequests: String?
+    let phone: String?
 
     /// Friendly formatted date, e.g. "Saturday, Feb 14"
     var formattedDate: String {
@@ -45,6 +46,31 @@ struct UserReservation: Identifiable {
         let today = Calendar.current.startOfDay(for: Date())
         let target = Calendar.current.startOfDay(for: d)
         return max(0, Calendar.current.dateComponents([.day], from: today, to: target).day ?? 0)
+    }
+
+    /// Full date and time of the reservation (day from date, time from time string). Nil if unparseable.
+    var reservationDateTime: Date? {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        guard let dayStart = dateFormatter.date(from: date) else { return nil }
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "h:mm a"
+        timeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        guard let timeDate = timeFormatter.date(from: time) else { return nil }
+        let cal = Calendar.current
+        let hour = cal.component(.hour, from: timeDate)
+        let minute = cal.component(.minute, from: timeDate)
+        return cal.date(bySettingHour: hour, minute: minute, second: 0, of: dayStart)
+    }
+
+    /// When it's today and reservation time is in the future, (hours, minutes) until reservation. Nil otherwise.
+    var countdownHoursAndMinutes: (Int, Int)? {
+        guard isToday, let target = reservationDateTime, target > Date() else { return nil }
+        let components = Calendar.current.dateComponents([.hour, .minute], from: Date(), to: target)
+        let h = components.hour ?? 0
+        let m = components.minute ?? 0
+        return (h, m)
     }
 }
 
@@ -97,7 +123,8 @@ final class UserReservationViewModel: ObservableObject {
                         time: first["time"] as? String ?? "",
                         partySize: first["partySize"] as? Int ?? 1,
                         status: first["status"] as? String ?? "pending",
-                        specialRequests: first["specialRequests"] as? String
+                        specialRequests: first["specialRequests"] as? String,
+                        phone: first["phone"] as? String
                     )
                 }
             }.resume()
@@ -134,6 +161,7 @@ private enum ReservationStep: Int, CaseIterable {
 struct YourReservationCard: View {
     let reservation: UserReservation
     @Binding var animate: Bool
+    var onTap: (() -> Void)? = nil
 
     /// Which step index is currently completed (inclusive).
     private var completedStep: Int {
@@ -147,7 +175,7 @@ struct YourReservationCard: View {
 
     private var statusMessage: String {
         if reservation.status == "confirmed" && reservation.isToday {
-            return "Today's the day! Your table is ready."
+            return "Today's the day!"
         } else if reservation.status == "confirmed" {
             let days = reservation.daysUntil
             if days == 1 {
@@ -167,7 +195,7 @@ struct YourReservationCard: View {
         return "clock.fill"
     }
 
-    var body: some View {
+    private var cardContent: some View {
         VStack(spacing: 20) {
             // MARK: Header
             HStack {
@@ -187,6 +215,54 @@ struct YourReservationCard: View {
             // MARK: Reservation Details
             detailsRow
 
+            // MARK: Day-of countdown (updates every minute)
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                let now = context.date
+                if reservation.isToday,
+                   let target = reservation.reservationDateTime,
+                   target > now {
+                    let components = Calendar.current.dateComponents([.hour, .minute], from: now, to: target)
+                    let h = components.hour ?? 0
+                    let m = components.minute ?? 0
+                    let countdownText: String = {
+                        if h > 0 {
+                            return "In \(h)h \(m)m"
+                        } else if m > 0 {
+                            return "In \(m) minute\(m == 1 ? "" : "s")"
+                        } else {
+                            return "Coming up soon"
+                        }
+                    }()
+                    HStack(spacing: 8) {
+                        Image(systemName: "clock.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Theme.darkGoldGradient)
+                        Text(countdownText)
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .foregroundStyle(Theme.darkGoldGradient)
+                        Spacer()
+                    }
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Theme.primaryGold.opacity(0.12))
+                    )
+                } else if reservation.isToday,
+                          let target = reservation.reservationDateTime,
+                          target <= now {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(Theme.energyGreen)
+                        Text("Your reservation time was today")
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .foregroundColor(Theme.modernSecondary)
+                        Spacer()
+                    }
+                }
+            }
+
             // MARK: Status Message
             HStack(spacing: 8) {
                 Image(systemName: statusIcon)
@@ -199,6 +275,32 @@ struct YourReservationCard: View {
                     .lineLimit(2)
 
                 Spacer()
+            }
+
+            // Tap to view hint (only when tappable)
+            if onTap != nil {
+                HStack(spacing: 4) {
+                    Text("Tap to view")
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundColor(Theme.modernSecondary)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(Theme.modernSecondary)
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    var body: some View {
+        Group {
+            if let action = onTap {
+                Button(action: action) {
+                    cardContent
+                }
+                .buttonStyle(.plain)
+            } else {
+                cardContent
             }
         }
         .padding(24)
@@ -336,7 +438,8 @@ struct YourReservationCard: View {
                     time: "6:30 PM",
                     partySize: 4,
                     status: "pending",
-                    specialRequests: nil
+                    specialRequests: nil,
+                    phone: nil
                 ),
                 animate: .constant(true)
             )
@@ -348,7 +451,8 @@ struct YourReservationCard: View {
                     time: "7:00 PM",
                     partySize: 2,
                     status: "confirmed",
-                    specialRequests: nil
+                    specialRequests: nil,
+                    phone: nil
                 ),
                 animate: .constant(true)
             )
