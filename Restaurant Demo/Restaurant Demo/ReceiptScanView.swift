@@ -1330,20 +1330,20 @@ struct CameraViewWithOverlay: View {
                             ZStack {
                                 // Phase 1: random whimsical line (fades out when second play starts)
                                 Text(whimsicalLine.isEmpty ? "Loading…" : whimsicalLine)
-                                    .font(.system(size: 26, weight: .black, design: .rounded))
+                                    .font(.system(size: 22, weight: .black, design: .rounded))
                                     .foregroundStyle(Theme.darkGoldGradient)
                                     .opacity(videoLoopCount == 0 ? 1 : 0)
                                     .animation(.easeInOut(duration: 0.4), value: videoLoopCount)
                                 // Phase 2: "Almost done" with same gradient gold
                                 Text("Almost done")
-                                    .font(.system(size: 26, weight: .black, design: .rounded))
+                                    .font(.system(size: 22, weight: .black, design: .rounded))
                                     .foregroundStyle(Theme.darkGoldGradient)
                                     .opacity(videoLoopCount >= 1 ? 1 : 0)
                                     .animation(.easeInOut(duration: 0.4), value: videoLoopCount)
                             }
                             .padding(.horizontal, 24)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .offset(y: -geometry.size.height * 0.05)
+                            .offset(y: 0)
                         }
                     }
                     .allowsHitTesting(false)

@@ -10681,7 +10681,6 @@ IMPORTANT:
         safeCount(
           db.collection('redeemedRewards')
             .where('isUsed', '==', true)
-            .where('deletedByAdmin', '!=', true)
             .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
             .where('usedAt', '<', admin.firestore.Timestamp.fromDate(nextMonthStart))
             .count()
@@ -10691,7 +10690,6 @@ IMPORTANT:
         safeCount(
           db.collection('redeemedRewards')
             .where('isUsed', '==', true)
-            .where('deletedByAdmin', '!=', true)
             .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(todayStart))
             .where('usedAt', '<', admin.firestore.Timestamp.fromDate(tomorrowStart))
             .count()
@@ -10791,7 +10789,6 @@ IMPORTANT:
       while (hasMore) {
         let query = db.collection('redeemedRewards')
           .where('isUsed', '==', true)
-          .where('deletedByAdmin', '!=', true)
           .orderBy('usedAt', 'desc')
           .select('usedAt') // Only fetch the usedAt field to minimize data transfer
           .limit(batchSize);
@@ -10897,10 +10894,9 @@ IMPORTANT:
       const monthStart = new Date(Date.UTC(year, monthNum - 1, 1, 0, 0, 0, 0));
       const monthEnd = new Date(Date.UTC(year, monthNum, 1, 0, 0, 0, 0)); // First day of next month
 
-      // Build query - exclude admin-deleted rewards
+      // Build query (deletedByAdmin filtered in-memory - Firestore disallows != with range on different fields)
       let query = db.collection('redeemedRewards')
         .where('isUsed', '==', true)
-        .where('deletedByAdmin', '!=', true)
         .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
         .where('usedAt', '<', admin.firestore.Timestamp.fromDate(monthEnd))
         .orderBy('usedAt', 'desc')
@@ -10916,7 +10912,8 @@ IMPORTANT:
 
       const rewardsSnapshot = await query.get();
       const hasMore = rewardsSnapshot.size > limit;
-      const rewardsDocs = hasMore ? rewardsSnapshot.docs.slice(0, limit) : rewardsSnapshot.docs;
+      const rawDocs = hasMore ? rewardsSnapshot.docs.slice(0, limit) : rewardsSnapshot.docs;
+      const rewardsDocs = rawDocs.filter(doc => doc.data().deletedByAdmin !== true);
 
       // Get all unique user IDs
       const userIds = [...new Set(rewardsDocs.map(doc => doc.data().userId).filter(Boolean))];
@@ -10953,7 +10950,6 @@ IMPORTANT:
       while (summaryHasMore) {
         let summaryQuery = db.collection('redeemedRewards')
           .where('isUsed', '==', true)
-          .where('deletedByAdmin', '!=', true)
           .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
           .where('usedAt', '<', admin.firestore.Timestamp.fromDate(monthEnd))
           .select('pointsRequired', 'userId') // Only fetch needed fields
@@ -11052,7 +11048,6 @@ IMPORTANT:
       while (summaryHasMore) {
         let summaryQuery = db.collection('redeemedRewards')
           .where('isUsed', '==', true)
-          .where('deletedByAdmin', '!=', true)
           .orderBy('usedAt', 'desc') // Required for startAfter pagination
           .select('pointsRequired', 'userId') // Only fetch needed fields
           .limit(summaryBatchSize);
@@ -11110,10 +11105,9 @@ IMPORTANT:
 
       const db = admin.firestore();
 
-      // Build query - SAME as monthly but NO date filter, exclude admin-deleted
+      // Build query - SAME as monthly but NO date filter (deletedByAdmin filtered in-memory)
       let query = db.collection('redeemedRewards')
         .where('isUsed', '==', true)
-        .where('deletedByAdmin', '!=', true)
         .orderBy('usedAt', 'desc')
         .limit(limit + 1); // Fetch one extra to check if there's more
 
@@ -11127,7 +11121,8 @@ IMPORTANT:
 
       const rewardsSnapshot = await query.get();
       const hasMore = rewardsSnapshot.size > limit;
-      const rewardsDocs = hasMore ? rewardsSnapshot.docs.slice(0, limit) : rewardsSnapshot.docs;
+      const rawDocs = hasMore ? rewardsSnapshot.docs.slice(0, limit) : rewardsSnapshot.docs;
+      const rewardsDocs = rawDocs.filter(doc => doc.data().deletedByAdmin !== true);
 
       // Get all unique user IDs
       const userIds = [...new Set(rewardsDocs.map(doc => doc.data().userId).filter(Boolean))];
@@ -11162,7 +11157,6 @@ IMPORTANT:
       while (summaryHasMore) {
         let summaryQuery = db.collection('redeemedRewards')
           .where('isUsed', '==', true)
-          .where('deletedByAdmin', '!=', true)
           .orderBy('usedAt', 'desc') // Required for startAfter pagination
           .select('pointsRequired', 'userId')
           .limit(summaryBatchSize);
@@ -11257,10 +11251,9 @@ IMPORTANT:
       const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0, 0));
       const nextYearStart = new Date(Date.UTC(now.getUTCFullYear() + 1, 0, 1, 0, 0, 0, 0));
 
-      // Build query - SAME as monthly but with year boundaries, exclude admin-deleted
+      // Build query - SAME as monthly but with year boundaries (deletedByAdmin filtered in-memory)
       let query = db.collection('redeemedRewards')
         .where('isUsed', '==', true)
-        .where('deletedByAdmin', '!=', true)
         .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(yearStart))
         .where('usedAt', '<', admin.firestore.Timestamp.fromDate(nextYearStart))
         .orderBy('usedAt', 'desc')
@@ -11276,7 +11269,8 @@ IMPORTANT:
 
       const rewardsSnapshot = await query.get();
       const hasMore = rewardsSnapshot.size > limit;
-      const rewardsDocs = hasMore ? rewardsSnapshot.docs.slice(0, limit) : rewardsSnapshot.docs;
+      const rawDocs = hasMore ? rewardsSnapshot.docs.slice(0, limit) : rewardsSnapshot.docs;
+      const rewardsDocs = rawDocs.filter(doc => doc.data().deletedByAdmin !== true);
 
       // Get all unique user IDs
       const userIds = [...new Set(rewardsDocs.map(doc => doc.data().userId).filter(Boolean))];
@@ -11311,7 +11305,6 @@ IMPORTANT:
       while (summaryHasMore) {
         let summaryQuery = db.collection('redeemedRewards')
           .where('isUsed', '==', true)
-          .where('deletedByAdmin', '!=', true)
           .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(yearStart))
           .where('usedAt', '<', admin.firestore.Timestamp.fromDate(nextYearStart))
           .orderBy('usedAt', 'desc') // Required for startAfter pagination
