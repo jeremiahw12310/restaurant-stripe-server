@@ -214,7 +214,7 @@ private struct ReservationStepIndicator: View {
                 }
             }
             .frame(height: 4)
-            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: currentStep)
+            .animation(.spring(response: 0.48, dampingFraction: 0.88), value: currentStep)
 
             // Step circles with connectors
             HStack(spacing: 0) {
@@ -291,7 +291,7 @@ private struct ReservationStepIndicator: View {
                 )
                 .shadow(color: Theme.cardShadow.opacity(0.5), radius: 8, x: 0, y: 4)
         )
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: currentStep)
+        .animation(.spring(response: 0.48, dampingFraction: 0.88), value: currentStep)
     }
 }
 
@@ -400,20 +400,28 @@ struct ReservationSheetView: View {
                     ReservationSuccessView(onDone: { dismiss() })
                         .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 } else {
-                    ScrollView {
-                        VStack(spacing: 24) {
-                            ReservationStepIndicator(currentStep: currentStep)
-                            stepContent
-                            if let msg = viewModel.errorMessage {
-                                Text(msg)
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundColor(.red)
-                                    .multilineTextAlignment(.center)
-                                    .padding(.horizontal)
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            VStack(spacing: 24) {
+                                ReservationStepIndicator(currentStep: currentStep)
+                                    .id("reservationScrollTop")
+                                stepContent
+                                if let msg = viewModel.errorMessage {
+                                    Text(msg)
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(.red)
+                                        .multilineTextAlignment(.center)
+                                        .padding(.horizontal)
+                                }
+                                stepActions
                             }
-                            stepActions
+                            .padding(24)
                         }
-                        .padding(24)
+                        .onChange(of: currentStep) { _, _ in
+                            withAnimation(.easeOut(duration: 0.25)) {
+                                proxy.scrollTo("reservationScrollTop", anchor: .top)
+                            }
+                        }
                     }
                     .transition(.opacity)
                 }
@@ -452,21 +460,21 @@ struct ReservationSheetView: View {
             switch currentStep {
             case 0:
                 whenStep
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+                    .transition(.opacity)
             case 1:
                 partyStep
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+                    .transition(.opacity)
             case 2:
                 contactStep
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+                    .transition(.opacity)
             case 3:
                 confirmStep
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+                    .transition(.opacity)
             default:
                 whenStep
             }
         }
-        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: currentStep)
+        .animation(.spring(response: 0.48, dampingFraction: 0.88), value: currentStep)
     }
 
     // MARK: - Step 0: When
@@ -493,6 +501,7 @@ struct ReservationSheetView: View {
                 DatePicker("Date", selection: $viewModel.date, in: Date()..., displayedComponents: .date)
                     .datePickerStyle(.graphical)
                     .tint(Theme.primaryGold)
+                    .onTapGesture(count: 99) { }
             }
             .padding(20)
             .background(
@@ -723,6 +732,8 @@ struct ReservationSheetView: View {
                     TextField("Dietary needs, high chair, etc.", text: $viewModel.specialRequests, axis: .vertical)
                         .font(.system(size: 15, weight: .medium, design: .rounded))
                         .focused($requestsFieldFocused)
+                        .submitLabel(.done)
+                        .onSubmit { requestsFieldFocused = false }
                         .lineLimit(3...6)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
@@ -837,6 +848,10 @@ struct ReservationSheetView: View {
             if currentStep > 0 {
                 Button(action: {
                     viewModel.errorMessage = nil
+                    nameFieldFocused = false
+                    phoneFieldFocused = false
+                    emailFieldFocused = false
+                    requestsFieldFocused = false
                     withAnimation { currentStep -= 1 }
                 }) {
                     Text("Back")

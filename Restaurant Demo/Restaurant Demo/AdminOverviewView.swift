@@ -16,6 +16,7 @@ struct AdminOverviewView: View {
     @State private var showBannedHistory = false
     @State private var showSendRewards = false
     @State private var showReservations = false
+    @State private var openReservationsWithPendingFilter = false
 
     // View all analytics sheet
     @State private var showAllAnalytics = false
@@ -57,7 +58,12 @@ struct AdminOverviewView: View {
                                 )
                             }
                             .buttonStyle(PlainButtonStyle())
-                            
+
+                            // Gold card: new reservation(s) when pending count > 0
+                            if viewModel.pendingReservationsCount > 0 {
+                                newReservationGoldCard
+                            }
+
                             // Organized action sections
                             organizedActions
                             
@@ -146,8 +152,11 @@ struct AdminOverviewView: View {
             .sheet(isPresented: $showSendRewards) {
                 AdminSendRewardsView()
             }
-            .sheet(isPresented: $showReservations) {
-                AdminReservationsView()
+            .sheet(isPresented: $showReservations, onDismiss: {
+                openReservationsWithPendingFilter = false
+                Task { await viewModel.loadPendingReservationsCount() }
+            }) {
+                AdminReservationsView(initialFilter: openReservationsWithPendingFilter ? .pending : nil)
             }
             .sheet(isPresented: $showAllAnalytics) {
                 AllAnalyticsView(
@@ -293,6 +302,45 @@ struct AdminOverviewView: View {
         return "\(number)"
     }
     
+    // MARK: - New reservation gold card (pending count > 0)
+
+    private var newReservationGoldCard: some View {
+        Button {
+            openReservationsWithPendingFilter = true
+            showReservations = true
+        } label: {
+            HStack(spacing: 16) {
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.25))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(viewModel.pendingReservationsCount == 1 ? "New reservation" : "\(viewModel.pendingReservationsCount) new reservations")
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                    Text("Tap to review")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.9))
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.9))
+            }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Theme.darkGoldGradient)
+                    .shadow(color: Theme.goldShadow, radius: 8, x: 0, y: 4)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
     // MARK: - Organized Actions (3 grouped sections)
     
     private var organizedActions: some View {
@@ -304,7 +352,10 @@ struct AdminOverviewView: View {
                 subtitle: "View and confirm table reservations",
                 icon: "calendar.badge.clock",
                 gradient: [.teal, .mint]
-            ) { showReservations = true }
+            ) {
+                openReservationsWithPendingFilter = false
+                showReservations = true
+            }
             
             // Customers & Receipts
             actionSectionHeader(title: "Customers & Receipts", icon: "person.3.fill", color: .blue)

@@ -122,26 +122,17 @@ struct ContentView: View {
                 preloadReferralCodeForAuthenticatedUser()
                 consumePendingReferralCodeIfPresent()
                 maybeShowNotificationPrePromptIfNeeded()
-                // Show pending reward QR on cold start (didBecomeActive may fire before ContentView exists)
-                if sharedRewardsVM.showPendingRewardQRIfNeeded() {
-                    selectedTab = 3
-                }
-                // Check for unseen gifted rewards and show popup for all users
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    checkForUnseenGiftedRewards()
-                }
-                // Give notification listener time to update, then check for unread popup
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                    checkForUnreadNotificationsPopup()
+                // Defer reward/unread/QR popups until after notification permission flow (so they don't overtake the system dialog).
+                // Use notificationService flags so the closure sees current values when it runs (not stale @State).
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [notificationService] in
+                    guard !notificationService.isPrePromptSheetVisible, !notificationService.isRequestingPermission else { return }
+                    runDeferredPopups()
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
                 maybeShowNotificationPrePromptIfNeeded()
-                checkForUnseenGiftedRewards()
-                checkForUnreadNotificationsPopup()
-                if sharedRewardsVM.showPendingRewardQRIfNeeded() {
-                    selectedTab = 3
-                }
+                guard !notificationService.isPrePromptSheetVisible, !notificationService.isRequestingPermission else { return }
+                runDeferredPopups()
             }
             .onReceive(NotificationCenter.default.publisher(for: .incomingReferralCode)) { notif in
                 let code = (notif.userInfo?["code"] as? String) ?? ""
@@ -194,8 +185,14 @@ struct ContentView: View {
             }
             .animation(.easeInOut(duration: 0.3), value: showWalkthrough)
         )
-        .sheet(isPresented: $showNotificationPrePrompt) {
+        .sheet(isPresented: $showNotificationPrePrompt, onDismiss: {
+            notificationService.isPrePromptSheetVisible = false
+            runDeferredPopups()
+        }) {
             NotificationPrePermissionView()
+        }
+        .onChange(of: showNotificationPrePrompt) { _, visible in
+            notificationService.isPrePromptSheetVisible = visible
         }
         .sheet(isPresented: $showReferralSheet) {
             ReferralView(initialCode: referralSheetCode)
@@ -347,6 +344,15 @@ struct ContentView: View {
     }
     
     // MARK: - Notification Pre-Permission Prompt
+
+    /// Run pending reward QR, gifted reward alert, and unread notifications popup. Call when permission flow is not active or after pre-prompt sheet dismisses.
+    private func runDeferredPopups() {
+        if sharedRewardsVM.showPendingRewardQRIfNeeded() {
+            selectedTab = 3
+        }
+        checkForUnseenGiftedRewards()
+        checkForUnreadNotificationsPopup()
+    }
     
     private func notificationPrePromptShownKey(for uid: String) -> String {
         "notification_preprompt_shown_v1_\(uid)"

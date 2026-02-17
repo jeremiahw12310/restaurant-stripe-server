@@ -6,6 +6,9 @@ struct AdminUserDetailView: View {
     @StateObject private var viewModel: AdminUserDetailViewModel
     @State private var showAllTransactions: Bool = false
     @State private var isEditing: Bool = false
+    @State private var giftToRevoke: GiftedReward?
+    @State private var revokeError: String?
+    @State private var revokeSuccess: Bool = false
 
     init(user: UserAccount) {
         _viewModel = StateObject(wrappedValue: AdminUserDetailViewModel(user: user))
@@ -49,6 +52,7 @@ struct AdminUserDetailView: View {
                                 accountFlagsSection
                             }
                             rewardsHistorySection
+                            giftedRewardsSection
                             dietarySection
                             referralSection
                             banSection
@@ -306,6 +310,86 @@ struct AdminUserDetailView: View {
             RoundedRectangle(cornerRadius: 18)
                 .fill(Color(red: 0.11, green: 0.11, blue: 0.15))
         )
+    }
+
+    private var giftedRewardsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Gifted Rewards")
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+
+            if viewModel.giftedRewards.isEmpty {
+                Text("No gifted rewards.")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundColor(.white.opacity(0.7))
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(viewModel.giftedRewards) { gift in
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(gift.rewardTitle)
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.white)
+                                if !gift.rewardDescription.isEmpty {
+                                    Text(gift.rewardDescription)
+                                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                                        .foregroundColor(.white.opacity(0.75))
+                                        .lineLimit(2)
+                                }
+                                if let expiresAt = gift.expiresAt {
+                                    Text("Expires \(expiresAt, style: .date)")
+                                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                                        .foregroundColor(.white.opacity(0.6))
+                                }
+                            }
+                            Spacer(minLength: 8)
+                            Button(action: { giftToRevoke = gift }) {
+                                Text("Remove")
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.red)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                        .padding(12)
+                        .background(Color.white.opacity(0.06))
+                        .cornerRadius(12)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 18)
+                .fill(Color(red: 0.11, green: 0.11, blue: 0.15))
+        )
+        .alert(item: $giftToRevoke) { gift in
+            Alert(
+                title: Text("Remove gifted reward?"),
+                message: Text("Remove this gifted reward for this user? They will no longer see it."),
+                primaryButton: .cancel(Text("Cancel"), action: { giftToRevoke = nil }),
+                secondaryButton: .destructive(Text("Remove")) {
+                    giftToRevoke = nil
+                    viewModel.revokeGift(giftedRewardId: gift.id) { success, message in
+                        if success {
+                            revokeSuccess = true
+                            revokeError = nil
+                        } else {
+                            revokeError = message
+                        }
+                    }
+                }
+            )
+        }
+        .alert("Removed", isPresented: $revokeSuccess) {
+            Button("OK") { revokeSuccess = false }
+        } message: {
+            Text("The gifted reward has been removed for this user.")
+        }
+        .alert("Error", isPresented: Binding(get: { revokeError != nil }, set: { if !$0 { revokeError = nil } })) {
+            Button("OK") { revokeError = nil }
+        } message: {
+            Text(revokeError ?? "")
+        }
     }
 
     private var dietarySection: some View {

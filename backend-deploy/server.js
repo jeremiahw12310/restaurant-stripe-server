@@ -9416,6 +9416,12 @@ IMPORTANT:
           continue;
         }
 
+        // Skip if this user was revoked (v1.1 admin revoke)
+        const revokedUserIds = data.revokedUserIds || [];
+        if (revokedUserIds.includes(uid)) {
+          continue;
+        }
+
         // Check expiration
         if (data.expiresAt) {
           const expiresAt = data.expiresAt.toDate();
@@ -9490,6 +9496,215 @@ IMPORTANT:
     } catch (error) {
       logger.error('❌ Error fetching gifted rewards:', error);
       res.status(500).json({ error: 'Failed to fetch gifted rewards' });
+    }
+  });
+
+  /**
+   * GET /admin/users/:userId/gifted-rewards
+   * Admin only. Returns the same gifted-rewards list that the given user would see from /me/gifted-rewards.
+   */
+  app.get('/admin/users/:userId/gifted-rewards', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const targetUserId = (req.params.userId || '').toString().trim();
+      if (!targetUserId) {
+        return res.status(400).json({ error: 'userId is required' });
+      }
+
+      const db = admin.firestore();
+      const uid = targetUserId;
+
+      // Get broadcast gifts (active, not expired)
+      const broadcastGiftsSnapshot = await db.collection('giftedRewards')
+        .where('type', '==', 'broadcast')
+        .where('isActive', '==', true)
+        .get();
+
+      // Get individual gifts for this user
+      const individualGiftsSnapshot = await db.collection('giftedRewards')
+        .where('type', '==', 'individual')
+        .where('targetUserIds', 'array-contains', uid)
+        .where('isActive', '==', true)
+        .get();
+
+      // Get user's existing claims
+      const claimsSnapshot = await db.collection('giftedRewardClaims')
+        .where('userId', '==', uid)
+        .get();
+
+      const claimMap = new Map();
+      const giftsWithInvalidClaims = new Set();
+      for (const doc of claimsSnapshot.docs) {
+        const data = doc.data();
+        if (data.giftedRewardId) {
+          if (data.redeemedRewardId) {
+            if (!claimMap.has(data.giftedRewardId)) {
+              claimMap.set(data.giftedRewardId, []);
+            }
+            claimMap.get(data.giftedRewardId).push(data.redeemedRewardId);
+          } else {
+            giftsWithInvalidClaims.add(data.giftedRewardId);
+          }
+        }
+      }
+
+      const allRedeemedRewardIds = [];
+      for (const redeemedRewardIds of claimMap.values()) {
+        allRedeemedRewardIds.push(...redeemedRewardIds);
+      }
+      const redeemedRewardsMap = new Map();
+      if (allRedeemedRewardIds.length > 0) {
+        const batchSize = 30;
+        for (let i = 0; i < allRedeemedRewardIds.length; i += batchSize) {
+          const batch = allRedeemedRewardIds.slice(i, i + batchSize);
+          const redeemedSnapshot = await db.collection('redeemedRewards')
+            .where(admin.firestore.FieldPath.documentId(), 'in', batch)
+            .get();
+          for (const redeemedDoc of redeemedSnapshot.docs) {
+            redeemedRewardsMap.set(redeemedDoc.id, redeemedDoc.data());
+          }
+        }
+      }
+
+      const claimedGiftIds = new Set(giftsWithInvalidClaims);
+      for (const [giftId, redeemedRewardIds] of claimMap.entries()) {
+        let hasActiveOrUsedRedemption = false;
+        for (const redeemedRewardId of redeemedRewardIds) {
+          const rewardData = redeemedRewardsMap.get(redeemedRewardId);
+          if (!rewardData) {
+            hasActiveOrUsedRedemption = true;
+            break;
+          }
+          const isUsed = rewardData.isUsed === true;
+          const expiresAt = parseFirestoreDate(rewardData.expiresAt);
+          const isExpired = rewardData.isExpired === true || (expiresAt ? expiresAt <= new Date() : false);
+          if (isUsed || !isExpired) {
+            hasActiveOrUsedRedemption = true;
+            break;
+          }
+        }
+        if (hasActiveOrUsedRedemption) {
+          claimedGiftIds.add(giftId);
+        }
+      }
+
+      const availableGifts = [];
+
+      for (const doc of broadcastGiftsSnapshot.docs) {
+        const data = doc.data();
+        const giftId = doc.id;
+        if (claimedGiftIds.has(giftId)) continue;
+        const revokedUserIds = data.revokedUserIds || [];
+        if (revokedUserIds.includes(uid)) continue;
+        if (data.expiresAt) {
+          const expiresAt = data.expiresAt.toDate();
+          if (expiresAt < new Date()) continue;
+        }
+        availableGifts.push({
+          id: giftId,
+          type: data.type || 'broadcast',
+          targetUserIds: data.targetUserIds || null,
+          rewardTitle: data.rewardTitle || '',
+          rewardDescription: data.rewardDescription || '',
+          rewardCategory: data.rewardCategory || '',
+          pointsRequired: data.pointsRequired || 0,
+          imageName: data.imageName || null,
+          imageURL: data.imageURL || null,
+          isCustom: data.isCustom || false,
+          sentByAdminId: data.sentByAdminId || '',
+          isActive: data.isActive !== false,
+          sentAt: data.sentAt ? data.sentAt.toDate().toISOString() : null,
+          expiresAt: data.expiresAt ? data.expiresAt.toDate().toISOString() : null
+        });
+      }
+
+      for (const doc of individualGiftsSnapshot.docs) {
+        const data = doc.data();
+        const giftId = doc.id;
+        if (claimedGiftIds.has(giftId)) continue;
+        if (data.expiresAt) {
+          const expiresAt = data.expiresAt.toDate();
+          if (expiresAt < new Date()) continue;
+        }
+        availableGifts.push({
+          id: giftId,
+          type: data.type || 'individual',
+          targetUserIds: data.targetUserIds || null,
+          rewardTitle: data.rewardTitle || '',
+          rewardDescription: data.rewardDescription || '',
+          rewardCategory: data.rewardCategory || '',
+          pointsRequired: data.pointsRequired || 0,
+          imageName: data.imageName || null,
+          imageURL: data.imageURL || null,
+          isCustom: data.isCustom || false,
+          sentByAdminId: data.sentByAdminId || '',
+          isActive: data.isActive !== false,
+          sentAt: data.sentAt ? data.sentAt.toDate().toISOString() : null,
+          expiresAt: data.expiresAt ? data.expiresAt.toDate().toISOString() : null
+        });
+      }
+
+      availableGifts.sort((a, b) => {
+        const aTime = a.sentAt ? new Date(a.sentAt).getTime() : 0;
+        const bTime = b.sentAt ? new Date(b.sentAt).getTime() : 0;
+        return bTime - aTime;
+      });
+
+      res.json({ gifts: availableGifts });
+    } catch (error) {
+      logger.error('❌ Error fetching admin gifted rewards for user:', error);
+      res.status(500).json({ error: 'Failed to fetch gifted rewards' });
+    }
+  });
+
+  /**
+   * POST /admin/gifted-rewards/:giftedRewardId/revoke
+   * Admin only. Revoke a gifted reward for a specific user (they will no longer see it).
+   * Body: { "userId": "<targetUserId>" }
+   */
+  app.post('/admin/gifted-rewards/:giftedRewardId/revoke', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const giftedRewardId = (req.params.giftedRewardId || '').toString().trim();
+      if (!giftedRewardId) {
+        return res.status(400).json({ error: 'giftedRewardId is required' });
+      }
+
+      const body = req.body || {};
+      const userId = typeof body.userId === 'string' ? body.userId.trim() : '';
+      if (!userId) {
+        return res.status(400).json({ error: 'userId is required' });
+      }
+
+      const db = admin.firestore();
+      const giftRef = db.collection('giftedRewards').doc(giftedRewardId);
+      const giftSnap = await giftRef.get();
+      if (!giftSnap.exists) {
+        return res.status(404).json({ error: 'Gift reward not found' });
+      }
+
+      const data = giftSnap.data();
+      const type = (data.type || 'broadcast').toLowerCase();
+
+      if (type === 'individual') {
+        await giftRef.update({
+          targetUserIds: admin.firestore.FieldValue.arrayRemove(userId)
+        });
+      } else {
+        await giftRef.update({
+          revokedUserIds: admin.firestore.FieldValue.arrayUnion(userId)
+        });
+      }
+
+      logger.info(`🎁 Admin ${adminContext.uid} revoked gift ${giftedRewardId} for user ${userId}`);
+      res.status(200).json({ ok: true, message: 'Gift revoked' });
+    } catch (error) {
+      logger.error('❌ Error revoking gifted reward:', error);
+      res.status(500).json({ error: 'Failed to revoke gift' });
     }
   });
 

@@ -22,7 +22,8 @@ class AdminOverviewViewModel: ObservableObject {
     @Published var stats: AdminStats?
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
-    
+    @Published var pendingReservationsCount: Int = 0
+
     func loadStats() async {
         guard !isLoading else { return }
         isLoading = true
@@ -63,7 +64,8 @@ class AdminOverviewViewModel: ObservableObject {
             let decoded = try JSONDecoder().decode(AdminStats.self, from: data)
             stats = decoded
             isLoading = false
-            
+            await loadPendingReservationsCount()
+
         } catch {
             errorMessage = "Failed to load stats: \(error.localizedDescription)"
             isLoading = false
@@ -73,6 +75,33 @@ class AdminOverviewViewModel: ObservableObject {
     func refresh() {
         Task {
             await loadStats()
+        }
+    }
+
+    func loadPendingReservationsCount() async {
+        guard let user = Auth.auth().currentUser else {
+            pendingReservationsCount = 0
+            return
+        }
+        do {
+            let token = try await user.getIDTokenResult(forcingRefresh: false).token
+            guard let url = URL(string: "\(Config.backendURL)/reservations?status=pending&limit=50") else {
+                pendingReservationsCount = 0
+                return
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await URLSession.configured.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let list = json["reservations"] as? [[String: Any]] else {
+                pendingReservationsCount = 0
+                return
+            }
+            pendingReservationsCount = list.count
+        } catch {
+            pendingReservationsCount = 0
         }
     }
 }

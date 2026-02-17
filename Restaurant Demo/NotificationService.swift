@@ -17,6 +17,10 @@ class NotificationService: NSObject, ObservableObject {
     
     @Published var fcmToken: String?
     @Published var hasNotificationPermission: Bool = false
+    /// True while the system notification permission dialog is being shown (user tapped "Enable" in pre-prompt).
+    @Published var isRequestingPermission: Bool = false
+    /// True while the in-app pre-permission sheet is visible (so delayed closures can read current value).
+    @Published var isPrePromptSheetVisible: Bool = false
     @Published var unreadNotificationCount: Int = 0
     @Published var notifications: [AppNotification] = []
     
@@ -35,9 +39,11 @@ class NotificationService: NSObject, ObservableObject {
     
     /// Request notification permissions from the user
     func requestNotificationPermission(completion: ((Bool) -> Void)? = nil) {
+        isRequestingPermission = true
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .badge, .sound]) { [weak self] granted, error in
             DispatchQueue.main.async {
+                self?.isRequestingPermission = false
                 self?.hasNotificationPermission = granted
                 
                 if let error = error {

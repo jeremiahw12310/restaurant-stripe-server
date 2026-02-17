@@ -80,8 +80,12 @@ final class AdminReservationsViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var nextCursor: String?
     @Published var hasMore = false
-    @Published var selectedStatus: StatusFilter = .pending
+    @Published var selectedStatus: StatusFilter = .all
     @Published var actionError: String? // per-row error for confirm/cancel
+
+    init(initialFilter: StatusFilter? = nil) {
+        selectedStatus = initialFilter ?? .all
+    }
 
     enum StatusFilter: String, CaseIterable {
         case pending
@@ -276,8 +280,12 @@ final class AdminReservationsViewModel: ObservableObject {
 
 struct AdminReservationsView: View {
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var viewModel = AdminReservationsViewModel()
+    @StateObject private var viewModel: AdminReservationsViewModel
     @State private var selectedReservation: AdminReservation?
+
+    init(initialFilter: AdminReservationsViewModel.StatusFilter? = nil) {
+        _viewModel = StateObject(wrappedValue: AdminReservationsViewModel(initialFilter: initialFilter))
+    }
     @State private var successMessage: String?
     @State private var showSuccessOverlay = false
 
@@ -476,6 +484,21 @@ struct AdminReservationsView: View {
         return sortedKeys.map { (key: $0, list: grouped[$0] ?? []) }
     }
 
+    /// When filter is All: sections by status (Pending, Confirmed, Cancelled), each sorted by date; empty sections omitted.
+    private var reservationsByStatus: [(String, [AdminReservation])] {
+        let pending = viewModel.reservations.filter { $0.status == "pending" }
+            .sorted { ($0.date, $0.time) < ($1.date, $1.time) }
+        let confirmed = viewModel.reservations.filter { $0.status == "confirmed" }
+            .sorted { ($0.date, $0.time) < ($1.date, $1.time) }
+        let cancelled = viewModel.reservations.filter { $0.status == "cancelled" }
+            .sorted { ($0.date, $0.time) < ($1.date, $1.time) }
+        var result: [(String, [AdminReservation])] = []
+        if !pending.isEmpty { result.append(("Pending", pending)) }
+        if !confirmed.isEmpty { result.append(("Confirmed", confirmed)) }
+        if !cancelled.isEmpty { result.append(("Cancelled", cancelled)) }
+        return result
+    }
+
     private func sectionTitle(for dateStr: String) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
@@ -490,39 +513,75 @@ struct AdminReservationsView: View {
     private var listContent: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(reservationsByDate, id: \.0) { dateStr, reservations in
-                    Section {
-                        ForEach(reservations) { res in
-                            Button {
-                                selectedReservation = res
-                            } label: {
-                                ReservationRowView(
-                                    reservation: res,
-                                    viewModel: viewModel,
-                                    onSuccess: { msg in
-                                        successMessage = msg
-                                        showSuccessOverlay = true
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                                            withAnimation(.easeOut(duration: 0.25)) { showSuccessOverlay = false }
+                if viewModel.selectedStatus == .all {
+                    ForEach(reservationsByStatus, id: \.0) { statusName, reservations in
+                        Section {
+                            ForEach(reservations) { res in
+                                Button {
+                                    selectedReservation = res
+                                } label: {
+                                    ReservationRowView(
+                                        reservation: res,
+                                        viewModel: viewModel,
+                                        onSuccess: { msg in
+                                            successMessage = msg
+                                            showSuccessOverlay = true
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                                withAnimation(.easeOut(duration: 0.25)) { showSuccessOverlay = false }
+                                            }
                                         }
-                                    }
-                                )
+                                    )
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
-                        }
-                    } header: {
-                        HStack(spacing: 8) {
-                            Text(sectionTitle(for: dateStr))
-                                .font(.system(size: 15, weight: .bold, design: .rounded))
-                                .foregroundColor(Theme.modernPrimary)
-                            if dateStr == reservationsByDate.first?.0 {
+                        } header: {
+                            HStack(spacing: 8) {
+                                Text(statusName)
+                                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                                    .foregroundColor(Theme.modernPrimary)
                                 Text("(\(reservations.count))")
                                     .font(.system(size: 14, weight: .medium))
                                     .foregroundColor(Theme.modernSecondary)
                             }
+                            .padding(.top, statusName == reservationsByStatus.first?.0 ? 4 : 16)
+                            .padding(.bottom, 4)
                         }
-                        .padding(.top, dateStr == reservationsByDate.first?.0 ? 4 : 16)
-                        .padding(.bottom, 4)
+                    }
+                } else {
+                    ForEach(reservationsByDate, id: \.0) { dateStr, reservations in
+                        Section {
+                            ForEach(reservations) { res in
+                                Button {
+                                    selectedReservation = res
+                                } label: {
+                                    ReservationRowView(
+                                        reservation: res,
+                                        viewModel: viewModel,
+                                        onSuccess: { msg in
+                                            successMessage = msg
+                                            showSuccessOverlay = true
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                                withAnimation(.easeOut(duration: 0.25)) { showSuccessOverlay = false }
+                                            }
+                                        }
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        } header: {
+                            HStack(spacing: 8) {
+                                Text(sectionTitle(for: dateStr))
+                                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                                    .foregroundColor(Theme.modernPrimary)
+                                if dateStr == reservationsByDate.first?.0 {
+                                    Text("(\(reservations.count))")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(Theme.modernSecondary)
+                                }
+                            }
+                            .padding(.top, dateStr == reservationsByDate.first?.0 ? 4 : 16)
+                            .padding(.bottom, 4)
+                        }
                     }
                 }
                 if viewModel.hasMore && !viewModel.isLoading {

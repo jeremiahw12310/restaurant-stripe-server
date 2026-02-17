@@ -15,6 +15,9 @@ class AdminUserDetailViewModel: ObservableObject {
     @Published var transactions: [PointsTransaction] = []
     @Published var summary: PointsHistorySummary?
 
+    // MARK: - Gifted Rewards (admin view of user's gifts)
+    @Published var giftedRewards: [GiftedReward] = []
+
     // Editable admin controls
     @Published var editablePoints: String = ""
     @Published var editablePhoneNumber: String = ""
@@ -80,6 +83,12 @@ class AdminUserDetailViewModel: ObservableObject {
 
         group.enter()
         loadReferralInfo { error in
+            if let error = error, firstError == nil { firstError = error }
+            group.leave()
+        }
+
+        group.enter()
+        loadGiftedRewards { error in
             if let error = error, firstError == nil { firstError = error }
             group.leave()
         }
@@ -279,6 +288,120 @@ class AdminUserDetailViewModel: ObservableObject {
             self.outboundReferrals = outbound.sorted { $0.name < $1.name }
             self.inboundReferral = inbound
             completion(firstError)
+        }
+    }
+
+    // MARK: - Gifted Rewards (admin)
+
+    private func loadGiftedRewards(completion: @escaping (String?) -> Void) {
+        guard let user = Auth.auth().currentUser else {
+            DispatchQueue.main.async { completion("Not signed in") }
+            return
+        }
+        user.getIDTokenResult(forcingRefresh: false) { result, error in
+            if let error = error {
+                DispatchQueue.main.async { completion(error.localizedDescription) }
+                return
+            }
+            guard let token = result?.token else {
+                DispatchQueue.main.async { completion("No token") }
+                return
+            }
+            guard let url = URL(string: "\(Config.backendURL)/admin/users/\(self.userId)/gifted-rewards") else {
+                DispatchQueue.main.async { completion("Invalid URL") }
+                return
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            URLSession.configured.dataTask(with: request) { data, response, err in
+                DispatchQueue.main.async {
+                    if let err = err {
+                        completion(err.localizedDescription)
+                        return
+                    }
+                    guard let data = data, let http = response as? HTTPURLResponse else {
+                        completion("Invalid response")
+                        return
+                    }
+                    guard (200..<300).contains(http.statusCode) else {
+                        let body = String(data: data, encoding: .utf8) ?? ""
+                        let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String ?? body.isEmpty ? "Failed to load gifted rewards" : body
+                        completion(message)
+                        return
+                    }
+                    do {
+                        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                        let giftsArray = json?["gifts"] as? [[String: Any]] ?? []
+                        let decoder = JSONDecoder()
+                        var parsed: [GiftedReward] = []
+                        for giftDict in giftsArray {
+                            guard let giftData = try? JSONSerialization.data(withJSONObject: giftDict) else { continue }
+                            if let gift = try? decoder.decode(GiftedReward.self, from: giftData) {
+                                parsed.append(gift)
+                            }
+                        }
+                        self.giftedRewards = parsed
+                        completion(nil)
+                    } catch {
+                        completion(error.localizedDescription)
+                    }
+                }
+            }.resume()
+        }
+    }
+
+    func revokeGift(giftedRewardId: String, completion: @escaping (Bool, String) -> Void) {
+        guard let user = Auth.auth().currentUser else {
+            completion(false, "Not signed in")
+            return
+        }
+        user.getIDTokenResult(forcingRefresh: false) { [weak self] result, error in
+            guard let self = self else { return }
+            if let error = error {
+                DispatchQueue.main.async { completion(false, error.localizedDescription) }
+                return
+            }
+            guard let token = result?.token else {
+                DispatchQueue.main.async { completion(false, "No token") }
+                return
+            }
+            guard let url = URL(string: "\(Config.backendURL)/admin/gifted-rewards/\(giftedRewardId)/revoke") else {
+                DispatchQueue.main.async { completion(false, "Invalid URL") }
+                return
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["userId": self.userId])
+            URLSession.configured.dataTask(with: request) { [weak self] data, response, err in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if let err = err {
+                        completion(false, err.localizedDescription)
+                        return
+                    }
+                    guard let http = response as? HTTPURLResponse else {
+                        completion(false, "Invalid response")
+                        return
+                    }
+                    guard (200..<300).contains(http.statusCode) else {
+                        let message: String
+                        if let data = data,
+                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                           let errorMsg = json["error"] as? String {
+                            message = errorMsg
+                        } else {
+                            message = "Failed to revoke gift"
+                        }
+                        completion(false, message)
+                        return
+                    }
+                    self.giftedRewards.removeAll { $0.id == giftedRewardId }
+                    completion(true, "")
+                }
+            }.resume()
         }
     }
 

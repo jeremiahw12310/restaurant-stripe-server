@@ -25,6 +25,8 @@ struct Restaurant_DemoApp: App {
 
 // An App Delegate to handle events like app launch and redirects.
 class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    private static let appHasBeenLaunchedBeforeKey = "AppDelegate.appHasBeenLaunchedBefore"
+
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
         // 🚨 CRITICAL: Run emergency cleanup FIRST to prevent cache corruption crashes
@@ -50,6 +52,18 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 
         // Configure Firebase when the app launches.
         FirebaseApp.configure()
+
+        // First launch after install: Firebase Auth persists in Keychain across app delete.
+        // Only sign out when sentinel is missing AND isLoggedIn is false but Firebase has a user
+        // (reinstall: UserDefaults cleared, Keychain restored). Upgraders have isLoggedIn true → don't sign out.
+        if UserDefaults.standard.object(forKey: Self.appHasBeenLaunchedBeforeKey) == nil {
+            UserDefaults.standard.set(true, forKey: Self.appHasBeenLaunchedBeforeKey)
+            if !UserDefaults.standard.bool(forKey: "isLoggedIn") && Auth.auth().currentUser != nil {
+                try? Auth.auth().signOut()
+                UserDefaults.standard.set(false, forKey: "isLoggedIn")
+                DebugLogger.debug("First launch after install: cleared Keychain-restored auth so user must sign in again", category: "App")
+            }
+        }
 
         // 🔎 Push notification diagnostics (helps debug FCM/APNs linkage issues)
         let runtimeBundleId = Bundle.main.bundleIdentifier ?? "nil"
