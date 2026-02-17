@@ -13,6 +13,8 @@ extension Notification.Name {
     static let showRewardsFromChatbot = Notification.Name("showRewardsFromChatbot")
     /// Posted by HomeView (after sequential animations) or admin test button to trigger the app walkthrough.
     static let showWalkthrough = Notification.Name("showWalkthrough")
+    /// Switch to More tab and push the Notifications section (NotificationsCenterView).
+    static let openNotificationsSection = Notification.Name("openNotificationsSection")
 }
 
 struct ContentView: View {
@@ -224,6 +226,9 @@ struct ContentView: View {
             Button("View") {
                 lastSeenUnreadCountForAlert = pendingUnreadCountForAlert
                 selectedTab = 4
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    NotificationCenter.default.post(name: .openNotificationsSection, object: nil)
+                }
             }
             Button("OK", role: .cancel) {
                 lastSeenUnreadCountForAlert = pendingUnreadCountForAlert
@@ -430,10 +435,13 @@ struct ContentView: View {
 
     // MARK: - Unread Notifications Popup (when user returns to app)
 
-    /// Show a single popup when there are unread notifications and count increased since last seen
+    /// Show a single popup when there are unread notifications and count increased since last seen.
+    /// Do not show for reservation-only unread (gold card on Home is the cue); show only when at least one unread is not reservation_new.
     private func checkForUnreadNotificationsPopup() {
         let count = notificationService.unreadNotificationCount
         guard count > 0, count > lastSeenUnreadCountForAlert else { return }
+        let hasNonReservationUnread = notificationService.notifications.contains { !$0.read && $0.type != .reservationNew }
+        guard hasNonReservationUnread else { return }
         pendingUnreadCountForAlert = count
         showUnreadNotificationsAlert = true
     }

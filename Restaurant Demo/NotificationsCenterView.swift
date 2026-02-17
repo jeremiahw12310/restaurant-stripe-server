@@ -12,22 +12,6 @@ struct NotificationsCenterView: View {
     @ObservedObject private var notificationService = NotificationService.shared
     @Environment(\.dismiss) private var dismiss
 
-    private var referralNotifications: [AppNotification] {
-        notificationService.notifications.filter { $0.type == .referral }
-    }
-
-    private var reservationNotifications: [AppNotification] {
-        notificationService.notifications.filter { $0.type == .reservationNew }
-    }
-
-    private var generalNotifications: [AppNotification] {
-        notificationService.notifications.filter { $0.type != .referral && $0.type != .reservationNew }
-    }
-    
-    private var hasUnreadNotifications: Bool {
-        notificationService.unreadNotificationCount > 0
-    }
-    
     var body: some View {
         NavigationStack {
             ZStack {

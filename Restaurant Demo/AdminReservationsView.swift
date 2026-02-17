@@ -517,22 +517,18 @@ struct AdminReservationsView: View {
                     ForEach(reservationsByStatus, id: \.0) { statusName, reservations in
                         Section {
                             ForEach(reservations) { res in
-                                Button {
-                                    selectedReservation = res
-                                } label: {
-                                    ReservationRowView(
-                                        reservation: res,
-                                        viewModel: viewModel,
-                                        onSuccess: { msg in
-                                            successMessage = msg
-                                            showSuccessOverlay = true
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                                                withAnimation(.easeOut(duration: 0.25)) { showSuccessOverlay = false }
-                                            }
+                                ReservationRowView(
+                                    reservation: res,
+                                    viewModel: viewModel,
+                                    onTapRow: { selectedReservation = res },
+                                    onSuccess: { msg in
+                                        successMessage = msg
+                                        showSuccessOverlay = true
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                            withAnimation(.easeOut(duration: 0.25)) { showSuccessOverlay = false }
                                         }
-                                    )
-                                }
-                                .buttonStyle(.plain)
+                                    }
+                                )
                             }
                         } header: {
                             HStack(spacing: 8) {
@@ -551,22 +547,18 @@ struct AdminReservationsView: View {
                     ForEach(reservationsByDate, id: \.0) { dateStr, reservations in
                         Section {
                             ForEach(reservations) { res in
-                                Button {
-                                    selectedReservation = res
-                                } label: {
-                                    ReservationRowView(
-                                        reservation: res,
-                                        viewModel: viewModel,
-                                        onSuccess: { msg in
-                                            successMessage = msg
-                                            showSuccessOverlay = true
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                                                withAnimation(.easeOut(duration: 0.25)) { showSuccessOverlay = false }
-                                            }
+                                ReservationRowView(
+                                    reservation: res,
+                                    viewModel: viewModel,
+                                    onTapRow: { selectedReservation = res },
+                                    onSuccess: { msg in
+                                        successMessage = msg
+                                        showSuccessOverlay = true
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                            withAnimation(.easeOut(duration: 0.25)) { showSuccessOverlay = false }
                                         }
-                                    )
-                                }
-                                .buttonStyle(.plain)
+                                    }
+                                )
                             }
                         } header: {
                             HStack(spacing: 8) {
@@ -629,6 +621,7 @@ struct AdminReservationsView: View {
 struct ReservationRowView: View {
     let reservation: AdminReservation
     @ObservedObject var viewModel: AdminReservationsViewModel
+    var onTapRow: (() -> Void)?
     var onSuccess: ((String) -> Void)?
     @State private var isConfirming = false
     @State private var isCancelling = false
@@ -639,7 +632,7 @@ struct ReservationRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // Header: name, date/time, party, status
+            // Header: name, date/time, party, status (tap opens detail)
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(reservation.customerName)
@@ -667,6 +660,8 @@ struct ReservationRowView: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Theme.modernSecondary.opacity(0.7))
             }
+            .contentShape(Rectangle())
+            .onTapGesture { onTapRow?() }
 
             Divider()
                 .background(Theme.modernCardSecondary)
@@ -715,19 +710,21 @@ struct ReservationRowView: View {
                     .disabled(isConfirming || isCancelling)
                 }
 
-                if !reservation.phone.isEmpty,
-                   let url = URL(string: "tel:\(reservation.phone.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? reservation.phone)") {
-                    Button(action: { UIApplication.shared.open(url) }) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "phone.fill")
-                                .font(.system(size: 12))
-                            Text("Call")
-                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                if !reservation.phone.isEmpty {
+                    let digitsOnly = reservation.phone.filter { $0.isNumber }
+                    if !digitsOnly.isEmpty, let url = URL(string: "tel:\(digitsOnly)") {
+                        Button(action: { UIApplication.shared.open(url) }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "phone.fill")
+                                    .font(.system(size: 12))
+                                Text("Call")
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Theme.energyBlue))
                         }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.energyBlue))
                     }
                 }
 

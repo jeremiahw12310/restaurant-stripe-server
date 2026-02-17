@@ -1261,8 +1261,46 @@ struct RewardsScannerPriorityCard: View {
     }
 }
 
+// MARK: - New Reservation Gold Card (staff only, when pending count > 0)
+struct NewReservationGoldCard: View {
+    let pendingCount: Int
+    let onTap: () -> Void
 
-
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 16) {
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.25))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pendingCount == 1 ? "New reservation" : "\(pendingCount) new reservations")
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                    Text("Tap to review")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.9))
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.9))
+            }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Theme.darkGoldGradient)
+                    .shadow(color: Theme.goldShadow, radius: 8, x: 0, y: 4)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("New reservation")
+    }
+}
 
 // Preview helper for design-time
 #if DEBUG

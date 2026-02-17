@@ -99,8 +99,8 @@ struct WalkthroughOverlayView: View {
                 icon: "list.bullet",
                 iconColor: Theme.energyRed,
                 title: "Browse the Menu",
-                subtitle: "See What We Offer",
-                description: "Explore our full menu with photos, descriptions, and dietary info — all in one place.",
+                subtitle: "Browse & Order Online",
+                description: "Explore our full menu with photos and descriptions, then tap through to order online for pickup.",
                 targetTab: 1,
                 isWelcomeStep: false
             )

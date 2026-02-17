@@ -773,6 +773,12 @@ struct ReservationSheetView: View {
                     .fill(Theme.modernCard)
                     .shadow(color: Theme.cardShadow.opacity(0.5), radius: 8, x: 0, y: 4)
             )
+            .onChange(of: viewModel.specialRequests) { _, newValue in
+                if requestsFieldFocused && newValue.contains("\n") {
+                    requestsFieldFocused = false
+                    viewModel.specialRequests = newValue.replacingOccurrences(of: "\n", with: "")
+                }
+            }
         }
     }
 

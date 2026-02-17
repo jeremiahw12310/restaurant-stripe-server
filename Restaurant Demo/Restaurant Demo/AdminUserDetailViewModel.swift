@@ -326,7 +326,8 @@ class AdminUserDetailViewModel: ObservableObject {
                     }
                     guard (200..<300).contains(http.statusCode) else {
                         let body = String(data: data, encoding: .utf8) ?? ""
-                        let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String ?? body.isEmpty ? "Failed to load gifted rewards" : body
+                        let message = ((try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String)
+                            ?? (body.isEmpty ? "Failed to load gifted rewards" : body)
                         completion(message)
                         return
                     }

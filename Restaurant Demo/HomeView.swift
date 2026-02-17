@@ -119,7 +119,11 @@ struct HomeView: View {
 
     // Staff-only: listen for any pending reward redemption so we can surface the scanner card immediately.
     @StateObject private var adminPendingRewardsVM = AdminPendingRewardsViewModel()
-    
+    // Staff-only: pending reservations count for "New reservation" gold card above points card.
+    @StateObject private var adminPendingReservationsVM = AdminPendingReservationsViewModel()
+    @State private var showAdminReservationsSheet = false
+    @State private var openReservationsWithPendingFilter = false
+
     init() {
         _mapCameraPosition = State(initialValue: .region(MKCoordinateRegion(
             center: locationCoordinate,
@@ -214,6 +218,14 @@ struct HomeView: View {
                             .scaleEffect(1.2)
                         Spacer()
                     } else {
+                        // MARK: - Priority: New reservation gold card (staff only)
+                        if (userVM.isAdmin || userVM.isEmployee), adminPendingReservationsVM.pendingReservationsCount > 0 {
+                            NewReservationGoldCard(pendingCount: adminPendingReservationsVM.pendingReservationsCount) {
+                                openReservationsWithPendingFilter = true
+                                showAdminReservationsSheet = true
+                            }
+                            .padding(.horizontal, 20)
+                        }
                         // MARK: - Priority: Rewards Scanner (staff only)
                         if (userVM.isAdmin || userVM.isEmployee), let pending = adminPendingRewardsVM.pendingReward {
                             RewardsScannerPriorityCard(
@@ -470,9 +482,20 @@ struct HomeView: View {
             }
             .onChange(of: userVM.isAdmin) { _, _ in
                 adminPendingRewardsVM.setListeningEnabled(userVM.isAdmin || userVM.isEmployee)
+                if userVM.isAdmin || userVM.isEmployee {
+                    Task { await adminPendingReservationsVM.load() }
+                }
             }
             .onChange(of: userVM.isEmployee) { _, _ in
                 adminPendingRewardsVM.setListeningEnabled(userVM.isAdmin || userVM.isEmployee)
+                if userVM.isAdmin || userVM.isEmployee {
+                    Task { await adminPendingReservationsVM.load() }
+                }
+            }
+            .onChange(of: userVM.isLoading) { _, nowLoading in
+                if !nowLoading, userVM.isAdmin || userVM.isEmployee {
+                    Task { await adminPendingReservationsVM.load() }
+                }
             }
             .onDisappear {
                 // Clean up timers to prevent memory leaks
@@ -587,6 +610,12 @@ struct HomeView: View {
         }
         .sheet(isPresented: $showAdminOffice) {
             AdminOfficeView()
+        }
+        .sheet(isPresented: $showAdminReservationsSheet, onDismiss: {
+            openReservationsWithPendingFilter = false
+            Task { await adminPendingReservationsVM.load() }
+        }) {
+            AdminReservationsView(initialFilter: openReservationsWithPendingFilter ? .pending : nil)
         }
         .sheet(isPresented: $showRewardTierAdmin) {
             RewardTierAdminView()
@@ -1178,6 +1207,10 @@ struct HomeView: View {
         
         // Staff listener for any pending reward redemption (drives the priority scanner card)
         adminPendingRewardsVM.setListeningEnabled(userVM.isAdmin || userVM.isEmployee)
+        // Staff: load pending reservations count (drives the "New reservation" gold card)
+        if userVM.isAdmin || userVM.isEmployee {
+            Task { await adminPendingReservationsVM.load() }
+        }
         
         // Check if this is a new user who should see the integrated welcome
         // We check after a brief delay to ensure userVM has loaded

@@ -468,6 +468,14 @@ class NotificationService: NSObject, ObservableObject {
                     userInfo: ["giftedRewardId": giftedRewardId]
                 )
             }
+            return
+        }
+        // All other notification types: open More tab and push notifications section
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .switchToMoreTab, object: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                NotificationCenter.default.post(name: .openNotificationsSection, object: nil)
+            }
         }
     }
     

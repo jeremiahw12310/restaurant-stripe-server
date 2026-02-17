@@ -15,6 +15,7 @@ struct MoreView: View {
     @State private var safariDestination: SafariDestination? = nil
     @State private var missingLinkTitle: String = ""
     @State private var showMissingLinkAlert: Bool = false
+    @State private var showNotificationsCenter: Bool = false
 
     private var uid: String { Auth.auth().currentUser?.uid ?? "" }
 
@@ -92,6 +93,12 @@ struct MoreView: View {
             }
             .listSectionSeparator(.hidden)
             .navigationTitle("More")
+            .navigationDestination(isPresented: $showNotificationsCenter) {
+                NotificationsCenterView()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openNotificationsSection)) { _ in
+                showNotificationsCenter = true
+            }
             .onAppear {
                 // Clear notification badges when entering More tab
                 if Auth.auth().currentUser != nil {
@@ -385,8 +392,8 @@ struct MoreView: View {
             }
             
             // View All Button
-            NavigationLink {
-                NotificationsCenterView()
+            Button {
+                showNotificationsCenter = true
             } label: {
                 HStack {
                     Spacer()
@@ -405,6 +412,7 @@ struct MoreView: View {
                         )
                 )
             }
+            .buttonStyle(PlainButtonStyle())
         }
         .padding(12)
         .background(

@@ -6491,6 +6491,31 @@ IMPORTANT:
         await batch.commit();
       }
 
+      // Send FCM push to each admin with a valid fcmToken (fire-and-forget; do not block response)
+      const pushTitle = 'New reservation';
+      const pushData = { type: 'reservation_new', reservationId };
+      (async () => {
+        try {
+          const userBatchSize = 30;
+          for (let i = 0; i < adminUids.length; i += userBatchSize) {
+            const chunk = adminUids.slice(i, i + userBatchSize);
+            if (chunk.length === 0) continue;
+            const userSnap = await db.collection('users').where(admin.firestore.FieldPath.documentId(), 'in', chunk).get();
+            for (const doc of userSnap.docs) {
+              const data = doc.data() || {};
+              const fcmToken = data.fcmToken;
+              if (typeof fcmToken === 'string' && fcmToken.length > 0) {
+                sendPushNotificationToToken(fcmToken, pushTitle, bodyText, pushData).catch(err => {
+                  logger.warn('Reservation push failed for admin:', doc.id, err.message || err);
+                });
+              }
+            }
+          }
+        } catch (pushErr) {
+          logger.warn('Reservation push send error:', pushErr.message || pushErr);
+        }
+      })();
+
       logger.info(`✅ Reservation ${reservationId} created by ${userContext.uid}; notified ${adminUids.length} admin(s)`);
       return res.status(201).json({ id: reservationId, status: 'pending' });
     } catch (error) {

@@ -4195,6 +4195,33 @@ IMPORTANT:
   }
 
   /**
+   * Send a push notification to a single FCM token.
+   * Returns { success: boolean, error?: string }
+   */
+  async function sendPushNotificationToToken(fcmToken, title, body, data = {}) {
+    if (!fcmToken || typeof fcmToken !== 'string' || fcmToken.length === 0) {
+      return { success: false, error: 'Invalid or missing FCM token' };
+    }
+    try {
+      const message = {
+        token: fcmToken,
+        notification: { title, body },
+        data: { ...data, timestamp: new Date().toISOString() },
+        apns: {
+          payload: {
+            aps: { alert: { title, body }, sound: 'default', mutableContent: true }
+          }
+        }
+      };
+      await admin.messaging().send(message);
+      return { success: true };
+    } catch (error) {
+      console.warn('FCM push failed:', error.message || error);
+      return { success: false, error: error.message || 'Unknown error' };
+    }
+  }
+
+  /**
    * POST /reservations
    * Authenticated user. Create a reservation; all admins receive an in-app notification.
    * Body: customerName, phone, email?, date (YYYY-MM-DD), time, partySize, specialRequests?
@@ -4274,6 +4301,31 @@ IMPORTANT:
         }
         await batch.commit();
       }
+
+      // Send FCM push to each admin with a valid fcmToken (fire-and-forget; do not block response)
+      const pushTitle = 'New reservation';
+      const pushData = { type: 'reservation_new', reservationId };
+      (async () => {
+        try {
+          const userBatchSize = 30;
+          for (let i = 0; i < adminUids.length; i += userBatchSize) {
+            const chunk = adminUids.slice(i, i + userBatchSize);
+            if (chunk.length === 0) continue;
+            const userSnap = await db.collection('users').where(admin.firestore.FieldPath.documentId(), 'in', chunk).get();
+            for (const doc of userSnap.docs) {
+              const data = doc.data() || {};
+              const fcmToken = data.fcmToken;
+              if (typeof fcmToken === 'string' && fcmToken.length > 0) {
+                sendPushNotificationToToken(fcmToken, pushTitle, bodyText, pushData).catch(err => {
+                  console.warn('Reservation push failed for admin:', doc.id, err.message || err);
+                });
+              }
+            }
+          }
+        } catch (pushErr) {
+          console.warn('Reservation push send error:', pushErr.message || pushErr);
+        }
+      })();
 
       console.log(`✅ Reservation ${reservationId} created by ${userContext.uid}; notified ${adminUids.length} admin(s)`);
       return res.status(201).json({ id: reservationId, status: 'pending' });
