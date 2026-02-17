@@ -12261,7 +12261,7 @@ class SuspiciousBehaviorService {
       // Check rejection rate
       const scanAttempts = await this.db.collection('receiptScanAttempts')
         .where('userId', '==', userId)
-        .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(sevenDaysAgo))
+        .where('timestamp', '>=', admin.firestore.Timestamp.fromDate(sevenDaysAgo))
         .get();
       
       const attempts = scanAttempts.docs.map(doc => doc.data());
@@ -12556,7 +12556,7 @@ class SuspiciousBehaviorService {
       // Receipt rejection rate
       const scanAttempts = await this.db.collection('receiptScanAttempts')
         .where('userId', '==', userId)
-        .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(sevenDaysAgo))
+        .where('timestamp', '>=', admin.firestore.Timestamp.fromDate(sevenDaysAgo))
         .get();
       const attempts = scanAttempts.docs.map(d => d.data());
       const failures = attempts.filter(a => !a.success).length;
