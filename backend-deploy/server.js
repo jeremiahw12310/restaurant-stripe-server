@@ -4206,7 +4206,8 @@ If a field is missing, use null.`;
 
       const db = admin.firestore();
       const userRef = db.collection('users').doc(uid);
-      const txId = `welcome_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const txId = `welcome_${uid}`;
+      const welcomeTxRef = db.collection('pointsTransactions').doc(txId);
       const welcomePoints = 5;
 
       // First, get the user document to retrieve phone number for hash check
@@ -4215,11 +4216,6 @@ If a field is missing, use null.`;
         return sendError(res, 404, "USER_NOT_FOUND", "User not found");
       }
       const userData = userDoc.data() || {};
-      
-      // Check if already claimed on this account
-      if (userData.hasReceivedWelcomePoints === true) {
-        return res.status(200).json({ success: true, alreadyClaimed: true });
-      }
 
       // Check abuse prevention hash - this persists across account deletions
       const phoneHash = hashPhoneNumber(userData.phone);
@@ -4243,18 +4239,19 @@ If a field is missing, use null.`;
       let newLifetimePoints = null;
 
       await db.runTransaction(async (tx) => {
-        const freshUserDoc = await tx.get(userRef);
+        const [welcomeTxDoc, freshUserDoc] = await Promise.all([
+          tx.get(welcomeTxRef),
+          tx.get(userRef)
+        ]);
         if (!freshUserDoc.exists) {
           const err = new Error("USER_NOT_FOUND");
           err.code = "USER_NOT_FOUND";
           throw err;
         }
-        const freshUserData = freshUserDoc.data() || {};
-        
-        // Double-check in transaction
-        if (freshUserData.hasReceivedWelcomePoints === true) {
-          return; // Will be handled below
+        if (welcomeTxDoc.exists) {
+          return;
         }
+        const freshUserData = freshUserDoc.data() || {};
 
         const currentPoints = freshUserData.points || 0;
         const currentLifetime = (typeof freshUserData.lifetimePoints === 'number') ? freshUserData.lifetimePoints : currentPoints;
@@ -4268,7 +4265,7 @@ If a field is missing, use null.`;
           isNewUser: false
         });
 
-        tx.set(db.collection('pointsTransactions').doc(txId), {
+        tx.set(welcomeTxRef, {
           userId: uid,
           type: 'welcome',
           amount: welcomePoints,
@@ -6410,6 +6407,14 @@ IMPORTANT:
     return uids;
   }
 
+  /** Format YYYY-MM-DD as short display date e.g. "Feb 17", "Oct 3". Returns dateStr on parse failure. */
+  function formatReservationDateShort(dateStr) {
+    if (!dateStr || typeof dateStr !== 'string') return dateStr || '';
+    const d = new Date(dateStr.trim() + 'T12:00:00');
+    if (Number.isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
   /**
    * POST /reservations
    * Authenticated user. Create a reservation; all admins receive an in-app notification.
@@ -6468,7 +6473,8 @@ IMPORTANT:
       });
 
       const reservationId = ref.id;
-      const bodyText = `Party of ${partySizeNum}, ${dateStr} at ${time.trim()} – ${customerName.trim()}`;
+      const displayDate = formatReservationDateShort(dateStr);
+      const bodyText = `Party of ${partySizeNum}, ${displayDate} at ${time.trim()} – ${customerName.trim()}`;
 
       const adminUids = await getAdminUids();
       const batchSize = 450;
@@ -6729,17 +6735,18 @@ IMPORTANT:
           const now = admin.firestore.FieldValue.serverTimestamp();
           const finalStatus = status.trim().toLowerCase();
           const dateStr = resData.date || '';
+          const displayDate = formatReservationDateShort(dateStr);
           const timeStr = resData.time || '';
           const party = resData.partySize || 0;
 
           let notifTitle, notifBody, notifType;
           if (finalStatus === 'confirmed') {
             notifTitle = 'Reservation Confirmed';
-            notifBody = `Your reservation for ${party} on ${dateStr} at ${timeStr} has been confirmed. See you then!`;
+            notifBody = `Your reservation for ${party} on ${displayDate} at ${timeStr} has been confirmed. See you then!`;
             notifType = 'reservation_confirmed';
           } else {
             notifTitle = 'Reservation Update';
-            notifBody = `Your reservation for ${party} on ${dateStr} at ${timeStr} has been cancelled. Please contact us for questions.`;
+            notifBody = `Your reservation for ${party} on ${displayDate} at ${timeStr} has been cancelled. Please contact us for questions.`;
             notifType = 'reservation_cancelled';
           }
 
@@ -6801,6 +6808,7 @@ IMPORTANT:
       const resData = doc.data();
       const customerUid = resData.userId;
       const dateStr = resData.date || '';
+      const displayDate = formatReservationDateShort(dateStr);
       const timeStr = resData.time || '';
       const party = resData.partySize || 0;
 
@@ -6826,7 +6834,7 @@ IMPORTANT:
           await db.collection('notifications').add({
             userId: customerUid,
             title: 'Reservation Removed',
-            body: `Your reservation for ${party} on ${dateStr} at ${timeStr} has been removed. Please contact us with any questions.`,
+            body: `Your reservation for ${party} on ${displayDate} at ${timeStr} has been removed. Please contact us with any questions.`,
             type: 'reservation_cancelled',
             read: false,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -6908,10 +6916,11 @@ IMPORTANT:
         const customerUid = resData.userId;
         if (customerUid) {
           const dateStr = resData.date || '';
+          const displayDate = formatReservationDateShort(dateStr);
           const timeStr = resData.time || '';
           const party = resData.partySize || 0;
           const notifTitle = 'Reservation Confirmed';
-          const notifBody = `Your reservation for ${party} on ${dateStr} at ${timeStr} has been confirmed. See you then!`;
+          const notifBody = `Your reservation for ${party} on ${displayDate} at ${timeStr} has been confirmed. See you then!`;
           await db.collection('notifications').add({
             userId: customerUid,
             title: notifTitle,
@@ -7156,6 +7165,8 @@ IMPORTANT:
    * - limit: number (default 50, max 200)
    * - cursor: string (doc id to start after)
    * - q: string (search query across firstName/email/phone; server-side scan)
+   * - orderBy: optional, e.g. 'dateCreated' (only when q is empty)
+   * - orderDir: optional, 'asc' | 'desc' (only when orderBy is dateCreated)
    *
    * NOTE: Do NOT return fcmToken to clients.
    */
@@ -7168,6 +7179,8 @@ IMPORTANT:
       const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
       const cursor = (req.query.cursor || '').toString().trim();
       const q = (req.query.q || '').toString().trim().toLowerCase();
+      const orderByParam = (req.query.orderBy || '').toString().trim();
+      const orderDirParam = (req.query.orderDir || '').toString().trim().toLowerCase();
 
       const mapUser = (doc) => {
         const data = doc.data() || {};
@@ -7193,8 +7206,37 @@ IMPORTANT:
         };
       };
 
-      // Fast path: no search query -> simple pagination
+      // Fast path: no search query -> simple pagination (optionally ordered by date)
       if (!q) {
+        // Optional: order by accountCreatedDate (v1.1, backward-compatible when params omitted)
+        if (orderByParam === 'dateCreated' && (orderDirParam === 'desc' || orderDirParam === 'asc')) {
+          const dir = orderDirParam === 'desc' ? 'desc' : 'asc';
+          let query = db.collection('users')
+            .orderBy('accountCreatedDate', dir)
+            .orderBy(admin.firestore.FieldPath.documentId())
+            .limit(limit);
+
+          if (cursor) {
+            const cursorDoc = await db.collection('users').doc(cursor).get();
+            if (!cursorDoc.exists) {
+              return res.status(400).json({ error: 'Invalid cursor' });
+            }
+            query = query.startAfter(cursorDoc);
+          }
+
+          const snap = await query.get();
+          const docs = snap.docs || [];
+          const users = docs.map(mapUser);
+          const nextCursor = docs.length > 0 ? docs[docs.length - 1].id : null;
+
+          return res.json({
+            users,
+            nextCursor,
+            hasMore: docs.length === limit
+          });
+        }
+
+        // Default: order by document ID only (existing production behavior)
         let query = db.collection('users')
           .orderBy(admin.firestore.FieldPath.documentId())
           .limit(limit);
