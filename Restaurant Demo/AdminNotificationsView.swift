@@ -988,7 +988,8 @@ class AdminNotificationsViewModel: ObservableObject {
                            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                             let successCount = json["successCount"] as? Int ?? 0
                             let failureCount = json["failureCount"] as? Int ?? 0
-                            self?.successMessage = "Notification sent successfully!\n\(successCount) delivered, \(failureCount) failed"
+                            let totalInApp = json["totalInAppNotified"] as? Int ?? 0
+                            self?.successMessage = "Notification sent!\n\(totalInApp) users will see it in-app\n\(successCount) push notifications queued, \(failureCount) push failed"
                         } else {
                             self?.successMessage = "Notification sent successfully!"
                         }

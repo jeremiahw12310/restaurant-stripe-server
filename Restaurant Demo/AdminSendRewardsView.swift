@@ -845,7 +845,8 @@ class AdminSendRewardsViewModel: ObservableObject {
                     if let data = data,
                        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                         let notificationCount = json["notificationCount"] as? Int ?? 0
-                        self?.successMessage = "Reward sent successfully!\n\(notificationCount) customers notified"
+                        let pushCount = json["pushNotificationCount"] as? Int ?? 0
+                        self?.successMessage = "Reward sent successfully!\n\(notificationCount) customers will see it in-app\(pushCount > 0 ? "\n\(pushCount) push notifications queued" : "")"
                     } else {
                         self?.successMessage = "Reward sent successfully!"
                     }
@@ -955,7 +956,8 @@ class AdminSendRewardsViewModel: ObservableObject {
                     if let data = data,
                        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                         let notificationCount = json["notificationCount"] as? Int ?? 0
-                        self?.successMessage = "Custom reward sent successfully!\n\(notificationCount) customers notified"
+                        let pushCount = json["pushNotificationCount"] as? Int ?? 0
+                        self?.successMessage = "Custom reward sent successfully!\n\(notificationCount) customers will see it in-app\(pushCount > 0 ? "\n\(pushCount) push notifications queued" : "")"
                     } else {
                         self?.successMessage = "Custom reward sent successfully!"
                     }

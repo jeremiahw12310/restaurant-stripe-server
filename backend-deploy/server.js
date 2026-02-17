@@ -1148,6 +1148,15 @@ async function sendPushNotificationToToken(fcmToken, title, body, data = {}) {
       data: {
         ...data,
         timestamp: new Date().toISOString()
+      },
+      apns: {
+        payload: {
+          aps: {
+            alert: { title, body },
+            sound: 'default',
+            mutableContent: true
+          }
+        }
       }
     };
 
@@ -8958,14 +8967,25 @@ IMPORTANT:
       // Send FCM push notifications
       if (fcmTokens.length > 0) {
         const messaging = admin.messaging();
+        const giftTitle = "You've received a gift!";
+        const giftBody = `Dumpling House sent you a free ${trimmedTitle}. Tap to claim!`;
         const message = {
           notification: {
-            title: "You've received a gift!",
-            body: `Dumpling House sent you a free ${trimmedTitle}. Tap to claim!`
+            title: giftTitle,
+            body: giftBody
           },
           data: {
             type: 'reward_gift',
             giftedRewardId: giftedRewardRef.id
+          },
+          apns: {
+            payload: {
+              aps: {
+                alert: { title: giftTitle, body: giftBody },
+                sound: 'default',
+                mutableContent: true
+              }
+            }
           }
         };
 
@@ -9230,14 +9250,25 @@ IMPORTANT:
       // Send FCM push notifications
       if (fcmTokens.length > 0) {
         const messaging = admin.messaging();
+        const giftTitle = "You've received a gift!";
+        const giftBody = `Dumpling House sent you a free ${trimmedTitle}. Tap to claim!`;
         const message = {
           notification: {
-            title: "You've received a gift!",
-            body: `Dumpling House sent you a free ${trimmedTitle}. Tap to claim!`
+            title: giftTitle,
+            body: giftBody
           },
           data: {
             type: 'reward_gift',
             giftedRewardId: giftedRewardRef.id
+          },
+          apns: {
+            payload: {
+              aps: {
+                alert: { title: giftTitle, body: giftBody },
+                sound: 'default',
+                mutableContent: true
+              }
+            }
           }
         };
 
@@ -10696,6 +10727,15 @@ IMPORTANT:
             type: targetType === 'all' ? 'admin_broadcast' : 'admin_individual',
             timestamp: new Date().toISOString()
           },
+          apns: {
+            payload: {
+              aps: {
+                alert: { title: trimmedTitle, body: trimmedBody },
+                sound: 'default',
+                mutableContent: true
+              }
+            }
+          },
           tokens: batchTokens
         };
 
@@ -10708,7 +10748,11 @@ IMPORTANT:
           if (response.failureCount > 0) {
             response.responses.forEach((resp, idx) => {
               if (!resp.success) {
-                logger.warn(`❌ FCM send failed for token ${idx}: ${resp.error?.code || 'unknown'}`);
+                logger.warn(`FCM send failed for token index ${idx}:`, {
+                  code: resp.error?.code,
+                  message: resp.error?.message,
+                  details: resp.error?.toJSON ? resp.error.toJSON() : undefined
+                });
               }
             });
           }
@@ -10742,7 +10786,8 @@ IMPORTANT:
         successCount,
         failureCount,
         notificationId: sentNotifRef.id,
-        totalTargeted: tokensToSend.length
+        totalTargeted: tokensToSend.length,
+        totalInAppNotified: targetUserIdsForInApp.length
       });
 
     } catch (error) {
