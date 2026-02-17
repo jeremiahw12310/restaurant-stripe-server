@@ -10634,6 +10634,19 @@ IMPORTANT:
       logger.info(`📊 Admin stats using timezone: ${statsTimezone}`);
       logger.info(`📊 Today boundaries: ${todayStart.toISOString()} to ${tomorrowStart.toISOString()}`);
 
+      // Safe count helper: return 0 on any failure and log so one bad query doesn't 500 the whole endpoint
+      const safeCount = async (queryPromise, label) => {
+        try {
+          const snap = await queryPromise;
+          const data = snap && typeof snap.data === 'function' ? snap.data() : null;
+          const count = data && typeof data.count === 'number' ? data.count : 0;
+          return count;
+        } catch (err) {
+          logger.warn(`📊 Admin stats: ${label} failed (using 0): ${err.message || err}`);
+          return 0;
+        }
+      };
+
       // Run all queries in parallel for efficiency
       // Use count() aggregation for large collections to avoid reading all documents
       const [
@@ -10647,78 +10660,60 @@ IMPORTANT:
         rewardsTodayCount,
         pointsSnapshot
       ] = await Promise.all([
-        // Total users count (using count aggregation)
-        db.collection('users').count().get().then(snap => snap.data().count),
-        
-        // New users today (using count aggregation)
-        db.collection('users')
-          .where('accountCreatedDate', '>=', todayStart)
-          .count()
-          .get()
-          .then(snap => snap.data().count),
-        
-        // New users this week (using count aggregation)
-        db.collection('users')
-          .where('accountCreatedDate', '>=', weekAgo)
-          .count()
-          .get()
-          .then(snap => snap.data().count),
-        
-        // Total receipts scanned (using count aggregation)
-        db.collection('receipts').count().get().then(snap => snap.data().count),
-        
-        // Receipts scanned today (using count aggregation)
-        db.collection('receipts')
-          .where('createdAt', '>=', todayStart)
-          .count()
-          .get()
-          .then(snap => snap.data().count),
-        
-        // Receipts scanned this week (using count aggregation)
-        db.collection('receipts')
-          .where('createdAt', '>=', weekAgo)
-          .count()
-          .get()
-          .then(snap => snap.data().count),
-        
-        // Rewards redeemed this month (using count aggregation) - only rewards with usedAt, exclude admin-deleted
-        // Changed from all-time to this month to match Admin Overview display
-        db.collection('redeemedRewards')
-          .where('isUsed', '==', true)
-          .where('deletedByAdmin', '!=', true)
-          .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
-          .where('usedAt', '<', admin.firestore.Timestamp.fromDate(nextMonthStart))
-          .count()
-          .get()
-          .then(snap => snap.data().count),
-        
-        // Rewards redeemed today - only verified rewards scanned today, exclude admin-deleted
-        // Use both lower and upper bounds to ensure we only count rewards within the current UTC day
-        db.collection('redeemedRewards')
-          .where('isUsed', '==', true)
-          .where('deletedByAdmin', '!=', true)
-          .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(todayStart))
-          .where('usedAt', '<', admin.firestore.Timestamp.fromDate(tomorrowStart))
-          .count()
-          .get()
-          .then(snap => {
-            const count = snap.data().count;
-            logger.info(`📊 Rewards redeemed today query: found ${count} rewards (between ${todayStart.toISOString()} and ${tomorrowStart.toISOString()})`);
-            return count;
-          }),
-        
-        // Get aggregate points from users collection (still need full docs for sum)
-        db.collection('users').select('lifetimePoints').get()
+        safeCount(db.collection('users').count().get(), 'users total'),
+        safeCount(
+          db.collection('users').where('accountCreatedDate', '>=', todayStart).count().get(),
+          'users today'
+        ),
+        safeCount(
+          db.collection('users').where('accountCreatedDate', '>=', weekAgo).count().get(),
+          'users this week'
+        ),
+        safeCount(db.collection('receipts').count().get(), 'receipts total'),
+        safeCount(
+          db.collection('receipts').where('createdAt', '>=', todayStart).count().get(),
+          'receipts today'
+        ),
+        safeCount(
+          db.collection('receipts').where('createdAt', '>=', weekAgo).count().get(),
+          'receipts this week'
+        ),
+        safeCount(
+          db.collection('redeemedRewards')
+            .where('isUsed', '==', true)
+            .where('deletedByAdmin', '!=', true)
+            .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
+            .where('usedAt', '<', admin.firestore.Timestamp.fromDate(nextMonthStart))
+            .count()
+            .get(),
+          'rewards this month'
+        ),
+        safeCount(
+          db.collection('redeemedRewards')
+            .where('isUsed', '==', true)
+            .where('deletedByAdmin', '!=', true)
+            .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(todayStart))
+            .where('usedAt', '<', admin.firestore.Timestamp.fromDate(tomorrowStart))
+            .count()
+            .get(),
+          'rewards today'
+        ),
+        db.collection('users').select('lifetimePoints').get().catch(err => {
+          logger.warn('📊 Admin stats: users lifetimePoints failed (using 0):', err.message || err);
+          return { forEach: () => {} };
+        })
       ]);
 
       // Calculate total points distributed from all users' lifetime points
       let totalPointsDistributed = 0;
-      pointsSnapshot.forEach(doc => {
-        const data = doc.data();
-        if (typeof data.lifetimePoints === 'number') {
-          totalPointsDistributed += data.lifetimePoints;
-        }
-      });
+      if (pointsSnapshot && typeof pointsSnapshot.forEach === 'function') {
+        pointsSnapshot.forEach(doc => {
+          const data = doc.data();
+          if (typeof data.lifetimePoints === 'number') {
+            totalPointsDistributed += data.lifetimePoints;
+          }
+        });
+      }
 
       const stats = {
         totalUsers: usersCount || 0,
@@ -10741,7 +10736,11 @@ IMPORTANT:
 
     } catch (error) {
       logger.error('❌ Error fetching admin stats:', error);
-      res.status(500).json({ error: 'Failed to fetch admin statistics' });
+      const message = error && (error.message || String(error));
+      res.status(500).json({
+        error: 'Failed to fetch admin statistics',
+        details: message ? message.slice(0, 200) : undefined
+      });
     }
   });
 
