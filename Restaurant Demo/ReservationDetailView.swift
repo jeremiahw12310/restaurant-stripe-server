@@ -7,6 +7,7 @@
 
 import SwiftUI
 import FirebaseAuth
+import MapKit
 
 struct ReservationDetailView: View {
     let reservation: UserReservation
@@ -243,8 +244,8 @@ struct ReservationDetailView: View {
                     .multilineTextAlignment(.center)
             }
 
-            if let phone = reservation.phone, !phone.isEmpty,
-               let url = URL(string: "tel:\(phone.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? phone)") {
+            if let url = URL(string: "tel:\(Config.restaurantPhoneNumber.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? Config.restaurantPhoneNumber)"),
+               UIApplication.shared.canOpenURL(url) {
                 Button(action: { UIApplication.shared.open(url) }) {
                     HStack(spacing: 8) {
                         Image(systemName: "phone.fill")
@@ -262,6 +263,23 @@ struct ReservationDetailView: View {
                 .buttonStyle(.plain)
                 .disabled(isCancelling)
             }
+
+            Button(action: openDirections) {
+                HStack(spacing: 8) {
+                    Image(systemName: "location.fill")
+                    Text("Directions")
+                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(Theme.energyBlue)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(isCancelling)
 
             Button(action: { showCancelAlert = true }) {
                 HStack(spacing: 8) {
@@ -285,6 +303,20 @@ struct ReservationDetailView: View {
             .buttonStyle(.plain)
             .disabled(isCancelling)
         }
+    }
+
+    // MARK: - Directions
+
+    private func openDirections() {
+        let coordinate = CLLocationCoordinate2D(
+            latitude: Config.restaurantLatitude,
+            longitude: Config.restaurantLongitude
+        )
+        let mapItem = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
+        mapItem.name = "Dumpling House"
+        mapItem.openInMaps(launchOptions: [
+            MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving
+        ])
     }
 
     // MARK: - Cancel API

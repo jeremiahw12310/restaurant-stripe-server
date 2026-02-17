@@ -186,12 +186,12 @@ service cloud.firestore {
         (resource.data.userId == request.auth.uid || isAdmin());
       allow create: if isAdmin(); // Only admins can create notifications
       allow delete: if isAdmin(); // Only admins can delete notifications
-      // Users can update only the 'read' field on their own notifications (mark as read)
-      allow update: if isAuthenticated() && 
-        resource.data.userId == request.auth.uid &&
+      // Users can update only the 'read' field on their own; admins can mark any notification as read
+      allow update: if isAuthenticated() &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']) &&
         request.resource.data.read is bool &&
-        request.resource.data.read == true; // Can only mark as read, not unread
+        request.resource.data.read == true &&
+        (resource.data.userId == request.auth.uid || isAdmin());
     }
     
     // Sent notifications audit log - admin only

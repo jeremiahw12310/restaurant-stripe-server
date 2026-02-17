@@ -92,6 +92,13 @@ extension Config {
 
 // MARK: - More / Settings Links
 extension Config {
+    /// Restaurant phone number for "Call restaurant" and other tel: links.
+    static let restaurantPhoneNumber = "+16158914728"
+
+    /// Restaurant location for directions (Dumpling House).
+    static let restaurantLatitude = 36.13663
+    static let restaurantLongitude = -86.80233
+
     /// Support email used by the More screen. Set this to enable mailto: behavior.
     static let supportEmail: String? = "support@bytequack.com"
 

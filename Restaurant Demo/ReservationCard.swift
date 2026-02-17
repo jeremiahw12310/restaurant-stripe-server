@@ -10,6 +10,7 @@ import SwiftUI
 struct ReservationCard: View {
     @Binding var animate: Bool
     let onTap: () -> Void
+    @State private var pulseAnimation = false
 
     var body: some View {
         Button(action: onTap) {
@@ -25,8 +26,29 @@ struct ReservationCard: View {
                         .foregroundStyle(Theme.darkGoldGradient)
                 }
 
-                // Seating status (no open/closed claim)
-                HStack(spacing: 6) {
+                // Seating status with green live indicator
+                HStack(spacing: 8) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(Theme.energyGreen)
+                            .frame(width: 6, height: 6)
+                            .scaleEffect(pulseAnimation ? 1.2 : 1.0)
+                            .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: pulseAnimation)
+                        Text("LIVE")
+                            .font(.system(size: 10, weight: .black, design: .rounded))
+                            .foregroundColor(Theme.energyGreen)
+                            .tracking(0.5)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Theme.energyGreen.opacity(0.1))
+                            .overlay(
+                                Capsule()
+                                    .stroke(Theme.energyGreen.opacity(0.3), lineWidth: 1)
+                            )
+                    )
                     Text("Seating available")
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
                         .foregroundColor(Theme.modernSecondary)
@@ -68,6 +90,9 @@ struct ReservationCard: View {
             .animation(.spring(response: 0.8, dampingFraction: 0.7).delay(0.1), value: animate)
         }
         .buttonStyle(.plain)
+        .onAppear {
+            pulseAnimation = true
+        }
     }
 }
 

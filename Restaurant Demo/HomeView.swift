@@ -111,7 +111,6 @@ struct HomeView: View {
     
     // MARK: - Location Constants
     private let locationCoordinate = CLLocationCoordinate2D(latitude: 36.13663, longitude: -86.80233)
-    private let phoneNumber = "+16158914728"
     private let address = "2117 Belcourt Ave, Nashville, TN 37212"
     
 
@@ -1112,7 +1111,7 @@ struct HomeView: View {
     }
 
     private func makeCall() {
-        if let url = URL(string: "tel:\(phoneNumber)"), UIApplication.shared.canOpenURL(url) {
+        if let url = URL(string: "tel:\(Config.restaurantPhoneNumber)"), UIApplication.shared.canOpenURL(url) {
             UIApplication.shared.open(url)
         }
     }

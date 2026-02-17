@@ -3,6 +3,7 @@
 //  Restaurant Demo
 //
 //  Admin screen to list reservations from GET /reservations and Confirm/Call/Cancel per row.
+//  Redesigned for easier viewing, cancelling, and managing pending reservations.
 //
 
 import SwiftUI
@@ -50,6 +51,24 @@ struct AdminReservation: Identifiable {
             confirmedAt: nil,
             confirmedBy: json["confirmedBy"] as? String
         )
+    }
+
+    var formattedDate: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let d = formatter.date(from: date) else { return date }
+        if Calendar.current.isDateInToday(d) { return "Today" }
+        if Calendar.current.isDateInTomorrow(d) { return "Tomorrow" }
+        let display = DateFormatter()
+        display.dateFormat = "EEEE, MMM d"
+        return display.string(from: d)
+    }
+
+    var isToday: Bool {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let d = formatter.date(from: date) else { return false }
+        return Calendar.current.isDateInToday(d)
     }
 }
 
@@ -258,21 +277,31 @@ final class AdminReservationsViewModel: ObservableObject {
 struct AdminReservationsView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel = AdminReservationsViewModel()
+    @State private var selectedReservation: AdminReservation?
+    @State private var successMessage: String?
+    @State private var showSuccessOverlay = false
 
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.98, green: 0.96, blue: 0.94)
+                Theme.modernBackground
                     .ignoresSafeArea()
 
                 VStack(spacing: 0) {
                     statusFilter
+                    statsBar
                     if viewModel.errorMessage != nil {
                         errorBanner
                     }
                     if viewModel.isLoading && viewModel.reservations.isEmpty {
                         Spacer()
-                        ProgressView("Loading reservations...")
+                        VStack(spacing: 16) {
+                            ProgressView()
+                                .scaleEffect(1.2)
+                            Text("Loading reservations...")
+                                .font(.system(size: 15, weight: .medium, design: .rounded))
+                                .foregroundColor(Theme.modernSecondary)
+                        }
                         Spacer()
                     } else if viewModel.reservations.isEmpty {
                         emptyState
@@ -285,65 +314,160 @@ struct AdminReservationsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    Button("Close") {
+                        dismiss()
+                    }
+                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Theme.darkGoldGradient)
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: { viewModel.loadReservations() }) {
                         Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Theme.darkGoldGradient)
                     }
                 }
             }
             .onAppear {
                 viewModel.loadReservations()
             }
+            .sheet(item: $selectedReservation) { res in
+                AdminReservationDetailSheet(
+                    reservation: res,
+                    viewModel: viewModel,
+                    onDismiss: { selectedReservation = nil },
+                    onSuccess: { msg in
+                        successMessage = msg
+                        showSuccessOverlay = true
+                        selectedReservation = nil
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            withAnimation(.easeOut(duration: 0.25)) { showSuccessOverlay = false }
+                        }
+                    }
+                )
+            }
+            .overlay {
+                if showSuccessOverlay, let msg = successMessage {
+                    successToast(message: msg)
+                }
+            }
         }
     }
 
     private var statusFilter: some View {
-        Picker("Status", selection: $viewModel.selectedStatus) {
-            ForEach(AdminReservationsViewModel.StatusFilter.allCases, id: \.self) { filter in
-                Text(filter.displayName).tag(filter)
+        VStack(spacing: 0) {
+            Picker("Status", selection: $viewModel.selectedStatus) {
+                ForEach(AdminReservationsViewModel.StatusFilter.allCases, id: \.self) { filter in
+                    Text(filter.displayName).tag(filter)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+            .onChange(of: viewModel.selectedStatus) { _, newValue in
+                viewModel.setFilter(newValue)
             }
         }
-        .pickerStyle(.segmented)
+    }
+
+    private var statsBar: some View {
+        HStack(spacing: 16) {
+            HStack(spacing: 6) {
+                Image(systemName: statusIconName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.darkGoldGradient)
+                Text("\(viewModel.reservations.count) \(viewModel.selectedStatus.displayName.lowercased())")
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundColor(Theme.modernSecondary)
+            }
+            if !viewModel.reservations.isEmpty {
+                let todayCount = viewModel.reservations.filter { $0.isToday }.count
+                if todayCount > 0 {
+                    Text("·")
+                        .foregroundColor(Theme.modernSecondary)
+                    Text("\(todayCount) today")
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                        .foregroundColor(Theme.modernPrimary)
+                }
+            }
+            Spacer()
+        }
         .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .onChange(of: viewModel.selectedStatus) { _, newValue in
-            viewModel.setFilter(newValue)
+        .padding(.vertical, 8)
+        .background(Theme.modernCardSecondary.opacity(0.6))
+    }
+
+    private var statusIconName: String {
+        switch viewModel.selectedStatus {
+        case .pending: return "clock.badge.questionmark"
+        case .confirmed: return "checkmark.circle.fill"
+        case .cancelled: return "xmark.circle.fill"
+        case .all: return "tray.full.fill"
         }
     }
 
     private var errorBanner: some View {
         Group {
             if let msg = viewModel.errorMessage {
-                HStack {
+                HStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(Theme.energyRed)
                     Text(msg)
-                        .font(.subheadline)
-                        .foregroundColor(.red)
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                        .foregroundColor(Theme.modernPrimary)
                     Spacer()
                     Button("Retry") { viewModel.loadReservations() }
-                        .font(.subheadline)
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.darkGoldGradient)
                 }
-                .padding()
-                .background(Color.red.opacity(0.1))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Theme.energyRed.opacity(0.1))
                 .padding(.horizontal, 20)
             }
         }
     }
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "calendar.badge.clock")
-                .font(.system(size: 50))
-                .foregroundColor(.secondary)
-            Text("No reservations")
-                .font(.headline)
-            Text(viewModel.selectedStatus == .pending ? "Pending reservations will appear here." : "No \(viewModel.selectedStatus.rawValue) reservations.")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+        VStack(spacing: 20) {
+            Image(systemName: emptyStateIcon)
+                .font(.system(size: 56))
+                .foregroundStyle(Theme.darkGoldGradient.opacity(0.6))
+            Text(emptyStateTitle)
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundColor(Theme.modernPrimary)
+            Text(emptyStateSubtitle)
+                .font(.system(size: 15, weight: .medium, design: .rounded))
+                .foregroundColor(Theme.modernSecondary)
                 .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var emptyStateIcon: String {
+        switch viewModel.selectedStatus {
+        case .pending: return "clock.badge.questionmark"
+        case .confirmed: return "checkmark.circle"
+        case .cancelled: return "xmark.circle"
+        case .all: return "tray"
+        }
+    }
+
+    private var emptyStateTitle: String {
+        switch viewModel.selectedStatus {
+        case .pending: return "No pending reservations"
+        case .confirmed: return "No confirmed reservations"
+        case .cancelled: return "No cancelled reservations"
+        case .all: return "No reservations"
+        }
+    }
+
+    private var emptyStateSubtitle: String {
+        viewModel.selectedStatus == .pending
+            ? "New requests will appear here. Pull down to refresh."
+            : "Reservations with status \"\(viewModel.selectedStatus.displayName)\" will appear here."
     }
 
     private var reservationsByDate: [(String, [AdminReservation])] {
@@ -365,20 +489,40 @@ struct AdminReservationsView: View {
 
     private var listContent: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 ForEach(reservationsByDate, id: \.0) { dateStr, reservations in
                     Section {
                         ForEach(reservations) { res in
-                            ReservationRowView(
-                                reservation: res,
-                                viewModel: viewModel
-                            )
+                            Button {
+                                selectedReservation = res
+                            } label: {
+                                ReservationRowView(
+                                    reservation: res,
+                                    viewModel: viewModel,
+                                    onSuccess: { msg in
+                                        successMessage = msg
+                                        showSuccessOverlay = true
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                            withAnimation(.easeOut(duration: 0.25)) { showSuccessOverlay = false }
+                                        }
+                                    }
+                                )
+                            }
+                            .buttonStyle(.plain)
                         }
                     } header: {
-                        Text(sectionTitle(for: dateStr))
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(.secondary)
-                            .padding(.top, dateStr == reservationsByDate.first?.0 ? 0 : 8)
+                        HStack(spacing: 8) {
+                            Text(sectionTitle(for: dateStr))
+                                .font(.system(size: 15, weight: .bold, design: .rounded))
+                                .foregroundColor(Theme.modernPrimary)
+                            if dateStr == reservationsByDate.first?.0 {
+                                Text("(\(reservations.count))")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(Theme.modernSecondary)
+                            }
+                        }
+                        .padding(.top, dateStr == reservationsByDate.first?.0 ? 4 : 16)
+                        .padding(.bottom, 4)
                     }
                 }
                 if viewModel.hasMore && !viewModel.isLoading {
@@ -394,6 +538,31 @@ struct AdminReservationsView: View {
             viewModel.loadReservations()
         }
     }
+
+    private func successToast(message: String) -> some View {
+        VStack {
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundColor(.white)
+                Text(message)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .background(
+                Capsule()
+                    .fill(Theme.energyGreen)
+                    .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
+            )
+            .padding(.top, 8)
+            Spacer()
+        }
+        .transition(.move(edge: .top).combined(with: .opacity))
+        .animation(.easeOut(duration: 0.25), value: showSuccessOverlay)
+    }
 }
 
 // MARK: - Row
@@ -401,133 +570,138 @@ struct AdminReservationsView: View {
 struct ReservationRowView: View {
     let reservation: AdminReservation
     @ObservedObject var viewModel: AdminReservationsViewModel
+    var onSuccess: ((String) -> Void)?
     @State private var isConfirming = false
     @State private var isCancelling = false
     @State private var isDeleting = false
     @State private var showConfirmAlert = false
     @State private var showCancelAlert = false
     @State private var showDeleteAlert = false
-    @State private var showSuccessBanner = false
-    @State private var successMessage = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Success banner
-            if showSuccessBanner {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.white)
-                    Text(successMessage)
-                        .font(.caption.weight(.semibold))
-                        .foregroundColor(.white)
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Color.green))
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
-
+        VStack(alignment: .leading, spacing: 14) {
+            // Header: name, date/time, party, status
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(reservation.customerName)
-                        .font(.headline)
-                    Text("\(reservation.date) at \(reservation.time) · Party of \(reservation.partySize)")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    if let req = reservation.specialRequests, !req.isEmpty {
-                        Text(req)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(2)
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(Theme.modernPrimary)
+                    Text("\(reservation.formattedDate) at \(reservation.time)")
+                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                        .foregroundColor(Theme.modernSecondary)
+                    HStack(spacing: 8) {
+                        Label("Party of \(reservation.partySize)", systemImage: "person.2.fill")
+                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                            .foregroundColor(Theme.modernSecondary)
+                        if let req = reservation.specialRequests, !req.isEmpty {
+                            Text("·")
+                            Text(req)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(Theme.modernSecondary)
+                                .lineLimit(1)
+                        }
                     }
                 }
-                Spacer()
+                Spacer(minLength: 12)
                 statusBadge
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Theme.modernSecondary.opacity(0.7))
             }
 
+            Divider()
+                .background(Theme.modernCardSecondary)
+
+            // Actions: primary (Confirm/Cancel) then Call, Delete
             HStack(spacing: 10) {
                 if reservation.status == "pending" {
-                    Button(action: {
-                        showConfirmAlert = true
-                    }) {
-                        HStack(spacing: 4) {
+                    Button(action: { showConfirmAlert = true }) {
+                        HStack(spacing: 6) {
                             if isConfirming {
                                 ProgressView()
-                                    .scaleEffect(0.8)
+                                    .scaleEffect(0.75)
+                                    .tint(.white)
                             } else {
                                 Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 14))
                                 Text("Confirm")
-                                    .font(.caption.weight(.semibold))
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
                             }
                         }
                         .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.green))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.energyGreen))
                     }
                     .disabled(isConfirming || isCancelling)
 
-                    Button(action: {
-                        showCancelAlert = true
-                    }) {
-                        HStack(spacing: 4) {
+                    Button(action: { showCancelAlert = true }) {
+                        HStack(spacing: 6) {
                             if isCancelling {
                                 ProgressView()
-                                    .scaleEffect(0.8)
+                                    .scaleEffect(0.75)
+                                    .tint(.white)
                             } else {
                                 Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 14))
                                 Text("Cancel")
-                                    .font(.caption.weight(.semibold))
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
                             }
                         }
                         .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.energyOrange))
                     }
                     .disabled(isConfirming || isCancelling)
                 }
-
-                Button(action: { showDeleteAlert = true }) {
-                    HStack(spacing: 4) {
-                        if isDeleting {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                        } else {
-                            Image(systemName: "trash.fill")
-                            Text("Delete")
-                                .font(.caption.weight(.semibold))
-                        }
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.red))
-                }
-                .disabled(isConfirming || isCancelling || isDeleting)
 
                 if !reservation.phone.isEmpty,
                    let url = URL(string: "tel:\(reservation.phone.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? reservation.phone)") {
                     Button(action: { UIApplication.shared.open(url) }) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 5) {
                             Image(systemName: "phone.fill")
+                                .font(.system(size: 12))
                             Text("Call")
-                                .font(.caption.weight(.semibold))
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
                         }
                         .foregroundColor(.white)
                         .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.blue))
+                        .padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.energyBlue))
                     }
                 }
+
+                Button(action: { showDeleteAlert = true }) {
+                    HStack(spacing: 5) {
+                        if isDeleting {
+                            ProgressView()
+                                .scaleEffect(0.75)
+                                .tint(.white)
+                        } else {
+                            Image(systemName: "trash.fill")
+                                .font(.system(size: 12))
+                            Text("Delete")
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        }
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.energyRed))
+                }
+                .disabled(isConfirming || isCancelling || isDeleting)
             }
         }
-        .padding(16)
+        .padding(18)
         .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white)
-                .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 4)
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Theme.cardGradient)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(reservation.status == "pending" ? Theme.primaryGold.opacity(0.4) : Color.clear, lineWidth: 1.5)
+                )
+                .shadow(color: Theme.cardShadow, radius: 10, x: 0, y: 4)
         )
         .alert("Confirm Reservation", isPresented: $showConfirmAlert) {
             Button("Confirm", role: .none) {
@@ -535,17 +709,13 @@ struct ReservationRowView: View {
                 viewModel.confirmReservation(id: reservation.id) { success in
                     isConfirming = false
                     if success {
-                        successMessage = "\(reservation.customerName) confirmed -- customer has been notified"
-                        withAnimation { showSuccessBanner = true }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                            withAnimation { showSuccessBanner = false }
-                        }
+                        onSuccess?("\(reservation.customerName) confirmed — customer notified")
                     }
                 }
             }
             Button("Go Back", role: .cancel) {}
         } message: {
-            Text("Confirm \(reservation.customerName)'s reservation for \(reservation.date) at \(reservation.time)? The customer will be notified.")
+            Text("Confirm \(reservation.customerName)'s reservation for \(reservation.formattedDate) at \(reservation.time)? The customer will be notified.")
         }
         .alert("Cancel Reservation", isPresented: $showCancelAlert) {
             Button("Cancel Reservation", role: .destructive) {
@@ -553,17 +723,13 @@ struct ReservationRowView: View {
                 viewModel.cancelReservation(id: reservation.id) { success in
                     isCancelling = false
                     if success {
-                        successMessage = "\(reservation.customerName)'s reservation cancelled -- customer has been notified"
-                        withAnimation { showSuccessBanner = true }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                            withAnimation { showSuccessBanner = false }
-                        }
+                        onSuccess?("\(reservation.customerName)'s reservation cancelled — customer notified")
                     }
                 }
             }
-            Button("Go Back", role: .cancel) {}
+            Button("Keep It", role: .cancel) {}
         } message: {
-            Text("Cancel \(reservation.customerName)'s reservation for \(reservation.date) at \(reservation.time)? The customer will be notified.")
+            Text("Cancel \(reservation.customerName)'s reservation for \(reservation.formattedDate) at \(reservation.time)? The customer will be notified.")
         }
         .alert("Delete Reservation", isPresented: $showDeleteAlert) {
             Button("Delete", role: .destructive) {
@@ -571,11 +737,7 @@ struct ReservationRowView: View {
                 viewModel.deleteReservation(id: reservation.id) { success in
                     isDeleting = false
                     if success {
-                        successMessage = "Reservation deleted — customer has been notified"
-                        withAnimation { showSuccessBanner = true }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                            withAnimation { showSuccessBanner = false }
-                        }
+                        onSuccess?("Reservation deleted — customer notified")
                     }
                 }
             }
@@ -587,18 +749,325 @@ struct ReservationRowView: View {
 
     private var statusBadge: some View {
         Text(reservation.status.capitalized)
-            .font(.caption.weight(.semibold))
+            .font(.system(size: 12, weight: .bold, design: .rounded))
             .foregroundColor(statusColor)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: 6).fill(statusColor.opacity(0.2)))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 8).fill(statusColor.opacity(0.2)))
     }
 
     private var statusColor: Color {
         switch reservation.status {
-        case "confirmed": return .green
-        case "cancelled": return .red
-        default: return .orange
+        case "confirmed": return Theme.energyGreen
+        case "cancelled": return Theme.energyRed
+        default: return Theme.energyOrange
+        }
+    }
+}
+
+// MARK: - Detail Sheet (full info + actions)
+
+struct AdminReservationDetailSheet: View {
+    let reservation: AdminReservation
+    @ObservedObject var viewModel: AdminReservationsViewModel
+    let onDismiss: () -> Void
+    let onSuccess: (String) -> Void
+    @Environment(\.dismiss) private var envDismiss
+    @State private var isConfirming = false
+    @State private var isCancelling = false
+    @State private var isDeleting = false
+    @State private var showConfirmAlert = false
+    @State private var showCancelAlert = false
+    @State private var showDeleteAlert = false
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.modernBackground
+                    .ignoresSafeArea()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        heroCard
+                        detailsCard
+                        actionsSection
+                    }
+                    .padding(20)
+                    .padding(.bottom, 32)
+                }
+            }
+            .navigationTitle("Reservation")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") {
+                        onDismiss()
+                        envDismiss()
+                    }
+                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Theme.darkGoldGradient)
+                }
+            }
+            .alert("Confirm Reservation", isPresented: $showConfirmAlert) {
+                Button("Confirm", role: .none) {
+                    isConfirming = true
+                    viewModel.confirmReservation(id: reservation.id) { success in
+                        isConfirming = false
+                        if success {
+                            onSuccess("\(reservation.customerName) confirmed — customer notified")
+                            envDismiss()
+                        }
+                    }
+                }
+                Button("Go Back", role: .cancel) {}
+            } message: {
+                Text("Confirm this reservation? The customer will be notified.")
+            }
+            .alert("Cancel Reservation", isPresented: $showCancelAlert) {
+                Button("Cancel Reservation", role: .destructive) {
+                    isCancelling = true
+                    viewModel.cancelReservation(id: reservation.id) { success in
+                        isCancelling = false
+                        if success {
+                            onSuccess("\(reservation.customerName)'s reservation cancelled — customer notified")
+                            envDismiss()
+                        }
+                    }
+                }
+                Button("Keep It", role: .cancel) {}
+            } message: {
+                Text("Cancel this reservation? The customer will be notified.")
+            }
+            .alert("Delete Reservation", isPresented: $showDeleteAlert) {
+                Button("Delete", role: .destructive) {
+                    isDeleting = true
+                    viewModel.deleteReservation(id: reservation.id) { success in
+                        isDeleting = false
+                        if success {
+                            onSuccess("Reservation deleted — customer notified")
+                            envDismiss()
+                        }
+                    }
+                }
+                Button("Go Back", role: .cancel) {}
+            } message: {
+                Text("Permanently delete this reservation? The customer can be notified.")
+            }
+        }
+    }
+
+    private var heroCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(reservation.formattedDate)
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.darkGoldGradient)
+                    Text(reservation.time)
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .foregroundColor(Theme.modernPrimary)
+                }
+                Spacer()
+                statusBadge
+            }
+            Text(reservation.customerName)
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .foregroundColor(Theme.modernPrimary)
+            HStack(spacing: 8) {
+                Image(systemName: "person.2.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.darkGoldGradient)
+                Text("Party of \(reservation.partySize)")
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .foregroundColor(Theme.modernSecondary)
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(Theme.cardGradient)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24)
+                        .stroke(Theme.darkGoldGradient.opacity(0.4), lineWidth: 2)
+                )
+                .shadow(color: Theme.goldShadow.opacity(0.4), radius: 12, x: 0, y: 6)
+        )
+    }
+
+    private var statusBadge: some View {
+        Text(reservation.status.capitalized)
+            .font(.system(size: 13, weight: .bold, design: .rounded))
+            .foregroundColor(detailStatusColor)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 10).fill(detailStatusColor.opacity(0.2)))
+    }
+
+    private var detailStatusColor: Color {
+        switch reservation.status {
+        case "confirmed": return Theme.energyGreen
+        case "cancelled": return Theme.energyRed
+        default: return Theme.energyOrange
+        }
+    }
+
+    private var detailsCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Contact & notes")
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundColor(Theme.modernPrimary)
+            if !reservation.phone.isEmpty {
+                detailRow(icon: "phone.fill", title: "Phone", value: reservation.phone, tappable: true) {
+                    if let url = URL(string: "tel:\(reservation.phone.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? reservation.phone)") {
+                        UIApplication.shared.open(url)
+                    }
+                }
+            }
+            if let email = reservation.email, !email.isEmpty {
+                detailRow(icon: "envelope.fill", title: "Email", value: email, tappable: true) {
+                    if let url = URL(string: "mailto:\(email)") {
+                        UIApplication.shared.open(url)
+                    }
+                }
+            }
+            if let req = reservation.specialRequests, !req.isEmpty {
+                detailRow(icon: "text.quote", title: "Special requests", value: req, tappable: false, action: nil)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Theme.modernCard)
+                .shadow(color: Theme.cardShadow, radius: 8, x: 0, y: 4)
+        )
+    }
+
+    private func detailRow(icon: String, title: String, value: String, tappable: Bool, action: (() -> Void)?) -> some View {
+        Group {
+            if tappable, let action = action {
+                Button(action: action) {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: icon)
+                            .font(.system(size: 14))
+                            .foregroundStyle(Theme.darkGoldGradient)
+                            .frame(width: 24, alignment: .center)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(title)
+                                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                .foregroundColor(Theme.modernSecondary)
+                            Text(value)
+                                .font(.system(size: 15, weight: .medium, design: .rounded))
+                                .foregroundColor(Theme.modernPrimary)
+                        }
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(Theme.modernSecondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+            } else {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: icon)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.darkGoldGradient)
+                        .frame(width: 24, alignment: .center)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundColor(Theme.modernSecondary)
+                        Text(value)
+                            .font(.system(size: 15, weight: .medium, design: .rounded))
+                            .foregroundColor(Theme.modernPrimary)
+                    }
+                    Spacer()
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    private var actionsSection: some View {
+        VStack(spacing: 12) {
+            if reservation.status == "pending" {
+                Button(action: { showConfirmAlert = true }) {
+                    HStack(spacing: 10) {
+                        if isConfirming {
+                            ProgressView()
+                                .scaleEffect(0.9)
+                                .tint(.white)
+                        } else {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 18))
+                            Text("Confirm reservation")
+                                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                        }
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(RoundedRectangle(cornerRadius: 16).fill(Theme.energyGreen))
+                }
+                .disabled(isConfirming || isCancelling)
+
+                Button(action: { showCancelAlert = true }) {
+                    HStack(spacing: 10) {
+                        if isCancelling {
+                            ProgressView()
+                                .scaleEffect(0.9)
+                                .tint(.white)
+                        } else {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 18))
+                            Text("Cancel reservation")
+                                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                        }
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(RoundedRectangle(cornerRadius: 16).fill(Theme.energyOrange))
+                }
+                .disabled(isConfirming || isCancelling)
+            }
+
+            if !reservation.phone.isEmpty,
+               let url = URL(string: "tel:\(reservation.phone.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? reservation.phone)") {
+                Button(action: { UIApplication.shared.open(url) }) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "phone.fill")
+                            .font(.system(size: 18))
+                        Text("Call customer")
+                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(RoundedRectangle(cornerRadius: 16).fill(Theme.energyBlue))
+                }
+            }
+
+            Button(action: { showDeleteAlert = true }) {
+                HStack(spacing: 10) {
+                    if isDeleting {
+                        ProgressView()
+                            .scaleEffect(0.9)
+                            .tint(.white)
+                    } else {
+                        Image(systemName: "trash.fill")
+                            .font(.system(size: 16))
+                        Text("Delete reservation")
+                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    }
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(RoundedRectangle(cornerRadius: 16).fill(Theme.energyRed))
+            }
+            .disabled(isConfirming || isCancelling || isDeleting)
         }
     }
 }
