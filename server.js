@@ -5448,11 +5448,20 @@ IMPORTANT:
       const expiresAt = parseFirestoreDate(data.expiresAt);
       const redeemedAt = parseFirestoreDate(data.redeemedAt);
 
+      let customerName = null;
+      if (data.userId) {
+        const userDoc = await db.collection('users').doc(data.userId).get();
+        if (userDoc.exists) {
+          customerName = userDoc.data().firstName || null;
+        }
+      }
+
       return res.json({
         status: rewardStatusFromData(data),
         reward: {
           id: bestDoc.id,
           userId: data.userId || null,
+          customerName: customerName,
           rewardTitle: data.rewardTitle || null,
           rewardDescription: data.rewardDescription || null,
           rewardCategory: data.rewardCategory || null,
@@ -5471,7 +5480,9 @@ IMPORTANT:
           cookingMethod: data.cookingMethod || null,            // NEW: For dumpling rewards
           drinkType: data.drinkType || null,                     // NEW: For Lemonade/Soda rewards
           selectedDrinkItemId: data.selectedDrinkItemId || null, // NEW: For Full Combo
-          selectedDrinkItemName: data.selectedDrinkItemName || null // NEW: For Full Combo
+          selectedDrinkItemName: data.selectedDrinkItemName || null, // NEW: For Full Combo
+          iceLevel: data.iceLevel || null,
+          sugarLevel: data.sugarLevel || null
         }
       });
     } catch (error) {
@@ -5509,6 +5520,15 @@ IMPORTANT:
       const staffEmail = staffContext.userData?.email || null;
       const staffRole = staffContext.userData?.isAdmin === true ? 'admin' : 'employee';
 
+      const preData = bestDoc.data() || {};
+      let customerName = null;
+      if (preData.userId) {
+        const userDoc = await db.collection('users').doc(preData.userId).get();
+        if (userDoc.exists) {
+          customerName = userDoc.data().firstName || null;
+        }
+      }
+
       const result = await db.runTransaction(async (tx) => {
         const doc = await tx.get(rewardRef);
         if (!doc.exists) {
@@ -5543,7 +5563,9 @@ IMPORTANT:
               cookingMethod: data.cookingMethod || null,
               drinkType: data.drinkType || null,
               selectedDrinkItemId: data.selectedDrinkItemId || null,
-              selectedDrinkItemName: data.selectedDrinkItemName || null
+              selectedDrinkItemName: data.selectedDrinkItemName || null,
+              iceLevel: data.iceLevel || null,
+              sugarLevel: data.sugarLevel || null
             }
           };
         }
@@ -5573,7 +5595,9 @@ IMPORTANT:
               cookingMethod: data.cookingMethod || null,
               drinkType: data.drinkType || null,
               selectedDrinkItemId: data.selectedDrinkItemId || null,
-              selectedDrinkItemName: data.selectedDrinkItemName || null
+              selectedDrinkItemName: data.selectedDrinkItemName || null,
+              iceLevel: data.iceLevel || null,
+              sugarLevel: data.sugarLevel || null
             }
           };
         }
@@ -5614,11 +5638,16 @@ IMPORTANT:
             cookingMethod: data.cookingMethod || null,
             drinkType: data.drinkType || null,
             selectedDrinkItemId: data.selectedDrinkItemId || null,
-            selectedDrinkItemName: data.selectedDrinkItemName || null
+            selectedDrinkItemName: data.selectedDrinkItemName || null,
+            iceLevel: data.iceLevel || null,
+            sugarLevel: data.sugarLevel || null
           }
         };
       });
 
+      if (result.reward) {
+        result.reward.customerName = customerName;
+      }
       return res.json(result);
     } catch (error) {
       console.error('❌ Error consuming reward code:', error);

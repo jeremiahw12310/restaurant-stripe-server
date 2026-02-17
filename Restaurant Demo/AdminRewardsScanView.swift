@@ -489,7 +489,6 @@ private struct AdminRewardsConfirmView: View {
             if let reward = viewModel.reward {
                 AdminRewardGiveCustomerView(
                     reward: reward,
-                    displayName: viewModel.buildDisplayName(for: reward),
                     onDone: {
                         showGiveCustomerScreen = false
                         onFinished()
@@ -504,9 +503,65 @@ private struct AdminRewardsConfirmView: View {
 
 private struct AdminRewardGiveCustomerView: View {
     let reward: AdminRewardsScanViewModel.Reward
-    let displayName: String
     let onDone: () -> Void
-    
+
+    /// Receipt-style lines: (label, value). Only includes lines that have a value.
+    private var receiptLines: [(label: String, value: String)] {
+        var lines: [(String, String)] = []
+        let name = reward.customerName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? reward.customerName!
+            : "Customer"
+        lines.append(("", name))
+
+        if let title = reward.rewardTitle, !title.isEmpty {
+            lines.append(("Reward", title))
+        }
+
+        let isFullCombo = reward.rewardTitle == "Full Combo"
+        let hasHalfAndHalf = reward.selectedItemName != nil && reward.selectedItemName2 != nil
+
+        if hasHalfAndHalf, let n1 = reward.selectedItemName, let n2 = reward.selectedItemName2 {
+            if isFullCombo {
+                lines.append(("Dumplings", "Half and Half: \(n1) + \(n2)"))
+            } else {
+                lines.append(("Item", "Half and Half: \(n1) + \(n2)"))
+            }
+        } else if let item = reward.selectedItemName, isFullCombo {
+            lines.append(("Dumplings", item))
+        } else if let item = reward.selectedItemName, reward.cookingMethod != nil || reward.rewardTitle?.contains("Dumpling") == true {
+            lines.append(("Item", item))
+        }
+
+        if let method = reward.cookingMethod, !method.isEmpty {
+            lines.append(("Cooking", method))
+        }
+
+        if isFullCombo, let drink = reward.selectedDrinkItemName {
+            lines.append(("Drink", drink))
+        } else if !isFullCombo, let drink = reward.selectedItemName, reward.selectedToppingName != nil || reward.drinkType != nil || reward.iceLevel != nil || reward.sugarLevel != nil {
+            lines.append(("Drink", drink))
+        } else if !isFullCombo, let drink = reward.selectedItemName, reward.rewardTitle != "6-Piece Lunch Special Dumplings" {
+            lines.append(("Item", drink))
+        }
+
+        if let drinkType = reward.drinkType, !drinkType.isEmpty {
+            lines.append(("Drink type", drinkType))
+        }
+        if let topping = reward.selectedToppingName, !topping.isEmpty {
+            lines.append(("Topping", topping))
+        }
+        if let ice = reward.iceLevel, !ice.isEmpty, ice != "Normal" {
+            lines.append(("Ice", ice))
+        }
+        if let sugar = reward.sugarLevel, !sugar.isEmpty, sugar != "Normal" {
+            lines.append(("Sugar", sugar))
+        }
+        if let points = reward.pointsRequired {
+            lines.append(("Points", "\(points)"))
+        }
+        return lines
+    }
+
     var body: some View {
         ZStack {
             LinearGradient(
@@ -515,64 +570,50 @@ private struct AdminRewardGiveCustomerView: View {
                 endPoint: .bottomTrailing
             )
             .ignoresSafeArea()
-            
-            VStack(spacing: 32) {
-                Spacer()
-                
-                // Success checkmark
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 80, weight: .bold))
-                    .foregroundColor(.green)
-                    .shadow(color: .green.opacity(0.3), radius: 20, x: 0, y: 10)
-                
-                // Header text
-                Text("Please give the customer:")
-                    .font(.system(size: 22, weight: .black, design: .rounded))
+
+            VStack(spacing: 24) {
+                Text("Please write down the customer's order")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
                     .foregroundColor(Theme.modernPrimary)
-                
-                // Item details card
-                VStack(spacing: 16) {
-                    // Main item display name
-                    Text(displayName)
-                        .font(.system(size: 24, weight: .black, design: .rounded))
-                        .foregroundColor(Theme.modernPrimary)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(3)
-                    
-                    Divider()
-                        .background(Color.white.opacity(0.2))
-                    
-                    // Reward tier name
-                    if let rewardTitle = reward.rewardTitle {
-                        VStack(spacing: 6) {
-                            Text(rewardTitle)
-                                .font(.system(size: 18, weight: .bold, design: .rounded))
-                                .foregroundColor(Theme.modernSecondary)
-                            
-                            if let pointsRequired = reward.pointsRequired {
-                                Text("\(pointsRequired) Points")
-                                    .font(.system(size: 16, weight: .semibold, design: .rounded))
-                                    .foregroundColor(Theme.modernSecondary.opacity(0.8))
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 24)
+                    .padding(.horizontal)
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(Array(receiptLines.enumerated()), id: \.offset) { _, line in
+                            if line.label.isEmpty {
+                                Text(line.value)
+                                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                                    .foregroundColor(.black)
+                            } else {
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text(line.label + ":")
+                                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                        .foregroundColor(.black.opacity(0.7))
+                                        .frame(width: 90, alignment: .leading)
+                                    Text(line.value)
+                                        .font(.system(size: 15, weight: .regular, design: .rounded))
+                                        .foregroundColor(.black)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
                             }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color.black.opacity(0.15), lineWidth: 1)
+                            )
+                            .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 4)
+                    )
+                    .padding(.horizontal, 20)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(24)
-                .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(Theme.modernCard)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 20)
-                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                        )
-                        .shadow(color: Theme.cardShadow, radius: 15, x: 0, y: 8)
-                )
-                .padding(.horizontal, 24)
-                
-                Spacer()
-                
-                // Done button
+
                 Button(action: onDone) {
                     Text("Done")
                         .font(.system(size: 18, weight: .black, design: .rounded))
@@ -608,6 +649,7 @@ final class AdminRewardsScanViewModel: ObservableObject {
     struct Reward: Codable, Equatable {
         let id: String?
         let userId: String?
+        let customerName: String?  // Customer's first name for receipt display
         let rewardTitle: String?
         let rewardDescription: String?
         let rewardCategory: String?

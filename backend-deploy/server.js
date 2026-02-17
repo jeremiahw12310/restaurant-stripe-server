@@ -8779,11 +8779,20 @@ IMPORTANT:
         }
       }
 
+      let customerName = null;
+      if (data.userId) {
+        const userDoc = await db.collection('users').doc(data.userId).get();
+        if (userDoc.exists) {
+          customerName = userDoc.data().firstName || null;
+        }
+      }
+
       return res.json({
         status: status,
         reward: {
           id: bestDoc.id,
           userId: data.userId || null,
+          customerName: customerName,
           rewardTitle: data.rewardTitle || null,
           rewardDescription: data.rewardDescription || null,
           rewardCategory: data.rewardCategory || null,
@@ -8841,6 +8850,15 @@ IMPORTANT:
       const staffUid = staffContext.uid;
       const staffEmail = staffContext.userData?.email || null;
       const staffRole = staffContext.userData?.isAdmin === true ? 'admin' : 'employee';
+
+      const preData = bestDoc.data() || {};
+      let customerName = null;
+      if (preData.userId) {
+        const userDoc = await db.collection('users').doc(preData.userId).get();
+        if (userDoc.exists) {
+          customerName = userDoc.data().firstName || null;
+        }
+      }
 
       const result = await db.runTransaction(async (tx) => {
         const doc = await tx.get(rewardRef);
@@ -8978,6 +8996,9 @@ IMPORTANT:
         delete result.needsRefund;
       }
 
+      if (result.reward) {
+        result.reward.customerName = customerName;
+      }
       return res.json(result);
     } catch (error) {
       logger.error('❌ Error consuming reward code:', error);
