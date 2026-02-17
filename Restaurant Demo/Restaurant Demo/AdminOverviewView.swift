@@ -820,7 +820,7 @@ struct AdminDetailView: View {
                             ForEach(AdminOfficeViewModel.SortOption.allCases, id: \.self) { option in
                                 Button(option.rawValue) {
                                     userViewModel.sortOption = option
-                                    userViewModel.sortUsers()
+                                    userViewModel.loadUsers()
                                 }
                             }
                         } label: {
@@ -841,7 +841,7 @@ struct AdminDetailView: View {
                         
                         Button(action: {
                             userViewModel.sortOrder = userViewModel.sortOrder == .ascending ? .descending : .ascending
-                            userViewModel.sortUsers()
+                            userViewModel.loadUsers()
                         }) {
                             HStack(spacing: 4) {
                                 Image(systemName: userViewModel.sortOrder == .ascending ? "arrow.up" : "arrow.down")

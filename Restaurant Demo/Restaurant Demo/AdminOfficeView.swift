@@ -56,6 +56,8 @@ struct AdminUserRow: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 
                 HStack(spacing: 8) {
                     Text("\(user.points) pts")

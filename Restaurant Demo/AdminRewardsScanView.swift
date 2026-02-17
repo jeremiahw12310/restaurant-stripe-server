@@ -550,10 +550,10 @@ private struct AdminRewardGiveCustomerView: View {
         if let topping = reward.selectedToppingName, !topping.isEmpty {
             lines.append(("Topping", topping))
         }
-        if let ice = reward.iceLevel, !ice.isEmpty, ice != "Normal" {
+        if let ice = reward.iceLevel, !ice.isEmpty {
             lines.append(("Ice", ice))
         }
-        if let sugar = reward.sugarLevel, !sugar.isEmpty, sugar != "Normal" {
+        if let sugar = reward.sugarLevel, !sugar.isEmpty {
             lines.append(("Sugar", sugar))
         }
         if let points = reward.pointsRequired {
@@ -573,27 +573,27 @@ private struct AdminRewardGiveCustomerView: View {
 
             VStack(spacing: 24) {
                 Text("Please write down the customer's order")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundColor(Theme.modernPrimary)
                     .multilineTextAlignment(.center)
                     .padding(.top, 24)
                     .padding(.horizontal)
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 14) {
                         ForEach(Array(receiptLines.enumerated()), id: \.offset) { _, line in
                             if line.label.isEmpty {
                                 Text(line.value)
-                                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                                    .font(.system(size: 26, weight: .black, design: .rounded))
                                     .foregroundColor(.black)
                             } else {
-                                HStack(alignment: .top, spacing: 8) {
+                                HStack(alignment: .top, spacing: 10) {
                                     Text(line.label + ":")
-                                        .font(.system(size: 15, weight: .semibold, design: .rounded))
-                                        .foregroundColor(.black.opacity(0.7))
-                                        .frame(width: 90, alignment: .leading)
+                                        .font(.system(size: 19, weight: .bold, design: .rounded))
+                                        .foregroundColor(.black)
+                                        .frame(width: 100, alignment: .leading)
                                     Text(line.value)
-                                        .font(.system(size: 15, weight: .regular, design: .rounded))
+                                        .font(.system(size: 19, weight: .bold, design: .rounded))
                                         .foregroundColor(.black)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }

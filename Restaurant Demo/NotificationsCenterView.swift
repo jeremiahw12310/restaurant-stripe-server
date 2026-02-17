@@ -282,9 +282,11 @@ struct ReservationNotificationCard: View {
             .contentShape(Rectangle())
             .onTapGesture {
                 NotificationCenter.default.post(name: .switchToHomeTab, object: nil)
-                NotificationCenter.default.post(name: .openAdminOffice, object: nil)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                    NotificationCenter.default.post(name: .openAdminReservationsWithPendingFilter, object: nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    NotificationCenter.default.post(name: .openAdminOffice, object: nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                        NotificationCenter.default.post(name: .openAdminReservationsWithPendingFilter, object: nil)
+                    }
                 }
             }
 

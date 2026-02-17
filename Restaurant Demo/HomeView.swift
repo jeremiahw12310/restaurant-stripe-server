@@ -81,7 +81,6 @@ struct HomeView: View {
     @State private var heroOffset: CGFloat = 400 // Start off-screen to the right
     @State private var showHeroMessage = false
     @State private var showChatbot = false
-    @State private var showOrderHandoff = false
     @State private var showMapsAlert = false
     @State private var showEmployeesOnlySheet = false
     @State private var showLifetimePointsSheet = false
@@ -679,14 +678,6 @@ struct HomeView: View {
         } message: {
             Text("Select your preferred navigation app to get directions to Dumpling House")
         }
-        .sheet(isPresented: $showOrderHandoff) {
-            if let url = URL(string: "https://dumplinghousetn.kwickmenu.com/") {
-                SimplifiedSafariView(
-                    url: url,
-                    onDismiss: { showOrderHandoff = false }
-                )
-            }
-        }
         .onChange(of: showDetailedRewards) { _, isShowing in
             handleOverlayPresentationChange(isPresented: isShowing, name: "RewardsModal")
         }
@@ -723,9 +714,6 @@ struct HomeView: View {
         .onChange(of: showLifetimePointsSheet) { _, isShowing in
             handleOverlayPresentationChange(isPresented: isShowing, name: "LifetimePointsModal")
         }
-        .onChange(of: showOrderHandoff) { _, isShowing in
-            handleOverlayPresentationChange(isPresented: isShowing, name: "OrderHandoffModal")
-        }
         .onChange(of: sharedRewardsVM.stagedQRSuccess) { _, newValue in
             if newValue != nil && showDetailedRewards {
                 showDetailedRewards = false
@@ -747,8 +735,7 @@ struct HomeView: View {
         showRewardTierAdmin ||
         showAdminNotifications ||
         showEmployeesOnlySheet ||
-        showLifetimePointsSheet ||
-        showOrderHandoff
+        showLifetimePointsSheet
     }
     
     /// Pauses or resumes Home background work (timers, animations) so modals like Rewards stay smooth.
@@ -1179,7 +1166,7 @@ struct HomeView: View {
     }
     
     private func openOrderView() {
-        showOrderHandoff = true
+        NotificationCenter.default.post(name: .switchToOrderTab, object: nil)
     }
     
     /// Starts or restarts the glimmer timer that drives the JellyGlimmerView background.

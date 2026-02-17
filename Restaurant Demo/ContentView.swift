@@ -19,6 +19,8 @@ extension Notification.Name {
     static let openAdminOffice = Notification.Name("openAdminOffice")
     /// Open Reservations sheet in Admin Office with Pending filter. AdminOverviewView listens.
     static let openAdminReservationsWithPendingFilter = Notification.Name("openAdminReservationsWithPendingFilter")
+    /// Switch to Order tab (menu/order tab). Used when user taps Order on points card or other order entry points.
+    static let switchToOrderTab = Notification.Name("switchToOrderTab")
 }
 
 struct ContentView: View {
@@ -77,8 +79,8 @@ struct ContentView: View {
                 
                 MenuView()
                     .tabItem {
-                        Image(systemName: "list.bullet")
-                        Text("Menu")
+                        Image(systemName: "bag.fill")
+                        Text("Order")
                     }
                     .tag(1)
                 
@@ -113,6 +115,15 @@ struct ContentView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .switchToMoreTab)) { _ in
                 selectedTab = 4
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .switchToOrderTab)) { _ in
+                selectedTab = 1
+            }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("openOrder"))) { _ in
+                selectedTab = 1
+            }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("openOrderFromSaved"))) { _ in
+                selectedTab = 1
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("openReceiptHistory"))) { _ in
                 selectedTab = 3
@@ -271,7 +282,7 @@ struct ContentView: View {
         switch tab {
         case 0: // Home
             themeManager.contentContext = .menu
-        case 1: // Menu
+        case 1: // Order
             themeManager.contentContext = .menu
         case 2: // Scan Receipt
             themeManager.contentContext = .ordering

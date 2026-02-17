@@ -5024,30 +5024,34 @@ IMPORTANT:
       if (!q) {
         // Optional: order by accountCreatedDate (v1.1, backward-compatible when params omitted)
         if (orderByParam === 'dateCreated' && (orderDirParam === 'desc' || orderDirParam === 'asc')) {
-          const dir = orderDirParam === 'desc' ? 'desc' : 'asc';
-          let query = db.collection('users')
-            .orderBy('accountCreatedDate', dir)
-            .orderBy(admin.firestore.FieldPath.documentId())
-            .limit(limit);
+          try {
+            const dir = orderDirParam === 'desc' ? 'desc' : 'asc';
+            let query = db.collection('users')
+              .orderBy('accountCreatedDate', dir)
+              .orderBy(admin.firestore.FieldPath.documentId())
+              .limit(limit);
 
-          if (cursor) {
-            const cursorDoc = await db.collection('users').doc(cursor).get();
-            if (!cursorDoc.exists) {
-              return res.status(400).json({ error: 'Invalid cursor' });
+            if (cursor) {
+              const cursorDoc = await db.collection('users').doc(cursor).get();
+              if (!cursorDoc.exists) {
+                return res.status(400).json({ error: 'Invalid cursor' });
+              }
+              query = query.startAfter(cursorDoc);
             }
-            query = query.startAfter(cursorDoc);
+
+            const snap = await query.get();
+            const docs = snap.docs || [];
+            const users = docs.map(mapUser);
+            const nextCursor = docs.length > 0 ? docs[docs.length - 1].id : null;
+
+            return res.json({
+              users,
+              nextCursor,
+              hasMore: docs.length === limit
+            });
+          } catch (dateOrderError) {
+            console.error('❌ Admin users date-ordered query failed (e.g. missing index), falling back to doc order:', dateOrderError.message || dateOrderError);
           }
-
-          const snap = await query.get();
-          const docs = snap.docs || [];
-          const users = docs.map(mapUser);
-          const nextCursor = docs.length > 0 ? docs[docs.length - 1].id : null;
-
-          return res.json({
-            users,
-            nextCursor,
-            hasMore: docs.length === limit
-          });
         }
 
         // Default: order by document ID only (existing production behavior)

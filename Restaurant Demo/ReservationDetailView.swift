@@ -60,7 +60,7 @@ struct ReservationDetailView: View {
                 }
                 Button("Keep It", role: .cancel) {}
             } message: {
-                Text("Cancel your reservation for \(reservation.formattedDate) at \(reservation.time)? You can make a new one anytime.")
+                Text("Cancel your reservation for \(reservation.formattedDateShort) at \(reservation.time)? You can make a new one anytime.")
             }
         }
     }
@@ -71,7 +71,7 @@ struct ReservationDetailView: View {
         VStack(spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(reservation.formattedDate)
+                    Text(reservation.formattedDateShort)
                         .font(.system(size: 22, weight: .black, design: .rounded))
                         .foregroundStyle(Theme.darkGoldGradient)
                     Text(reservation.time)
@@ -199,7 +199,7 @@ struct ReservationDetailView: View {
                 .font(.system(size: 14, weight: .bold, design: .rounded))
                 .foregroundColor(Theme.modernSecondary)
             VStack(spacing: 0) {
-                detailRow(icon: "calendar", title: "Date", value: reservation.formattedDate)
+                detailRow(icon: "calendar", title: "Date", value: reservation.formattedDateShort)
                 detailRow(icon: "clock", title: "Time", value: reservation.time)
                 detailRow(icon: "person.2.fill", title: "Party size", value: "\(reservation.partySize)")
                 if let notes = reservation.specialRequests, !notes.isEmpty {

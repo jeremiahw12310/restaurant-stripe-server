@@ -64,6 +64,20 @@ struct AdminReservation: Identifiable {
         return display.string(from: d)
     }
 
+    /// Short date for list/notifications, e.g. "Feb 17", "Oct 3". Matches backend notification format.
+    var formattedDateShort: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        guard let d = formatter.date(from: date) else { return date }
+        if Calendar.current.isDateInToday(d) { return "Today" }
+        if Calendar.current.isDateInTomorrow(d) { return "Tomorrow" }
+        let display = DateFormatter()
+        display.dateFormat = "MMM d"
+        display.locale = Locale(identifier: "en_US_POSIX")
+        return display.string(from: d)
+    }
+
     var isToday: Bool {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
@@ -502,11 +516,13 @@ struct AdminReservationsView: View {
     private func sectionTitle(for dateStr: String) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         guard let d = formatter.date(from: dateStr) else { return dateStr }
         if Calendar.current.isDateInToday(d) { return "Today" }
         if Calendar.current.isDateInTomorrow(d) { return "Tomorrow" }
         let display = DateFormatter()
-        display.dateFormat = "EEEE, MMM d"
+        display.dateFormat = "MMM d"
+        display.locale = Locale(identifier: "en_US_POSIX")
         return display.string(from: d)
     }
 
@@ -636,7 +652,7 @@ struct ReservationRowView: View {
                     Text(reservation.customerName)
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                         .foregroundColor(Theme.modernPrimary)
-                    Text("\(reservation.formattedDate) at \(reservation.time)")
+                    Text("\(reservation.formattedDateShort) at \(reservation.time)")
                         .font(.system(size: 15, weight: .medium, design: .rounded))
                         .foregroundColor(Theme.modernSecondary)
                     HStack(spacing: 8) {
@@ -749,7 +765,7 @@ struct ReservationRowView: View {
             }
             Button("Go Back", role: .cancel) {}
         } message: {
-            Text("Confirm \(reservation.customerName)'s reservation for \(reservation.formattedDate) at \(reservation.time)? The customer will be notified.")
+            Text("Confirm \(reservation.customerName)'s reservation for \(reservation.formattedDateShort) at \(reservation.time)? The customer will be notified.")
         }
         .alert("Cancel Reservation", isPresented: $showCancelAlert) {
             Button("Cancel Reservation", role: .destructive) {
@@ -763,7 +779,7 @@ struct ReservationRowView: View {
             }
             Button("Keep It", role: .cancel) {}
         } message: {
-            Text("Cancel \(reservation.customerName)'s reservation for \(reservation.formattedDate) at \(reservation.time)? The customer will be notified by push notification.")
+            Text("Cancel \(reservation.customerName)'s reservation for \(reservation.formattedDateShort) at \(reservation.time)? The customer will be notified by push notification.")
         }
     }
 
@@ -862,7 +878,7 @@ struct AdminReservationDetailSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(reservation.formattedDate)
+                    Text(reservation.formattedDateShort)
                         .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .foregroundStyle(Theme.darkGoldGradient)
                     Text(reservation.time)

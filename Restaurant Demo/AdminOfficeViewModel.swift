@@ -182,6 +182,11 @@ class AdminOfficeViewModel: ObservableObject {
             if !query.isEmpty {
                 items.append(URLQueryItem(name: "q", value: query))
             }
+            // Server-side sort by date when not searching (v1.1, backward-compatible)
+            if query.isEmpty && sortOption == .dateCreated {
+                items.append(URLQueryItem(name: "orderBy", value: "dateCreated"))
+                items.append(URLQueryItem(name: "orderDir", value: sortOrder == .descending ? "desc" : "asc"))
+            }
             components?.queryItems = items
             
             guard let url = components?.url else {

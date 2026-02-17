@@ -30,6 +30,20 @@ struct UserReservation: Identifiable {
         return display.string(from: d)
     }
 
+    /// Short date e.g. "Feb 17", "Oct 3". Matches backend notification format.
+    var formattedDateShort: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        guard let d = formatter.date(from: date) else { return date }
+        if Calendar.current.isDateInToday(d) { return "Today" }
+        if Calendar.current.isDateInTomorrow(d) { return "Tomorrow" }
+        let display = DateFormatter()
+        display.dateFormat = "MMM d"
+        display.locale = Locale(identifier: "en_US_POSIX")
+        return display.string(from: d)
+    }
+
     /// True when the reservation date is today.
     var isToday: Bool {
         let formatter = DateFormatter()
@@ -181,7 +195,7 @@ struct YourReservationCard: View {
             if days == 1 {
                 return "You're all set! See you tomorrow."
             }
-            return "You're all set! See you \(reservation.formattedDate)."
+            return "You're all set! See you \(reservation.formattedDateShort)."
         }
         return "Awaiting confirmation from the restaurant..."
     }
@@ -378,7 +392,7 @@ struct YourReservationCard: View {
                 Image(systemName: "calendar")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.darkGoldGradient)
-                Text(reservation.formattedDate)
+                Text(reservation.formattedDateShort)
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundColor(Theme.modernPrimary)
             }

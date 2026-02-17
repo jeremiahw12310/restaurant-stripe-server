@@ -475,9 +475,13 @@ class NotificationService: NSObject, ObservableObject {
             DebugLogger.debug("📅 NotificationService: Navigating to Admin Office → Reservations", category: "Notifications")
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .switchToHomeTab, object: nil)
-                NotificationCenter.default.post(name: .openAdminOffice, object: nil)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                    NotificationCenter.default.post(name: .openAdminReservationsWithPendingFilter, object: nil)
+                // Delay so tab switch completes and HomeView is on screen before opening the sheet
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    NotificationCenter.default.post(name: .openAdminOffice, object: nil)
+                    // Delay so Admin Office sheet is visible and AdminOverviewView can receive
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                        NotificationCenter.default.post(name: .openAdminReservationsWithPendingFilter, object: nil)
+                    }
                 }
             }
             return
