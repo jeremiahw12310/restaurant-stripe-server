@@ -46,6 +46,11 @@ struct AdminRewardHistoryView: View {
                             errorView(message: error)
                         }
                         
+                        // Deleted Reward History section (shown when trash icon tapped)
+                        if viewModel.showDeletedSection {
+                            deletedSection
+                        }
+                        
                         Spacer(minLength: 40)
                     }
                     .padding(.horizontal, 20)
@@ -89,12 +94,25 @@ struct AdminRewardHistoryView: View {
                 
                 Spacer()
                 
+                HStack(spacing: 16) {
+                    Button(action: {
+                        viewModel.showDeletedSection.toggle()
+                        if viewModel.showDeletedSection {
+                            Task { await viewModel.loadDeletedRewards() }
+                        }
+                    }) {
+                        Image(systemName: "trash")
+                            .font(.title2)
+                            .foregroundColor(viewModel.showDeletedSection ? .blue : .secondary)
+                    }
+                    
                 Button(action: {
-                    viewModel.refresh()
+                    Task { await viewModel.refresh() }
                 }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.title2)
-                        .foregroundColor(.primary)
+                        Image(systemName: "arrow.clockwise")
+                            .font(.title2)
+                            .foregroundColor(.primary)
+                    }
                 }
             }
             
@@ -308,15 +326,20 @@ struct AdminRewardHistoryView: View {
             
             LazyVStack(spacing: 12) {
                 ForEach(Array(viewModel.currentRewards.enumerated()), id: \.element.id) { index, reward in
-                    RewardHistoryRow(reward: reward)
-                        .onAppear {
-                            // Load more when approaching the end (3 items before the end)
-                            if index == viewModel.currentRewards.count - 3 {
-                                Task {
-                                    await viewModel.loadMoreRewards()
-                                }
+                    RewardHistoryRow(
+                        reward: reward,
+                        onDelete: {
+                            Task { await viewModel.softDeleteReward(id: reward.id) }
+                        }
+                    )
+                    .onAppear {
+                        // Load more when approaching the end (3 items before the end)
+                        if index == viewModel.currentRewards.count - 3 {
+                            Task {
+                                await viewModel.loadMoreRewards()
                             }
                         }
+                    }
                 }
                 
                 if viewModel.isLoadingMore {
@@ -328,6 +351,106 @@ struct AdminRewardHistoryView: View {
                     }
                 }
             }
+        }
+    }
+    
+    // MARK: - Deleted Section
+    
+    @State private var showDeletePermanentConfirmation = false
+    
+    private var deletedSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "trash.fill")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                
+                Text("Deleted Reward History")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+            
+            if viewModel.isLoadingDeleted && viewModel.deletedRewards.isEmpty {
+                HStack {
+                    Spacer()
+                    ProgressView()
+                        .padding()
+                    Spacer()
+                }
+            } else if viewModel.deletedRewards.isEmpty {
+                Text("No deleted rewards")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+            } else {
+                HStack(spacing: 12) {
+                    Button(action: {
+                        if viewModel.selectedDeletedIds.count == viewModel.deletedRewards.count {
+                            viewModel.deselectAllDeleted()
+                        } else {
+                            viewModel.selectAllDeleted()
+                        }
+                    }) {
+                        Text(viewModel.selectedDeletedIds.count == viewModel.deletedRewards.count ? "Deselect All" : "Select All")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.blue)
+                    }
+                    
+                    if !viewModel.selectedDeletedIds.isEmpty {
+                        Button(action: { showDeletePermanentConfirmation = true }) {
+                            HStack(spacing: 4) {
+                                if viewModel.isPermanentlyDeleting {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                } else {
+                                    Image(systemName: "trash.fill")
+                                        .font(.subheadline)
+                                }
+                                Text("Delete \(viewModel.selectedDeletedIds.count) Permanently")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.red)
+                            .cornerRadius(10)
+                        }
+                        .disabled(viewModel.isPermanentlyDeleting)
+                    }
+                    
+                    Spacer()
+                }
+                .padding(.horizontal, 4)
+                
+                LazyVStack(spacing: 12) {
+                    ForEach(viewModel.deletedRewards) { reward in
+                        RewardHistoryRow(
+                            reward: reward,
+                            isSelectable: true,
+                            isSelected: viewModel.selectedDeletedIds.contains(reward.id),
+                            onToggleSelection: { viewModel.toggleDeletedSelection(id: reward.id) }
+                        )
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white.opacity(0.9))
+                .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
+        )
+        .alert("Delete Permanently?", isPresented: $showDeletePermanentConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                Task { await viewModel.permanentlyDeleteSelected() }
+            }
+        } message: {
+            Text("This will permanently remove \(viewModel.selectedDeletedIds.count) reward(s) from history. This cannot be undone.")
         }
     }
     
@@ -359,7 +482,7 @@ struct AdminRewardHistoryView: View {
                 .multilineTextAlignment(.center)
             
             Button("Retry") {
-                viewModel.refresh()
+                Task { await viewModel.refresh() }
             }
             .font(.headline)
             .foregroundColor(.blue)
@@ -411,33 +534,59 @@ struct AdminRewardHistoryView: View {
 
 struct RewardHistoryRow: View {
     let reward: RewardHistoryItem
+    var onDelete: (() -> Void)? = nil
+    var isSelectable: Bool = false
+    var isSelected: Bool = false
+    var onToggleSelection: (() -> Void)? = nil
+    
+    @State private var showDeleteConfirmation = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                // User info
-                HStack(spacing: 8) {
-                    Image(systemName: "person.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(.blue)
-                    
-                    Text(reward.userFirstName)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.primary)
+        HStack(alignment: .top, spacing: 12) {
+            if isSelectable {
+                Button(action: { onToggleSelection?() }) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 22))
+                        .foregroundColor(isSelected ? .blue : .secondary)
                 }
-                
-                Spacer()
-                
-                // Points
-                HStack(spacing: 4) {
-                    Image(systemName: "star.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(.orange)
-                    Text("\(reward.pointsRequired)")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.secondary)
-                }
+                .buttonStyle(.plain)
             }
+            
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    // User info
+                    HStack(spacing: 8) {
+                        Image(systemName: "person.circle.fill")
+                            .font(.system(size: 20))
+                            .foregroundColor(.blue)
+                        
+                        Text(reward.userFirstName)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.primary)
+                    }
+                    
+                    Spacer()
+                    
+                    // Points
+                    HStack(spacing: 4) {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(.orange)
+                        Text("\(reward.pointsRequired)")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    // Delete button (main list only)
+                    if onDelete != nil {
+                        Button(action: { showDeleteConfirmation = true }) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 14))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             
             // Reward details
             VStack(alignment: .leading, spacing: 6) {
@@ -452,15 +601,16 @@ struct RewardHistoryRow: View {
                 }
             }
             
-            // Date
-            if let usedAt = reward.usedAt {
-                HStack(spacing: 4) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                    Text(formatDate(usedAt))
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
+                // Date
+                if let usedAt = reward.usedAt {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                        Text(formatDate(usedAt))
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
         }
@@ -470,6 +620,14 @@ struct RewardHistoryRow: View {
                 .fill(Color.white)
                 .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
         )
+        .alert("Remove from Overview?", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Remove", role: .destructive) {
+                onDelete?()
+            }
+        } message: {
+            Text("This reward will be moved to Deleted Reward History. You can permanently delete it from there.")
+        }
     }
     
     private func formatDate(_ dateString: String) -> String {

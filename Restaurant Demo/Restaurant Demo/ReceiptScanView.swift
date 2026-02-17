@@ -1235,7 +1235,9 @@ struct CameraViewWithOverlay: View {
     @State private var showPreparingOverlay = true
     @State private var overlayAppearedAt: Date = Date()
     @State private var showPostCaptureVideo = false
-    
+    @State private var videoLoopCount = 0
+    @State private var whimsicalLine: String = ""
+
     init(image: Binding<UIImage?>, onImageCaptured: @escaping (UIImage?, Bool) -> Void) {
         self._image = image
         self.onImageCaptured = onImageCaptured
@@ -1265,7 +1267,13 @@ struct CameraViewWithOverlay: View {
             // Camera preview
             CameraPreviewView(cameraController: cameraController)
                 .ignoresSafeArea()
-            
+            .onChange(of: showPostCaptureVideo) { _, newValue in
+                if newValue {
+                    videoLoopCount = 0
+                    whimsicalLine = WittyLineProvider.shared.receiptLoadingLine()
+                }
+            }
+
             // Preparing overlay (cream + text only; sparkles are in UnifiedSparkleOverlay)
             if showPreparingOverlay {
                 ZStack {
@@ -1305,11 +1313,41 @@ struct CameraViewWithOverlay: View {
                 }
             }
             
-            // Post-capture video overlay (fades in over camera)
+            // Post-capture video overlay (fades in over camera) with two-phase loading text
             if showPostCaptureVideo {
-                LoopingVideoLayer(videoName: "scandump", videoType: "mov")
+                ZStack {
+                    LoopingVideoLayer(
+                        videoName: "scandump",
+                        videoType: "mov",
+                        onLoopCount: { videoLoopCount = $0 }
+                    )
                     .ignoresSafeArea()
                     .transition(.opacity)
+
+                    // Loading text overlay: whimsical (first play) then "Almost done" (second play), both gold; centered, 10% up from center
+                    GeometryReader { geometry in
+                        ZStack {
+                            ZStack {
+                                // Phase 1: random whimsical line (fades out when second play starts)
+                                Text(whimsicalLine.isEmpty ? "Loading…" : whimsicalLine)
+                                    .font(.system(size: 26, weight: .black, design: .rounded))
+                                    .foregroundStyle(Theme.darkGoldGradient)
+                                    .opacity(videoLoopCount == 0 ? 1 : 0)
+                                    .animation(.easeInOut(duration: 0.4), value: videoLoopCount)
+                                // Phase 2: "Almost done" with same gradient gold
+                                Text("Almost done")
+                                    .font(.system(size: 26, weight: .black, design: .rounded))
+                                    .foregroundStyle(Theme.darkGoldGradient)
+                                    .opacity(videoLoopCount >= 1 ? 1 : 0)
+                                    .animation(.easeInOut(duration: 0.4), value: videoLoopCount)
+                            }
+                            .padding(.horizontal, 24)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .offset(y: -geometry.size.height * 0.05)
+                        }
+                    }
+                    .allowsHitTesting(false)
+                }
             }
             
             // Error overlay
@@ -2588,12 +2626,15 @@ private class LoopingVideoHostView: UIView {
 private struct LoopingVideoLayer: UIViewRepresentable {
     let videoName: String
     let videoType: String
+    var onLoopCount: ((Int) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> UIView {
         let host = LoopingVideoHostView()
         host.backgroundColor = .black
+
+        context.coordinator.onLoopCount = onLoopCount
 
         // Ambient audio to avoid AirPods auto-connect
         do {
@@ -2629,16 +2670,24 @@ private struct LoopingVideoLayer: UIViewRepresentable {
 
     func updateUIView(_ uiView: UIView, context: Context) {
         guard let host = uiView as? LoopingVideoHostView else { return }
+        context.coordinator.onLoopCount = onLoopCount
         host.setNeedsLayout()
     }
 
     class Coordinator: NSObject {
         var player: AVPlayer?
         var playerItem: AVPlayerItem?
+        var onLoopCount: ((Int) -> Void)?
+        var playCount: Int = 0
 
         @objc func didReachEnd() {
             player?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
             player?.play()
+            playCount += 1
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.onLoopCount?(self.playCount)
+            }
         }
 
         deinit {

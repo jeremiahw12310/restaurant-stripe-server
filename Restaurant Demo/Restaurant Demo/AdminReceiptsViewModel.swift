@@ -11,6 +11,31 @@ struct AdminReceipt: Identifiable, Equatable {
     let userPhone: String?
 }
 
+/// Full receipt detail from GET /admin/receipts/:id (for admin detail view).
+struct AdminReceiptDetail: Equatable {
+    let id: String
+    let orderNumber: String?
+    let orderDate: String?
+    let orderTime: String?
+    let orderTotal: Double?
+    let userId: String?
+    let userName: String?
+    let userPhone: String?
+    let pointsAwarded: Int?
+    let timestamp: Date?
+    let imageUrl: URL?
+    let imageExpired: Bool
+    let totalVisibleAndClear: Bool?
+    let orderNumberVisibleAndClear: Bool?
+    let dateVisibleAndClear: Bool?
+    let timeVisibleAndClear: Bool?
+    let keyFieldsTampered: Bool?
+    let tamperingReason: String?
+    let orderNumberInBlackBox: Bool?
+    let paidOnlineReceipt: Bool?
+    let orderNumberFromPaidOnlineSection: Bool?
+}
+
 @MainActor
 class AdminReceiptsViewModel: ObservableObject {
     @Published var receipts: [AdminReceipt] = []
@@ -57,7 +82,90 @@ class AdminReceiptsViewModel: ObservableObject {
             await deleteReceiptAsync(receipt)
         }
     }
-    
+
+    /// Fetches full receipt detail by id (GET /admin/receipts/:id). Returns nil and sets errorMessage on failure.
+    func fetchReceiptDetail(receiptId: String) async -> AdminReceiptDetail? {
+        errorMessage = nil
+        do {
+            guard let user = Auth.auth().currentUser else {
+                errorMessage = "You must be signed in to view receipt details."
+                return nil
+            }
+            let token = try await user.getIDTokenResult(forcingRefresh: false).token
+            guard let url = URL(string: "\(Config.backendURL)/admin/receipts/\(receiptId)") else {
+                errorMessage = "Invalid receipt detail URL."
+                return nil
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await URLSession.configured.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                errorMessage = "Unexpected response from server."
+                return nil
+            }
+            if http.statusCode == 404 {
+                errorMessage = "Receipt not found."
+                return nil
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                let body = String(data: data, encoding: .utf8) ?? ""
+                errorMessage = "Failed to load receipt (\(http.statusCode)). \(body)"
+                return nil
+            }
+            let dict = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any]
+            guard let d = dict else {
+                errorMessage = "Invalid response from server."
+                return nil
+            }
+            let id = d["id"] as? String ?? receiptId
+            let timestampISO = d["timestamp"] as? String
+            var tsDate: Date?
+            if let iso = timestampISO {
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                tsDate = formatter.date(from: iso)
+            }
+            var imageURL: URL?
+            if let urlString = d["imageUrl"] as? String, !urlString.isEmpty {
+                imageURL = URL(string: urlString)
+            }
+            let imageExpired = (d["imageExpired"] as? Bool) ?? true
+            var orderTotal: Double?
+            if let n = d["orderTotal"] as? NSNumber { orderTotal = n.doubleValue }
+            else if let n = d["orderTotal"] as? Double { orderTotal = n }
+            var pointsAwarded: Int?
+            if let n = d["pointsAwarded"] as? Int { pointsAwarded = n }
+            else if let n = d["pointsAwarded"] as? NSNumber { pointsAwarded = n.intValue }
+            return AdminReceiptDetail(
+                id: id,
+                orderNumber: d["orderNumber"] as? String,
+                orderDate: d["orderDate"] as? String,
+                orderTime: d["orderTime"] as? String,
+                orderTotal: orderTotal,
+                userId: d["userId"] as? String,
+                userName: d["userName"] as? String,
+                userPhone: d["userPhone"] as? String,
+                pointsAwarded: pointsAwarded,
+                timestamp: tsDate,
+                imageUrl: imageURL,
+                imageExpired: imageExpired,
+                totalVisibleAndClear: d["totalVisibleAndClear"] as? Bool,
+                orderNumberVisibleAndClear: d["orderNumberVisibleAndClear"] as? Bool,
+                dateVisibleAndClear: d["dateVisibleAndClear"] as? Bool,
+                timeVisibleAndClear: d["timeVisibleAndClear"] as? Bool,
+                keyFieldsTampered: d["keyFieldsTampered"] as? Bool,
+                tamperingReason: d["tamperingReason"] as? String,
+                orderNumberInBlackBox: d["orderNumberInBlackBox"] as? Bool,
+                paidOnlineReceipt: d["paidOnlineReceipt"] as? Bool,
+                orderNumberFromPaidOnlineSection: d["orderNumberFromPaidOnlineSection"] as? Bool
+            )
+        } catch {
+            errorMessage = "Failed to load receipt: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
     private func loadPage(startAfter: String?) async {
         do {
             guard let user = Auth.auth().currentUser else {

@@ -84,5 +84,18 @@ final class WittyLineProvider {
         }
     }
 
+    /// Random whimsical line shown during receipt parsing (first play of waiting video).
+    func receiptLoadingLine() -> String {
+        pick([
+            "Loading your points",
+            "Counting your dumplings",
+            "Scanning the fine print",
+            "Fetching your rewards",
+            "One moment please",
+            "Warming up the receipt reader",
+            "Almost there…"
+        ])
+    }
+
     private func pick(_ options: [String]) -> String { options.randomElement() ?? options.first ?? "Something went wrong." }
 }

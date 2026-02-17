@@ -17,6 +17,9 @@ struct AdminOverviewView: View {
     @State private var showSendRewards = false
     @State private var showReservations = false
 
+    // View all analytics sheet
+    @State private var showAllAnalytics = false
+
     // Swipe to dismiss state
     @State private var dragOffset: CGFloat = 0
     @State private var isAtTop: Bool = true
@@ -34,17 +37,29 @@ struct AdminOverviewView: View {
                             // Header
                             header
                             
-                            // Stats Grid
-                            if viewModel.isLoading && viewModel.stats == nil {
-                                loadingView
-                            } else if let stats = viewModel.stats {
-                                statsGrid(stats: stats)
-                            } else if let error = viewModel.errorMessage {
-                                errorView(message: error)
-                            }
+                            // Carousel (4 key stats)
+                            statsCarousel
                             
-                            // Quick Actions
-                            quickActions
+                            // View all analytics button
+                            Button(action: { showAllAnalytics = true }) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "chart.bar.doc.horizontal")
+                                        .font(.system(size: 16, weight: .semibold))
+                                    Text("View all analytics")
+                                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                }
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 14)
+                                        .fill(Color.blue)
+                                )
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            
+                            // Organized action sections
+                            organizedActions
                             
                             Spacer(minLength: 40)
                         }
@@ -134,6 +149,27 @@ struct AdminOverviewView: View {
             .sheet(isPresented: $showReservations) {
                 AdminReservationsView()
             }
+            .sheet(isPresented: $showAllAnalytics) {
+                AllAnalyticsView(
+                    stats: viewModel.stats,
+                    isLoading: viewModel.isLoading,
+                    errorMessage: viewModel.errorMessage,
+                    formatNumber: { formatNumber($0) },
+                    onRetry: { viewModel.refresh() },
+                    onUsers: {
+                        showAllAnalytics = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showUsersSection = true }
+                    },
+                    onReceipts: {
+                        showAllAnalytics = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showReceiptsSection = true }
+                    },
+                    onRewardHistory: {
+                        showAllAnalytics = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showRewardHistory = true }
+                    }
+                )
+            }
         }
     }
     
@@ -172,158 +208,80 @@ struct AdminOverviewView: View {
         }
     }
     
-    // MARK: - Loading View
+    // MARK: - Stats Carousel (4 key cards at top)
     
-    private var loadingView: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .scaleEffect(1.2)
-            Text("Loading statistics...")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 60)
-    }
-    
-    // MARK: - Error View
-    
-    private func errorView(message: String) -> some View {
-        VStack(spacing: 16) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 40))
-                .foregroundColor(.orange)
-            
-            Text(message)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-            
-            Button("Retry") {
-                viewModel.refresh()
-            }
-            .font(.headline)
-            .foregroundColor(.blue)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
-    }
-    
-    // MARK: - Stats Grid
-    
-    private func statsGrid(stats: AdminStats) -> some View {
-        VStack(spacing: 16) {
-            // Users Section
-            sectionHeader(title: "Users", icon: "person.3.fill", color: .blue)
-            
-            LazyVGrid(columns: [
-                GridItem(.flexible(), spacing: 12),
-                GridItem(.flexible(), spacing: 12)
-            ], spacing: 12) {
-                AdminStatCard(
-                    title: "Total Users",
-                    value: "\(stats.totalUsers)",
-                    icon: "person.fill",
-                    color: .blue,
-                    action: { showUsersSection = true }
-                )
-                
-                AdminStatCard(
-                    title: "New Today",
-                    value: "\(stats.newUsersToday)",
-                    icon: "person.badge.plus",
-                    color: .green,
-                    action: { showUsersSection = true }
-                )
-                
-                AdminStatCard(
-                    title: "New This Week",
-                    value: "\(stats.newUsersThisWeek)",
-                    icon: "calendar",
-                    color: .purple,
-                    action: { showUsersSection = true }
-                )
-                
-                AdminStatCard(
-                    title: "Points Given",
-                    value: formatNumber(stats.totalPointsDistributed),
-                    icon: "star.fill",
-                    color: .orange,
-                    action: { showUsersSection = true }
-                )
-            }
-            
-            // Receipts Section
-            sectionHeader(title: "Receipts", icon: "doc.text.viewfinder", color: .green)
-            
-            LazyVGrid(columns: [
-                GridItem(.flexible(), spacing: 12),
-                GridItem(.flexible(), spacing: 12)
-            ], spacing: 12) {
-                AdminStatCard(
-                    title: "Total Scanned",
-                    value: "\(stats.totalReceipts)",
-                    icon: "doc.text.fill",
-                    color: .green,
-                    action: { showReceiptsSection = true }
-                )
-                
-                AdminStatCard(
-                    title: "Scanned Today",
-                    value: "\(stats.receiptsToday)",
-                    icon: "clock.fill",
-                    color: .teal,
-                    action: { showReceiptsSection = true }
-                )
-                
-                AdminStatCard(
-                    title: "This Week",
-                    value: "\(stats.receiptsThisWeek)",
-                    icon: "calendar.badge.clock",
-                    color: .mint,
-                    action: { showReceiptsSection = true }
-                )
-            }
-            
-            // Rewards Section
-            sectionHeader(title: "Rewards", icon: "gift.fill", color: .purple)
-            
-            LazyVGrid(columns: [
-                GridItem(.flexible(), spacing: 12),
-                GridItem(.flexible(), spacing: 12)
-            ], spacing: 12) {
-                AdminStatCard(
-                    title: "Redeemed This Month",
-                    value: "\(stats.totalRewardsRedeemed)",
-                    icon: "gift.fill",
-                    color: .purple,
-                    action: { showRewardHistory = true }
-                )
-                
-                AdminStatCard(
-                    title: "Redeemed Today",
-                    value: "\(stats.rewardsRedeemedToday)",
-                    icon: "sparkles",
-                    color: .pink,
-                    action: { showRewardHistory = true }
-                )
+    private var statsCarousel: some View {
+        Group {
+            if viewModel.isLoading && viewModel.stats == nil {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .scaleEffect(1.0)
+                    Text("Loading...")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 110)
+            } else if let error = viewModel.errorMessage {
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.title2)
+                        .foregroundColor(.orange)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                    Button("Retry") { viewModel.refresh() }
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.blue)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 110)
+            } else if let stats = viewModel.stats {
+                let cardSize: CGFloat = 110
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        AdminStatCarouselCard(
+                            title: "New Users Today",
+                            value: "\(stats.newUsersToday)",
+                            icon: "person.badge.plus",
+                            color: .green,
+                            size: cardSize,
+                            action: { showUsersSection = true }
+                        )
+                        AdminStatCarouselCard(
+                            title: "Total Users",
+                            value: "\(stats.totalUsers)",
+                            icon: "person.fill",
+                            color: .blue,
+                            size: cardSize,
+                            action: { showUsersSection = true }
+                        )
+                        AdminStatCarouselCard(
+                            title: "Scanned Today",
+                            value: "\(stats.receiptsToday)",
+                            icon: "clock.fill",
+                            color: .teal,
+                            size: cardSize,
+                            action: { showReceiptsSection = true }
+                        )
+                        AdminStatCarouselCard(
+                            title: "Redeemed Today",
+                            value: "\(stats.rewardsRedeemedToday)",
+                            icon: "sparkles",
+                            color: .pink,
+                            size: cardSize,
+                            action: { showRewardHistory = true }
+                        )
+                    }
+                    .padding(.trailing, 20)
+                }
+                .frame(height: cardSize)
+            } else {
+                Color.clear.frame(height: 110)
             }
         }
-    }
-    
-    private func sectionHeader(title: String, icon: String, color: Color) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.subheadline)
-                .foregroundColor(color)
-            
-            Text(title)
-                .font(.headline)
-                .foregroundColor(.primary)
-            
-            Spacer()
-        }
-        .padding(.top, 8)
     }
     
     private func formatNumber(_ number: Int) -> String {
@@ -335,122 +293,253 @@ struct AdminOverviewView: View {
         return "\(number)"
     }
     
-    // MARK: - Quick Actions
+    // MARK: - Organized Actions (3 grouped sections)
     
-    private var quickActions: some View {
+    private var organizedActions: some View {
         VStack(spacing: 12) {
-            sectionHeader(title: "Quick Actions", icon: "bolt.fill", color: .orange)
-            
-            // Manage Users
+            // Customers & Receipts
+            actionSectionHeader(title: "Customers & Receipts", icon: "person.3.fill", color: .blue)
             ActionButton(
                 title: "Manage Users",
                 subtitle: "View and manage user accounts",
                 icon: "person.3.fill",
                 gradient: [.blue, .cyan]
-            ) {
-                showUsersSection = true
-            }
-            
-            // View Receipts
+            ) { showUsersSection = true }
             ActionButton(
                 title: "View Receipts",
                 subtitle: "See scanned receipts",
                 icon: "doc.text.viewfinder",
                 gradient: [.green, .mint]
-            ) {
-                showReceiptsSection = true
-            }
+            ) { showReceiptsSection = true }
             
-            // Scan Rewards
+            // Rewards
+            actionSectionHeader(title: "Rewards", icon: "gift.fill", color: .purple)
             ActionButton(
                 title: "Scan Rewards",
                 subtitle: "Scan customer reward QR codes",
                 icon: "qrcode.viewfinder",
                 gradient: [.purple, .pink]
-            ) {
-                showRewardsScan = true
-            }
-            
-            // Send Rewards
+            ) { showRewardsScan = true }
             ActionButton(
                 title: "Send Rewards",
                 subtitle: "Gift rewards to all customers",
                 icon: "gift.fill",
                 gradient: [Color(red: 1.0, green: 0.3, blue: 0.5), Color(red: 1.0, green: 0.5, blue: 0.7)]
-            ) {
-                showSendRewards = true
-            }
-            
-            // Reward Config
+            ) { showSendRewards = true }
             ActionButton(
                 title: "Reward Item Config",
                 subtitle: "Configure reward tier items",
                 icon: "gift.fill",
                 gradient: [.orange, .red]
-            ) {
-                showRewardTierAdmin = true
-            }
-            
-            // Send Notifications
-            ActionButton(
-                title: "Send Notifications",
-                subtitle: "Send push notifications to customers",
-                icon: "bell.badge.fill",
-                gradient: [.indigo, .purple]
-            ) {
-                showNotifications = true
-            }
-
-            // Reservations
-            ActionButton(
-                title: "Reservations",
-                subtitle: "View and confirm table reservations",
-                icon: "calendar.badge.clock",
-                gradient: [.teal, .mint]
-            ) {
-                showReservations = true
-            }
-
-            // Reward History
+            ) { showRewardTierAdmin = true }
             ActionButton(
                 title: "Reward History",
                 subtitle: "View monthly redemption activity",
                 icon: "clock.arrow.circlepath",
                 gradient: [.teal, .cyan]
-            ) {
-                showRewardHistory = true
-            }
+            ) { showRewardHistory = true }
             
-            // Banned Numbers
+            // Notifications & Safety
+            actionSectionHeader(title: "Notifications & Safety", icon: "bell.badge.fill", color: .indigo)
+            ActionButton(
+                title: "Send Notifications",
+                subtitle: "Send push notifications to customers",
+                icon: "bell.badge.fill",
+                gradient: [.indigo, .purple]
+            ) { showNotifications = true }
+            ActionButton(
+                title: "Reservations",
+                subtitle: "View and confirm table reservations",
+                icon: "calendar.badge.clock",
+                gradient: [.teal, .mint]
+            ) { showReservations = true }
             ActionButton(
                 title: "Banned Numbers",
                 subtitle: "Manage banned phone numbers",
                 icon: "hand.raised.fill",
                 gradient: [.red, .pink]
-            ) {
-                showBannedNumbers = true
-            }
-            
-            // Suspicious Activity
+            ) { showBannedNumbers = true }
             ActionButton(
                 title: "Suspicious Activity",
                 subtitle: "Review flagged accounts",
                 icon: "exclamationmark.shield.fill",
                 gradient: [.orange, .red]
-            ) {
-                showSuspiciousFlags = true
-            }
-            
-            // Banned Account History
+            ) { showSuspiciousFlags = true }
             ActionButton(
                 title: "Banned Account History",
                 subtitle: "View banned account history",
                 icon: "clock.badge.xmark",
                 gradient: [Color(red: 0.8, green: 0.2, blue: 0.2), Color(red: 0.9, green: 0.3, blue: 0.3)]
-            ) {
-                showBannedHistory = true
+            ) { showBannedHistory = true }
+        }
+    }
+    
+    private func actionSectionHeader(title: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.subheadline)
+                .foregroundColor(color)
+            Text(title)
+                .font(.headline)
+                .foregroundColor(.primary)
+            Spacer()
+        }
+        .padding(.top, 4)
+    }
+}
+
+// MARK: - All Analytics View (full stats grid in sheet)
+
+struct AllAnalyticsView: View {
+    @Environment(\.dismiss) private var dismiss
+    let stats: AdminStats?
+    let isLoading: Bool
+    let errorMessage: String?
+    let formatNumber: (Int) -> String
+    let onRetry: () -> Void
+    let onUsers: () -> Void
+    let onReceipts: () -> Void
+    let onRewardHistory: () -> Void
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(red: 0.98, green: 0.96, blue: 0.94)
+                    .ignoresSafeArea()
+                ScrollView {
+                    VStack(spacing: 16) {
+                        if isLoading && stats == nil {
+                            VStack(spacing: 16) {
+                                ProgressView()
+                                    .scaleEffect(1.2)
+                                Text("Loading statistics...")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 60)
+                        } else if let error = errorMessage, stats == nil {
+                            VStack(spacing: 16) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.system(size: 40))
+                                    .foregroundColor(.orange)
+                                Text(error)
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                                Button("Retry") { onRetry() }
+                                    .font(.headline)
+                                    .foregroundColor(.blue)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 40)
+                        } else if let stats = stats {
+                            allAnalyticsGrid(stats: stats)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+                    .padding(.bottom, 40)
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .principal) {
+                    Text("All Analytics")
+                        .font(.headline)
+                }
             }
         }
+    }
+    
+    private func allAnalyticsSectionHeader(title: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.subheadline)
+                .foregroundColor(color)
+            Text(title)
+                .font(.headline)
+                .foregroundColor(.primary)
+            Spacer()
+        }
+        .padding(.top, 8)
+    }
+    
+    private func allAnalyticsGrid(stats: AdminStats) -> some View {
+        VStack(spacing: 16) {
+            allAnalyticsSectionHeader(title: "Users", icon: "person.3.fill", color: .blue)
+            LazyVGrid(columns: [
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12)
+            ], spacing: 12) {
+                AdminStatCard(title: "Total Users", value: "\(stats.totalUsers)", icon: "person.fill", color: .blue, action: onUsers)
+                AdminStatCard(title: "New Today", value: "\(stats.newUsersToday)", icon: "person.badge.plus", color: .green, action: onUsers)
+                AdminStatCard(title: "New This Week", value: "\(stats.newUsersThisWeek)", icon: "calendar", color: .purple, action: onUsers)
+                AdminStatCard(title: "Points Given", value: formatNumber(stats.totalPointsDistributed), icon: "star.fill", color: .orange, action: onUsers)
+            }
+            allAnalyticsSectionHeader(title: "Receipts", icon: "doc.text.viewfinder", color: .green)
+            LazyVGrid(columns: [
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12)
+            ], spacing: 12) {
+                AdminStatCard(title: "Total Scanned", value: "\(stats.totalReceipts)", icon: "doc.text.fill", color: .green, action: onReceipts)
+                AdminStatCard(title: "Scanned Today", value: "\(stats.receiptsToday)", icon: "clock.fill", color: .teal, action: onReceipts)
+                AdminStatCard(title: "This Week", value: "\(stats.receiptsThisWeek)", icon: "calendar.badge.clock", color: .mint, action: onReceipts)
+            }
+            allAnalyticsSectionHeader(title: "Rewards", icon: "gift.fill", color: .purple)
+            LazyVGrid(columns: [
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12)
+            ], spacing: 12) {
+                AdminStatCard(title: "Redeemed This Month", value: "\(stats.totalRewardsRedeemed)", icon: "gift.fill", color: .purple, action: onRewardHistory)
+                AdminStatCard(title: "Redeemed Today", value: "\(stats.rewardsRedeemedToday)", icon: "sparkles", color: .pink, action: onRewardHistory)
+            }
+        }
+    }
+}
+
+// MARK: - Square carousel stat card (compact, multiple visible)
+
+struct AdminStatCarouselCard: View {
+    let title: String
+    let value: String
+    let icon: String
+    let color: Color
+    let size: CGFloat
+    let action: (() -> Void)?
+    
+    var body: some View {
+        Button(action: { action?() }) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(color)
+                    Spacer()
+                }
+                Text(value)
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(title)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+            .padding(12)
+            .frame(width: size, height: size, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color.white)
+                    .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
+            )
+        }
+        .buttonStyle(StatCardButtonStyle())
+        .disabled(action == nil)
     }
 }
 

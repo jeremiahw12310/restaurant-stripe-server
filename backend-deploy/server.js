@@ -3454,9 +3454,7 @@ If a field is missing, use null.`;
         temperature: 0.1
       });
 
-      // Clean up the uploaded file
-      await fsPromises.unlink(imagePath).catch(err => logger.error('Failed to delete file:', err));
-
+      // Do NOT unlink here — keep file for Storage upload after successful transaction (see below).
       const extractJson = (text) => {
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (!jsonMatch) return null;
@@ -3896,10 +3894,10 @@ If a field is missing, use null.`;
           newPointsBalance = currentPoints + pointsAwarded;
           newLifetimePoints = currentLifetime + pointsAwarded;
 
-          // Save receipt record (for future duplicate checks + auditing)
+          // Save receipt record (for future duplicate checks + auditing + admin detail)
           const receiptDocRef = receiptsRef.doc();
           savedReceiptId = receiptDocRef.id;
-          tx.set(receiptDocRef, {
+          const receiptPayload = {
             orderNumber: String(data.orderNumber),
             orderDate: data.orderDate,
             orderTime: data.orderTime,
@@ -3907,7 +3905,18 @@ If a field is missing, use null.`;
             userId: uid,
             pointsAwarded,
             createdAt: admin.firestore.FieldValue.serverTimestamp()
-          });
+          };
+          // Optional visibility/tampering fields for admin error detection
+          if (data.totalVisibleAndClear !== undefined) receiptPayload.totalVisibleAndClear = data.totalVisibleAndClear === true;
+          if (data.orderNumberVisibleAndClear !== undefined) receiptPayload.orderNumberVisibleAndClear = data.orderNumberVisibleAndClear === true;
+          if (data.dateVisibleAndClear !== undefined) receiptPayload.dateVisibleAndClear = data.dateVisibleAndClear === true;
+          if (data.timeVisibleAndClear !== undefined) receiptPayload.timeVisibleAndClear = data.timeVisibleAndClear === true;
+          if (data.keyFieldsTampered !== undefined) receiptPayload.keyFieldsTampered = data.keyFieldsTampered === true;
+          if (data.tamperingReason != null && String(data.tamperingReason).trim()) receiptPayload.tamperingReason = String(data.tamperingReason).trim().slice(0, 500);
+          if (data.orderNumberInBlackBox !== undefined) receiptPayload.orderNumberInBlackBox = data.orderNumberInBlackBox === true;
+          if (data.paidOnlineReceipt !== undefined) receiptPayload.paidOnlineReceipt = data.paidOnlineReceipt === true;
+          if (data.orderNumberFromPaidOnlineSection !== undefined) receiptPayload.orderNumberFromPaidOnlineSection = data.orderNumberFromPaidOnlineSection === true;
+          tx.set(receiptDocRef, receiptPayload);
 
           // Save points transaction
           tx.set(db.collection('pointsTransactions').doc(pointsTxId), {
@@ -4056,6 +4065,26 @@ If a field is missing, use null.`;
         return sendError(res, 500, "SERVER_AWARD_FAILED", "Server error while awarding points - please try again");
       }
 
+      // Persist receipt image for 48h (admin detail view); then clean up temp file
+      if (savedReceiptId && imagePath) {
+        try {
+          const storage = admin.storage();
+          const bucket = storage.bucket('dumplinghouseapp.firebasestorage.app');
+          const storagePath = `receipt_images/${savedReceiptId}.jpg`;
+          const file = bucket.file(storagePath);
+          const imageBuffer = await fsPromises.readFile(imagePath);
+          await file.save(imageBuffer, { contentType: 'image/jpeg' });
+          const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+          await db.collection('receipts').doc(savedReceiptId).update({
+            imageStoragePath: storagePath,
+            imageExpiresAt: admin.firestore.Timestamp.fromDate(expiresAt)
+          });
+          logger.info('📷 Receipt image stored for 48h:', storagePath);
+        } catch (uploadErr) {
+          logger.error('❌ Failed to store receipt image (non-blocking):', uploadErr.message || uploadErr);
+        }
+      }
+
       // Check if user crossed 50-point threshold and award referral if eligible
       // Note: currentPoints and newPointsBalance are set inside the transaction
       if (currentPoints < 50 && newPointsBalance >= 50) {
@@ -4152,6 +4181,10 @@ If a field is missing, use null.`;
         }
       }
       return sendError(res, 500, "SERVER_ERROR", err.message || "Server error");
+    } finally {
+      if (req.file && req.file.path) {
+        await fsPromises.unlink(req.file.path).catch(() => {});
+      }
     }
   });
 
@@ -6059,6 +6092,7 @@ IMPORTANT:
           expiresAt: new Date(Date.now() + 15 * 60 * 1000),
           isExpired: false,
           isUsed: false,
+          deletedByAdmin: false,
           pointsBalanceAfter: newPointsBalance,
           ...(idempotencyKey && { idempotencyKey }),
           ...(selectedItemId && { selectedItemId }),
@@ -9622,6 +9656,7 @@ IMPORTANT:
         expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
         isExpired: false,
         isUsed: false,
+        deletedByAdmin: false,
         selectedItemId: selectedItemId || null,
         selectedItemName: selectedItemName || null,
         selectedToppingId: selectedToppingId || null,
@@ -10071,6 +10106,88 @@ IMPORTANT:
     }
   });
 
+  // Get a single receipt by id (admin detail view; includes signed image URL if within 48h)
+  app.get('/admin/receipts/:id', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const db = admin.firestore();
+      const receiptId = req.params.id;
+
+      const receiptRef = db.collection('receipts').doc(receiptId);
+      const receiptDoc = await receiptRef.get();
+
+      if (!receiptDoc.exists) {
+        return res.status(404).json({ error: 'Receipt not found' });
+      }
+
+      const data = receiptDoc.data() || {};
+      let userName = data.userName || null;
+      let userPhone = data.userPhone || null;
+      if (data.userId) {
+        try {
+          const userDoc = await db.collection('users').doc(data.userId).get();
+          if (userDoc.exists) {
+            const userInfo = userDoc.data() || {};
+            if (userName == null) userName = userInfo.firstName || userInfo.name || null;
+            if (userPhone == null) userPhone = userInfo.phone || null;
+          }
+        } catch (e) {
+          logger.warn('⚠️ Failed to load user for receipt detail:', e.message || e);
+        }
+      }
+
+      const createdAt = data.createdAt ? data.createdAt.toDate().toISOString() : null;
+      const imageExpiresAt = data.imageExpiresAt ? data.imageExpiresAt.toDate() : null;
+      const now = new Date();
+      let imageUrl = null;
+      let imageExpired = true;
+      if (data.imageStoragePath && imageExpiresAt && imageExpiresAt > now) {
+        try {
+          const storage = admin.storage();
+          const bucket = storage.bucket('dumplinghouseapp.firebasestorage.app');
+          const file = bucket.file(data.imageStoragePath);
+          const [signedUrl] = await file.getSignedUrl({
+            action: 'read',
+            expires: Date.now() + 15 * 60 * 1000
+          });
+          imageUrl = signedUrl;
+          imageExpired = false;
+        } catch (signErr) {
+          logger.warn('⚠️ Could not generate signed URL for receipt image:', signErr.message || signErr);
+        }
+      }
+
+      res.json({
+        id: receiptDoc.id,
+        orderNumber: data.orderNumber || null,
+        orderDate: data.orderDate || null,
+        orderTime: data.orderTime || null,
+        orderTotal: data.orderTotal != null ? data.orderTotal : null,
+        userId: data.userId || null,
+        userName,
+        userPhone,
+        pointsAwarded: data.pointsAwarded != null ? data.pointsAwarded : null,
+        timestamp: createdAt,
+        imageUrl,
+        imageExpired,
+        totalVisibleAndClear: data.totalVisibleAndClear,
+        orderNumberVisibleAndClear: data.orderNumberVisibleAndClear,
+        dateVisibleAndClear: data.dateVisibleAndClear,
+        timeVisibleAndClear: data.timeVisibleAndClear,
+        keyFieldsTampered: data.keyFieldsTampered,
+        tamperingReason: data.tamperingReason || null,
+        orderNumberInBlackBox: data.orderNumberInBlackBox,
+        paidOnlineReceipt: data.paidOnlineReceipt,
+        orderNumberFromPaidOnlineSection: data.orderNumberFromPaidOnlineSection
+      });
+    } catch (error) {
+      logger.error('❌ Error fetching admin receipt detail:', error);
+      res.status(500).json({ error: 'Failed to load receipt for admin' });
+    }
+  });
+
   // Delete a scanned receipt so it can be rescanned
   app.delete('/admin/receipts/:id', async (req, res) => {
     try {
@@ -10088,7 +10205,18 @@ IMPORTANT:
       }
 
       const receiptData = receiptDoc.data() || {};
-      const { orderNumber, orderDate, userId } = receiptData;
+      const { orderNumber, orderDate, userId, imageStoragePath } = receiptData;
+
+      if (imageStoragePath && typeof imageStoragePath === 'string') {
+        try {
+          const storage = admin.storage();
+          const bucket = storage.bucket('dumplinghouseapp.firebasestorage.app');
+          await bucket.file(imageStoragePath).delete();
+          logger.info('🗑️ Deleted receipt image from Storage:', imageStoragePath);
+        } catch (storageErr) {
+          logger.warn('⚠️ Could not delete receipt image (may already be expired):', storageErr.message || storageErr);
+        }
+      }
 
       const batch = db.batch();
 
@@ -10553,20 +10681,22 @@ IMPORTANT:
           .get()
           .then(snap => snap.data().count),
         
-        // Rewards redeemed this month (using count aggregation) - only rewards with usedAt
+        // Rewards redeemed this month (using count aggregation) - only rewards with usedAt, exclude admin-deleted
         // Changed from all-time to this month to match Admin Overview display
         db.collection('redeemedRewards')
           .where('isUsed', '==', true)
+          .where('deletedByAdmin', '!=', true)
           .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
           .where('usedAt', '<', admin.firestore.Timestamp.fromDate(nextMonthStart))
           .count()
           .get()
           .then(snap => snap.data().count),
         
-        // Rewards redeemed today - only verified rewards scanned today
+        // Rewards redeemed today - only verified rewards scanned today, exclude admin-deleted
         // Use both lower and upper bounds to ensure we only count rewards within the current UTC day
         db.collection('redeemedRewards')
           .where('isUsed', '==', true)
+          .where('deletedByAdmin', '!=', true)
           .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(todayStart))
           .where('usedAt', '<', admin.firestore.Timestamp.fromDate(tomorrowStart))
           .count()
@@ -10662,6 +10792,7 @@ IMPORTANT:
       while (hasMore) {
         let query = db.collection('redeemedRewards')
           .where('isUsed', '==', true)
+          .where('deletedByAdmin', '!=', true)
           .orderBy('usedAt', 'desc')
           .select('usedAt') // Only fetch the usedAt field to minimize data transfer
           .limit(batchSize);
@@ -10767,9 +10898,10 @@ IMPORTANT:
       const monthStart = new Date(Date.UTC(year, monthNum - 1, 1, 0, 0, 0, 0));
       const monthEnd = new Date(Date.UTC(year, monthNum, 1, 0, 0, 0, 0)); // First day of next month
 
-      // Build query
+      // Build query - exclude admin-deleted rewards
       let query = db.collection('redeemedRewards')
         .where('isUsed', '==', true)
+        .where('deletedByAdmin', '!=', true)
         .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
         .where('usedAt', '<', admin.firestore.Timestamp.fromDate(monthEnd))
         .orderBy('usedAt', 'desc')
@@ -10822,6 +10954,7 @@ IMPORTANT:
       while (summaryHasMore) {
         let summaryQuery = db.collection('redeemedRewards')
           .where('isUsed', '==', true)
+          .where('deletedByAdmin', '!=', true)
           .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
           .where('usedAt', '<', admin.firestore.Timestamp.fromDate(monthEnd))
           .select('pointsRequired', 'userId') // Only fetch needed fields
@@ -10920,6 +11053,7 @@ IMPORTANT:
       while (summaryHasMore) {
         let summaryQuery = db.collection('redeemedRewards')
           .where('isUsed', '==', true)
+          .where('deletedByAdmin', '!=', true)
           .orderBy('usedAt', 'desc') // Required for startAfter pagination
           .select('pointsRequired', 'userId') // Only fetch needed fields
           .limit(summaryBatchSize);
@@ -10977,9 +11111,10 @@ IMPORTANT:
 
       const db = admin.firestore();
 
-      // Build query - SAME as monthly but NO date filter
+      // Build query - SAME as monthly but NO date filter, exclude admin-deleted
       let query = db.collection('redeemedRewards')
         .where('isUsed', '==', true)
+        .where('deletedByAdmin', '!=', true)
         .orderBy('usedAt', 'desc')
         .limit(limit + 1); // Fetch one extra to check if there's more
 
@@ -11028,6 +11163,7 @@ IMPORTANT:
       while (summaryHasMore) {
         let summaryQuery = db.collection('redeemedRewards')
           .where('isUsed', '==', true)
+          .where('deletedByAdmin', '!=', true)
           .orderBy('usedAt', 'desc') // Required for startAfter pagination
           .select('pointsRequired', 'userId')
           .limit(summaryBatchSize);
@@ -11122,9 +11258,10 @@ IMPORTANT:
       const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0, 0));
       const nextYearStart = new Date(Date.UTC(now.getUTCFullYear() + 1, 0, 1, 0, 0, 0, 0));
 
-      // Build query - SAME as monthly but with year boundaries
+      // Build query - SAME as monthly but with year boundaries, exclude admin-deleted
       let query = db.collection('redeemedRewards')
         .where('isUsed', '==', true)
+        .where('deletedByAdmin', '!=', true)
         .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(yearStart))
         .where('usedAt', '<', admin.firestore.Timestamp.fromDate(nextYearStart))
         .orderBy('usedAt', 'desc')
@@ -11175,6 +11312,7 @@ IMPORTANT:
       while (summaryHasMore) {
         let summaryQuery = db.collection('redeemedRewards')
           .where('isUsed', '==', true)
+          .where('deletedByAdmin', '!=', true)
           .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(yearStart))
           .where('usedAt', '<', admin.firestore.Timestamp.fromDate(nextYearStart))
           .orderBy('usedAt', 'desc') // Required for startAfter pagination
@@ -11247,6 +11385,166 @@ IMPORTANT:
     } catch (error) {
       logger.error('❌ Error fetching this-year reward history:', error);
       res.status(500).json({ error: 'Failed to fetch this-year reward history' });
+    }
+  });
+
+  /**
+   * POST /admin/rewards/history/:id/soft-delete
+   * 
+   * Soft-delete a reward from admin overview (moves to deleted section).
+   * Sets deletedByAdmin: true and deletedAt on the reward document.
+   */
+  app.post('/admin/rewards/history/:id/soft-delete', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const rewardId = req.params.id;
+      if (!rewardId) {
+        return res.status(400).json({ error: 'Reward ID required' });
+      }
+
+      const db = admin.firestore();
+      const rewardRef = db.collection('redeemedRewards').doc(rewardId);
+      const rewardDoc = await rewardRef.get();
+
+      if (!rewardDoc.exists) {
+        return res.status(404).json({ error: 'Reward not found' });
+      }
+
+      const data = rewardDoc.data();
+      if (data.deletedByAdmin === true) {
+        return res.status(400).json({ error: 'Reward already deleted' });
+      }
+
+      await rewardRef.update({
+        deletedByAdmin: true,
+        deletedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      logger.info(`🗑️ Admin soft-deleted reward ${rewardId} by ${adminContext.email}`);
+      res.json({ success: true });
+    } catch (error) {
+      logger.error('❌ Error soft-deleting reward:', error);
+      res.status(500).json({ error: 'Failed to soft-delete reward' });
+    }
+  });
+
+  /**
+   * GET /admin/rewards/history/deleted
+   * 
+   * Get paginated list of soft-deleted rewards for the deleted history section.
+   * Ordered by deletedAt desc.
+   */
+  app.get('/admin/rewards/history/deleted', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const limit = parseInt(req.query.limit) || 50;
+      const startAfter = req.query.startAfter;
+
+      const db = admin.firestore();
+
+      let query = db.collection('redeemedRewards')
+        .where('isUsed', '==', true)
+        .where('deletedByAdmin', '==', true)
+        .orderBy('deletedAt', 'desc')
+        .limit(limit + 1);
+
+      if (startAfter) {
+        const cursorDoc = await db.collection('redeemedRewards').doc(startAfter).get();
+        if (cursorDoc.exists) {
+          query = query.startAfter(cursorDoc);
+        }
+      }
+
+      const snapshot = await query.get();
+      const hasMore = snapshot.size > limit;
+      const docs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
+
+      const userIds = [...new Set(docs.map(doc => doc.data().userId).filter(Boolean))];
+      const userNamesMap = new Map();
+      if (userIds.length > 0) {
+        const batchSize = 10;
+        for (let i = 0; i < userIds.length; i += batchSize) {
+          const batch = userIds.slice(i, i + batchSize);
+          const usersSnapshot = await db.collection('users')
+            .where(admin.firestore.FieldPath.documentId(), 'in', batch)
+            .get();
+          usersSnapshot.forEach(userDoc => {
+            const userData = userDoc.data();
+            const firstName = userData.firstName || userData.name?.split(' ')[0] || 'Unknown';
+            userNamesMap.set(userDoc.id, firstName);
+          });
+        }
+      }
+
+      const rewards = docs.map(doc => {
+        const data = doc.data();
+        const userId = data.userId;
+        const userFirstName = userId ? (userNamesMap.get(userId) || 'Unknown') : 'Unknown';
+        return {
+          id: doc.id,
+          userFirstName,
+          rewardTitle: data.rewardTitle || 'Reward',
+          rewardDescription: data.rewardDescription || '',
+          rewardCategory: data.rewardCategory || '',
+          selectedItemName: data.selectedItemName || null,
+          selectedItemName2: data.selectedItemName2 || null,
+          selectedToppingName: data.selectedToppingName || null,
+          cookingMethod: data.cookingMethod || null,
+          drinkType: data.drinkType || null,
+          pointsRequired: data.pointsRequired || 0,
+          redemptionCode: data.redemptionCode || '',
+          usedAt: data.usedAt?.toDate?.().toISOString() || null
+        };
+      });
+
+      res.json({
+        rewards,
+        hasMore,
+        nextCursor: hasMore && docs.length > 0 ? docs[docs.length - 1].id : null
+      });
+    } catch (error) {
+      logger.error('❌ Error fetching deleted reward history:', error);
+      res.status(500).json({ error: 'Failed to fetch deleted reward history' });
+    }
+  });
+
+  /**
+   * DELETE /admin/rewards/history/deleted
+   * 
+   * Permanently delete reward documents from Firestore.
+   * Body: { rewardIds: string[] }
+   */
+  app.delete('/admin/rewards/history/deleted', async (req, res) => {
+    try {
+      const adminContext = await requireAdmin(req, res);
+      if (!adminContext) return;
+
+      const body = req.body || {};
+      const rewardIds = Array.isArray(body.rewardIds) ? body.rewardIds : [];
+      if (rewardIds.length === 0) {
+        return res.status(400).json({ error: 'rewardIds array required and must not be empty' });
+      }
+
+      const db = admin.firestore();
+      const batch = db.batch();
+
+      for (const id of rewardIds.slice(0, 100)) {
+        const ref = db.collection('redeemedRewards').doc(id);
+        batch.delete(ref);
+      }
+
+      await batch.commit();
+      const deletedCount = Math.min(rewardIds.length, 100);
+
+      logger.info(`🗑️ Admin permanently deleted ${deletedCount} reward(s) by ${adminContext.email}`);
+      res.json({ success: true, deletedCount });
+    } catch (error) {
+      logger.error('❌ Error permanently deleting rewards:', error);
+      res.status(500).json({ error: 'Failed to permanently delete rewards' });
     }
   });
 

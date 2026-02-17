@@ -118,6 +118,12 @@ struct RewardHistoryResponse: Codable {
     let nextCursor: String?
 }
 
+struct DeletedRewardsResponse: Codable {
+    let rewards: [RewardHistoryItem]
+    let hasMore: Bool
+    let nextCursor: String?
+}
+
 // MARK: - Admin Reward History ViewModel
 
 @MainActor
@@ -133,6 +139,14 @@ class AdminRewardHistoryViewModel: ObservableObject {
     @Published var isLoadingMore: Bool = false
     @Published var isLoadingAllTimeSummary: Bool = false
     @Published var errorMessage: String?
+    
+    // Deleted section state
+    @Published var showDeletedSection: Bool = false
+    @Published var deletedRewards: [RewardHistoryItem] = []
+    @Published var selectedDeletedIds: Set<String> = []
+    @Published var isLoadingDeleted: Bool = false
+    @Published var isSoftDeleting: Bool = false
+    @Published var isPermanentlyDeleting: Bool = false
     
     // Pagination state
     private var hasMore: Bool = false
@@ -400,17 +414,157 @@ class AdminRewardHistoryViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Deleted Section
+    
+    func loadDeletedRewards() async {
+        guard !isLoadingDeleted else { return }
+        isLoadingDeleted = true
+        
+        do {
+            guard let user = Auth.auth().currentUser else {
+                isLoadingDeleted = false
+                return
+            }
+            
+            let token = try await user.getIDTokenResult(forcingRefresh: false).token
+            guard let url = URL(string: "\(Config.backendURL)/admin/rewards/history/deleted") else {
+                isLoadingDeleted = false
+                return
+            }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            
+            let (data, response) = try await URLSession.configured.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
+                isLoadingDeleted = false
+                return
+            }
+            
+            let decoded = try JSONDecoder().decode(DeletedRewardsResponse.self, from: data)
+            deletedRewards = decoded.rewards
+            isLoadingDeleted = false
+            
+        } catch {
+            isLoadingDeleted = false
+        }
+    }
+    
+    func softDeleteReward(id: String) async {
+        guard !isSoftDeleting else { return }
+        isSoftDeleting = true
+        
+        do {
+            guard let user = Auth.auth().currentUser else {
+                isSoftDeleting = false
+                return
+            }
+            
+            let token = try await user.getIDTokenResult(forcingRefresh: false).token
+            guard let url = URL(string: "\(Config.backendURL)/admin/rewards/history/\(id)/soft-delete") else {
+                isSoftDeleting = false
+                return
+            }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            
+            let (_, response) = try await URLSession.configured.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
+                isSoftDeleting = false
+                return
+            }
+            
+            let pointsRemoved = currentRewards.first { $0.id == id }?.pointsRequired ?? 0
+            currentRewards.removeAll { $0.id == id }
+            if let s = summary {
+                summary = RewardHistorySummary(
+                    totalRewards: max(0, s.totalRewards - 1),
+                    totalPointsRedeemed: max(0, s.totalPointsRedeemed - pointsRemoved),
+                    uniqueUsers: s.uniqueUsers
+                )
+            }
+            await loadAllTimeSummary()
+            if showDeletedSection {
+                await loadDeletedRewards()
+            }
+            isSoftDeleting = false
+            
+        } catch {
+            isSoftDeleting = false
+        }
+    }
+    
+    func toggleDeletedSelection(id: String) {
+        if selectedDeletedIds.contains(id) {
+            selectedDeletedIds.remove(id)
+        } else {
+            selectedDeletedIds.insert(id)
+        }
+    }
+    
+    func selectAllDeleted() {
+        selectedDeletedIds = Set(deletedRewards.map { $0.id })
+    }
+    
+    func deselectAllDeleted() {
+        selectedDeletedIds = []
+    }
+    
+    func permanentlyDeleteSelected() async {
+        guard !isPermanentlyDeleting, !selectedDeletedIds.isEmpty else { return }
+        isPermanentlyDeleting = true
+        
+        do {
+            guard let user = Auth.auth().currentUser else {
+                isPermanentlyDeleting = false
+                return
+            }
+            
+            let token = try await user.getIDTokenResult(forcingRefresh: false).token
+            guard let url = URL(string: "\(Config.backendURL)/admin/rewards/history/deleted") else {
+                isPermanentlyDeleting = false
+                return
+            }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "DELETE"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder().encode(["rewardIds": Array(selectedDeletedIds)])
+            
+            let (_, response) = try await URLSession.configured.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
+                isPermanentlyDeleting = false
+                return
+            }
+            
+            deletedRewards.removeAll { selectedDeletedIds.contains($0.id) }
+            selectedDeletedIds = []
+            isPermanentlyDeleting = false
+            
+        } catch {
+            isPermanentlyDeleting = false
+        }
+    }
+    
     // MARK: - Refresh
     
-    func refresh() {
-        Task {
-            await loadAllTimeSummary()
-            if selectedTimePeriod == .thisMonth {
-                await loadAvailableMonths()
-                // loadAvailableMonths will auto-load the selected month
-            } else {
-                await loadRewardsForPeriod(selectedTimePeriod)
-            }
+    func refresh() async {
+        await loadAllTimeSummary()
+        if selectedTimePeriod == .thisMonth {
+            await loadAvailableMonths()
+            // loadAvailableMonths will auto-load the selected month
+        } else {
+            await loadRewardsForPeriod(selectedTimePeriod)
+        }
+        if showDeletedSection {
+            await loadDeletedRewards()
         }
     }
     
