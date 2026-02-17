@@ -10790,7 +10790,7 @@ IMPORTANT:
         let query = db.collection('redeemedRewards')
           .where('isUsed', '==', true)
           .orderBy('usedAt', 'desc')
-          .select('usedAt') // Only fetch the usedAt field to minimize data transfer
+          .select('usedAt', 'deletedByAdmin')
           .limit(batchSize);
         
         if (lastDoc) {
@@ -10802,6 +10802,7 @@ IMPORTANT:
         
         batchSnapshot.forEach(doc => {
           const data = doc.data();
+          if (data.deletedByAdmin === true) return;
           const usedAt = data.usedAt;
           
           if (usedAt && usedAt.toDate) {
@@ -10952,7 +10953,7 @@ IMPORTANT:
           .where('isUsed', '==', true)
           .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(monthStart))
           .where('usedAt', '<', admin.firestore.Timestamp.fromDate(monthEnd))
-          .select('pointsRequired', 'userId') // Only fetch needed fields
+          .select('pointsRequired', 'userId', 'deletedByAdmin')
           .limit(summaryBatchSize);
         
         if (summaryLastDoc) {
@@ -10961,9 +10962,10 @@ IMPORTANT:
         
         const summaryBatch = await summaryQuery.get();
         summaryHasMore = summaryBatch.size === summaryBatchSize;
-        totalRewards += summaryBatch.size;
+        const filtered = summaryBatch.docs.filter(doc => doc.data().deletedByAdmin !== true);
+        totalRewards += filtered.length;
         
-        summaryBatch.forEach(doc => {
+        filtered.forEach(doc => {
           const data = doc.data();
           if (typeof data.pointsRequired === 'number') {
             totalPointsRedeemed += data.pointsRequired;
@@ -11049,7 +11051,7 @@ IMPORTANT:
         let summaryQuery = db.collection('redeemedRewards')
           .where('isUsed', '==', true)
           .orderBy('usedAt', 'desc') // Required for startAfter pagination
-          .select('pointsRequired', 'userId') // Only fetch needed fields
+          .select('pointsRequired', 'userId', 'deletedByAdmin')
           .limit(summaryBatchSize);
         
         if (summaryLastDoc) {
@@ -11058,9 +11060,10 @@ IMPORTANT:
         
         const summaryBatch = await summaryQuery.get();
         summaryHasMore = summaryBatch.size === summaryBatchSize;
-        totalRewards += summaryBatch.size;
+        const filtered = summaryBatch.docs.filter(doc => doc.data().deletedByAdmin !== true);
+        totalRewards += filtered.length;
         
-        summaryBatch.forEach(doc => {
+        filtered.forEach(doc => {
           const data = doc.data();
           if (typeof data.pointsRequired === 'number') {
             totalPointsRedeemed += data.pointsRequired;
@@ -11308,7 +11311,7 @@ IMPORTANT:
           .where('usedAt', '>=', admin.firestore.Timestamp.fromDate(yearStart))
           .where('usedAt', '<', admin.firestore.Timestamp.fromDate(nextYearStart))
           .orderBy('usedAt', 'desc') // Required for startAfter pagination
-          .select('pointsRequired', 'userId')
+          .select('pointsRequired', 'userId', 'deletedByAdmin')
           .limit(summaryBatchSize);
         
         if (summaryLastDoc) {
@@ -11317,9 +11320,10 @@ IMPORTANT:
         
         const summaryBatch = await summaryQuery.get();
         summaryHasMore = summaryBatch.size === summaryBatchSize;
-        totalRewards += summaryBatch.size;
+        const filtered = summaryBatch.docs.filter(doc => doc.data().deletedByAdmin !== true);
+        totalRewards += filtered.length;
         
-        summaryBatch.forEach(doc => {
+        filtered.forEach(doc => {
           const data = doc.data();
           if (typeof data.pointsRequired === 'number') {
             totalPointsRedeemed += data.pointsRequired;

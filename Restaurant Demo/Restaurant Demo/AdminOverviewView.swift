@@ -297,6 +297,15 @@ struct AdminOverviewView: View {
     
     private var organizedActions: some View {
         VStack(spacing: 12) {
+            // Reservations (first)
+            actionSectionHeader(title: "Reservations", icon: "calendar.badge.clock", color: .teal)
+            ActionButton(
+                title: "Reservations",
+                subtitle: "View and confirm table reservations",
+                icon: "calendar.badge.clock",
+                gradient: [.teal, .mint]
+            ) { showReservations = true }
+            
             // Customers & Receipts
             actionSectionHeader(title: "Customers & Receipts", icon: "person.3.fill", color: .blue)
             ActionButton(
@@ -347,12 +356,6 @@ struct AdminOverviewView: View {
                 icon: "bell.badge.fill",
                 gradient: [.indigo, .purple]
             ) { showNotifications = true }
-            ActionButton(
-                title: "Reservations",
-                subtitle: "View and confirm table reservations",
-                icon: "calendar.badge.clock",
-                gradient: [.teal, .mint]
-            ) { showReservations = true }
             ActionButton(
                 title: "Banned Numbers",
                 subtitle: "Manage banned phone numbers",

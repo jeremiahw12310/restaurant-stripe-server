@@ -1333,17 +1333,17 @@ struct CameraViewWithOverlay: View {
                                     .font(.system(size: 22, weight: .black, design: .rounded))
                                     .foregroundStyle(Theme.darkGoldGradient)
                                     .opacity(videoLoopCount == 0 ? 1 : 0)
-                                    .animation(.easeInOut(duration: 0.4), value: videoLoopCount)
+                                    .animation(.easeInOut(duration: 0.65), value: videoLoopCount)
                                 // Phase 2: "Almost done" with same gradient gold
                                 Text("Almost done")
                                     .font(.system(size: 22, weight: .black, design: .rounded))
                                     .foregroundStyle(Theme.darkGoldGradient)
                                     .opacity(videoLoopCount >= 1 ? 1 : 0)
-                                    .animation(.easeInOut(duration: 0.4), value: videoLoopCount)
+                                    .animation(.easeInOut(duration: 0.65), value: videoLoopCount)
                             }
                             .padding(.horizontal, 24)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .offset(y: 0)
+                            .offset(y: geometry.size.height * 0.05)
                         }
                     }
                     .allowsHitTesting(false)
