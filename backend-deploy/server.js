@@ -112,6 +112,10 @@ const fsPromises = require('fs').promises;
 const app = express();
 const upload = multer({ dest: 'uploads/', limits: { fileSize: 10 * 1024 * 1024 } });
 
+// Reduce log volume: skip "request completed" only for the one endpoint that was flooding logs.
+// No behavior change — only which requests get a completion log line. Errors are still logged.
+const QUIET_PATH = '/admin/suspicious-flags';
+
 app.use(pinoHttp({
   logger,
   genReqId: (req) => {
@@ -119,6 +123,12 @@ app.use(pinoHttp({
     if (Array.isArray(existing) && existing.length > 0) return existing[0];
     if (typeof existing === 'string' && existing.trim()) return existing;
     return randomUUID();
+  },
+  autoLogging: {
+    ignore: (req) => {
+      const path = (req.url && req.url.split('?')[0]) || req.path || '';
+      return path === QUIET_PATH;
+    }
   }
 }));
 app.use((req, res, next) => {
