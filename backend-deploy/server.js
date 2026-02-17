@@ -7214,7 +7214,6 @@ IMPORTANT:
             const dir = orderDirParam === 'desc' ? 'desc' : 'asc';
             let query = db.collection('users')
               .orderBy('accountCreatedDate', dir)
-              .orderBy(admin.firestore.FieldPath.documentId())
               .limit(limit);
 
             if (cursor) {
