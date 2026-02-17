@@ -10748,10 +10748,16 @@ IMPORTANT:
           if (response.failureCount > 0) {
             response.responses.forEach((resp, idx) => {
               if (!resp.success) {
+                let details;
+                try {
+                  details = resp.error?.toJSON ? resp.error.toJSON() : undefined;
+                } catch (_) {
+                  details = String(resp.error);
+                }
                 logger.warn(`FCM send failed for token index ${idx}:`, {
                   code: resp.error?.code,
                   message: resp.error?.message,
-                  details: resp.error?.toJSON ? resp.error.toJSON() : undefined
+                  details
                 });
               }
             });
@@ -10762,24 +10768,28 @@ IMPORTANT:
         }
       }
 
-      // Log the sent notification for admin audit
+      // Log the sent notification for admin audit (non-fatal - notification was delivered)
       const sentNotifRef = db.collection('sentNotifications').doc();
-      await sentNotifRef.set({
-        title: trimmedTitle,
-        body: trimmedBody,
-        targetType,
-        targetUserIds: targetType === 'individual' ? userIds : null,
-        includeAdmins: shouldIncludeAdmins,
-        isPromotional: isPromotionalNotification,
-        sentBy: adminContext.uid,
-        sentAt: admin.firestore.FieldValue.serverTimestamp(),
-        successCount,
-        failureCount,
-        totalTargeted: tokensToSend.length,
-        excludedPromotionalOptOutCount: isPromotionalNotification ? excludedPromotionalOptOutCount : undefined
-      });
-
-      logger.info(`✅ Notification sent: ${successCount} success, ${failureCount} failed`);
+      try {
+        await sentNotifRef.set({
+          title: trimmedTitle,
+          body: trimmedBody,
+          targetType,
+          targetUserIds: targetType === 'individual' ? userIds : null,
+          includeAdmins: shouldIncludeAdmins,
+          isPromotional: isPromotionalNotification,
+          sentBy: adminContext.uid,
+          sentAt: admin.firestore.FieldValue.serverTimestamp(),
+          successCount,
+          failureCount,
+          totalTargeted: tokensToSend.length,
+          excludedPromotionalOptOutCount: isPromotionalNotification ? excludedPromotionalOptOutCount : undefined
+        });
+        logger.info(`✅ Notification sent: ${successCount} success, ${failureCount} failed`);
+      } catch (auditError) {
+        logger.error('Failed to save notification audit record (notification was still sent):', auditError);
+        // Fall through to return 200 - delivery succeeded
+      }
 
       res.json({
         success: true,
@@ -10791,7 +10801,11 @@ IMPORTANT:
       });
 
     } catch (error) {
-      logger.error('❌ Error sending admin notification:', error);
+      logger.error('Error sending admin notification:', {
+        message: error?.message,
+        stack: error?.stack,
+        code: error?.code
+      });
       res.status(500).json({ error: 'Failed to send notification' });
     }
   });
