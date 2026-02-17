@@ -5050,7 +5050,8 @@ IMPORTANT:
               hasMore: docs.length === limit
             });
           } catch (dateOrderError) {
-            console.error('❌ Admin users date-ordered query failed (e.g. missing index), falling back to doc order:', dateOrderError.message || dateOrderError);
+            const msg = dateOrderError?.message ?? String(dateOrderError);
+            console.error('❌ Admin users date-ordered query failed, falling back to doc order. Error:', msg);
           }
         }
 
