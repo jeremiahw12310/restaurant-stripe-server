@@ -582,6 +582,11 @@ struct HomeView: View {
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("claimWelcomePoints"))) { _ in
                 claimWelcomePoints()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .openAdminOffice)) { _ in
+                if userVM.isAdmin || userVM.isEmployee {
+                    showAdminOffice = true
+                }
+            }
         
         return running
         .sheet(isPresented: $showAccountCustomization) {

@@ -15,6 +15,10 @@ extension Notification.Name {
     static let showWalkthrough = Notification.Name("showWalkthrough")
     /// Switch to More tab and push the Notifications section (NotificationsCenterView).
     static let openNotificationsSection = Notification.Name("openNotificationsSection")
+    /// Open Admin Office sheet (HomeView presents it). Used when admin taps reservation push.
+    static let openAdminOffice = Notification.Name("openAdminOffice")
+    /// Open Reservations sheet in Admin Office with Pending filter. AdminOverviewView listens.
+    static let openAdminReservationsWithPendingFilter = Notification.Name("openAdminReservationsWithPendingFilter")
 }
 
 struct ContentView: View {

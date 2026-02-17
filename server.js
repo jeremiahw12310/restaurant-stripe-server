@@ -4563,6 +4563,22 @@ IMPORTANT:
             createdAt: now,
             reservationId: id
           });
+
+          // Send FCM push to customer so they get notified on their device (confirmed or cancelled)
+          (async () => {
+            try {
+              const userDoc = await db.collection('users').doc(customerUid).get();
+              const data = userDoc.exists ? userDoc.data() : {};
+              const fcmToken = data && typeof data.fcmToken === 'string' && data.fcmToken.length > 0 ? data.fcmToken : null;
+              if (fcmToken) {
+                sendPushNotificationToToken(fcmToken, notifTitle, notifBody, { type: notifType, reservationId: id }).catch(err => {
+                  console.warn('Customer reservation status push failed:', err.message || err);
+                });
+              }
+            } catch (pushErr) {
+              console.warn('Customer reservation push error:', pushErr.message || pushErr);
+            }
+          })();
         }
       } catch (notifErr) {
         console.error('⚠️ Failed to send reservation status notification:', notifErr);
@@ -4637,6 +4653,108 @@ IMPORTANT:
     } catch (error) {
       console.error('❌ Error deleting reservation:', error);
       return res.status(500).json({ error: 'Failed to delete reservation' });
+    }
+  });
+
+  /**
+   * POST /cron/auto-confirm-reservations
+   * Cron-only. Auto-confirms pending reservations with partySize < 4 after 5 minutes.
+   * Secured by CRON_SECRET (header X-Cron-Secret or Authorization: Bearer <secret>).
+   */
+  app.post('/cron/auto-confirm-reservations', async (req, res) => {
+    const secret = process.env.CRON_SECRET || '';
+    const headerSecret = req.headers['x-cron-secret'] || '';
+    const authHeader = req.headers.authorization || '';
+    const bearerSecret = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    if (!secret || (headerSecret !== secret && bearerSecret !== secret)) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    try {
+      const db = admin.firestore();
+      const now = new Date();
+      const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+
+      const pendingSnap = await db.collection('reservations')
+        .where('status', '==', 'pending')
+        .limit(200)
+        .get();
+
+      const toAutoConfirm = [];
+      for (const doc of pendingSnap.docs) {
+        const d = doc.data();
+        const partySize = typeof d.partySize === 'number' ? d.partySize : parseInt(d.partySize, 10) || 0;
+        if (partySize >= 4) continue;
+        const createdAt = d.createdAt;
+        let createdDate = null;
+        if (createdAt) {
+          if (typeof createdAt.toDate === 'function') createdDate = createdAt.toDate();
+          else if (createdAt instanceof Date) createdDate = createdAt;
+          else createdDate = new Date(createdAt);
+        }
+        if (!createdDate || isNaN(createdDate.getTime()) || createdDate > fiveMinutesAgo) continue;
+        toAutoConfirm.push({ ref: doc.ref, id: doc.id, data: d });
+      }
+
+      let count = 0;
+      for (const { ref, id, data: resData } of toAutoConfirm) {
+        const fresh = await ref.get();
+        if (!fresh.exists || (fresh.data() || {}).status !== 'pending') continue;
+        await ref.update({
+          status: 'confirmed',
+          confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+          confirmedBy: 'auto',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        const adminNotifsSnap = await db.collection('notifications').where('reservationId', '==', id).get();
+        const toUpdate = adminNotifsSnap.docs.filter(d => (d.data().type || '') === 'reservation_new');
+        for (const d of toUpdate) {
+          await d.ref.update({
+            title: 'New reservation (auto confirmed)',
+            autoConfirmed: true
+          });
+        }
+
+        const customerUid = resData.userId;
+        if (customerUid) {
+          const dateStr = resData.date || '';
+          const timeStr = resData.time || '';
+          const party = resData.partySize || 0;
+          const notifTitle = 'Reservation Confirmed';
+          const notifBody = `Your reservation for ${party} on ${dateStr} at ${timeStr} has been confirmed. See you then!`;
+          await db.collection('notifications').add({
+            userId: customerUid,
+            title: notifTitle,
+            body: notifBody,
+            type: 'reservation_confirmed',
+            read: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            reservationId: id
+          });
+          (async () => {
+            try {
+              const userDoc = await db.collection('users').doc(customerUid).get();
+              const data = userDoc.exists ? userDoc.data() : {};
+              const fcmToken = data && typeof data.fcmToken === 'string' && data.fcmToken.length > 0 ? data.fcmToken : null;
+              if (fcmToken) {
+                sendPushNotificationToToken(fcmToken, notifTitle, notifBody, { type: 'reservation_confirmed', reservationId: id }).catch(err => {
+                  console.warn('Customer auto-confirm push failed:', err.message || err);
+                });
+              }
+            } catch (pushErr) {
+              console.warn('Customer auto-confirm push error:', pushErr.message || pushErr);
+            }
+          })();
+        }
+        count++;
+        console.log(`Auto-confirmed reservation ${id} (party of ${resData.partySize})`);
+      }
+
+      return res.status(200).json({ ok: true, autoConfirmedCount: count });
+    } catch (error) {
+      console.error('❌ Error in auto-confirm-reservations cron:', error);
+      return res.status(500).json({ error: 'Failed to run auto-confirm' });
     }
   });
 

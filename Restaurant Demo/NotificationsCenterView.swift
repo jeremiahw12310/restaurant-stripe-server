@@ -40,90 +40,61 @@ struct NotificationsCenterView: View {
         }
     }
     
-    // MARK: - Notifications List
-    
+    // MARK: - Notifications List (chronological with type separators)
+
+    private func sectionTitleAndIcon(for type: AppNotification.NotificationType) -> (title: String, icon: String) {
+        switch type {
+        case .referral:
+            return ("Friend Referrals", "person.badge.plus.fill")
+        case .reservationNew:
+            return ("Reservations", "calendar.badge.plus")
+        case .adminBroadcast, .adminIndividual, .system, .rewardGift:
+            return ("General", "bell.fill")
+        }
+    }
+
+    private func typeSectionHeader(title: String, icon: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(Theme.primaryGold)
+            Text(title.uppercased())
+                .font(.system(size: 12, weight: .black, design: .rounded))
+                .foregroundStyle(Theme.darkGoldGradient)
+            Rectangle()
+                .fill(Color.white.opacity(0.15))
+                .frame(height: 1)
+                .cornerRadius(1)
+        }
+    }
+
     private var notificationsList: some View {
-        ScrollView {
-            LazyVStack(spacing: 20) {
-                // Referral Notifications Section
-                if !referralNotifications.isEmpty {
-                    notificationSection(
-                        title: "Friend Referrals",
-                        notifications: referralNotifications,
-                        icon: "person.badge.plus.fill"
-                    )
-                }
+        let notifications = notificationService.notifications
+        return ScrollView {
+            LazyVStack(spacing: 10) {
+                ForEach(Array(notifications.enumerated()), id: \.element.id) { index, notification in
+                    let showTypeHeader = index == 0 || notification.type != notifications[index - 1].type
+                    let (sectionTitle, sectionIcon) = sectionTitleAndIcon(for: notification.type)
 
-                // Reservation Notifications (admin: Confirm / Call)
-                if !reservationNotifications.isEmpty {
-                    reservationSection(notifications: reservationNotifications)
-                }
-
-                // General Notifications Section
-                if !generalNotifications.isEmpty {
-                    notificationSection(
-                        title: "General",
-                        notifications: generalNotifications,
-                        icon: "bell.fill"
-                    )
+                    VStack(alignment: .leading, spacing: 10) {
+                        if showTypeHeader {
+                            typeSectionHeader(title: sectionTitle, icon: sectionIcon)
+                        }
+                        if notification.type == .reservationNew {
+                            ReservationNotificationCard(notification: notification)
+                        } else {
+                            NotificationCard(notification: notification)
+                        }
+                    }
+                    .padding(.top, (showTypeHeader && index > 0) ? 10 : 0)
                 }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
         }
         .refreshable {
-            // Refresh notifications
             if Auth.auth().currentUser != nil {
                 notificationService.startNotificationsListener()
-            }
-        }
-    }
-    
-    private func reservationSection(notifications: [AppNotification]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Image(systemName: "calendar.badge.plus")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(Theme.primaryGold)
-                Text("RESERVATIONS")
-                    .font(.system(size: 12, weight: .black, design: .rounded))
-                    .foregroundStyle(Theme.darkGoldGradient)
-                Rectangle()
-                    .fill(Color.white.opacity(0.15))
-                    .frame(height: 1)
-                    .cornerRadius(1)
-            }
-            VStack(spacing: 10) {
-                ForEach(notifications) { notification in
-                    ReservationNotificationCard(notification: notification)
-                }
-            }
-        }
-    }
-
-    private func notificationSection(title: String, notifications: [AppNotification], icon: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Section Header
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(Theme.primaryGold)
-                
-                Text(title.uppercased())
-                    .font(.system(size: 12, weight: .black, design: .rounded))
-                    .foregroundStyle(Theme.darkGoldGradient)
-                
-                Rectangle()
-                    .fill(Color.white.opacity(0.15))
-                    .frame(height: 1)
-                    .cornerRadius(1)
-            }
-            
-            // Notification Cards
-            VStack(spacing: 10) {
-                ForEach(notifications) { notification in
-                    NotificationCard(notification: notification)
-                }
             }
         }
     }
@@ -306,6 +277,14 @@ struct ReservationNotificationCard: View {
                     Circle()
                         .fill(Theme.primaryGold)
                         .frame(width: 8, height: 8)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                NotificationCenter.default.post(name: .switchToHomeTab, object: nil)
+                NotificationCenter.default.post(name: .openAdminOffice, object: nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                    NotificationCenter.default.post(name: .openAdminReservationsWithPendingFilter, object: nil)
                 }
             }
 

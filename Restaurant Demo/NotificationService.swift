@@ -470,6 +470,18 @@ class NotificationService: NSObject, ObservableObject {
             }
             return
         }
+        // Reservation new: take admin to Admin Office → Reservations (Pending)
+        if let type = userInfo["type"] as? String, type == "reservation_new" {
+            DebugLogger.debug("📅 NotificationService: Navigating to Admin Office → Reservations", category: "Notifications")
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .switchToHomeTab, object: nil)
+                NotificationCenter.default.post(name: .openAdminOffice, object: nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                    NotificationCenter.default.post(name: .openAdminReservationsWithPendingFilter, object: nil)
+                }
+            }
+            return
+        }
         // All other notification types: open More tab and push notifications section
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: .switchToMoreTab, object: nil)

@@ -8,8 +8,8 @@ class AdminOfficeViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var isPageLoading = false
     @Published var hasMore = true
-    @Published var sortOption: SortOption = .name
-    @Published var sortOrder: SortOrder = .ascending
+    @Published var sortOption: SortOption = .dateCreated
+    @Published var sortOrder: SortOrder = .descending
     @Published var errorMessage: String?
     
     // Cleanup state
@@ -102,7 +102,7 @@ class AdminOfficeViewModel: ObservableObject {
             case .points:
                 result = user1.points > user2.points
             case .dateCreated:
-                result = user1.accountCreatedDate > user2.accountCreatedDate
+                result = user1.accountCreatedDate < user2.accountCreatedDate
             case .status:
                 let status1 = user1.isAdmin ? 2 : (user1.isVerified ? 1 : 0)
                 let status2 = user2.isAdmin ? 2 : (user2.isVerified ? 1 : 0)
@@ -256,7 +256,7 @@ class AdminOfficeViewModel: ObservableObject {
                         let isEmployee = u["isEmployee"] as? Bool ?? false
                         let isBanned = u["isBanned"] as? Bool ?? false
                         
-                        var createdAt = Date()
+                        var createdAt = Date.distantPast
                         if let iso = u["accountCreatedDate"] as? String,
                            let d = Self.isoFormatter.date(from: iso) {
                             createdAt = d

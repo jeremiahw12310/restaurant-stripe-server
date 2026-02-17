@@ -3,7 +3,7 @@
 //  Restaurant Demo
 //
 //  Admin screen to list reservations from GET /reservations and Confirm/Call/Cancel per row.
-//  Redesigned for easier viewing, cancelling, and managing pending reservations.
+//  Redesigned for easier viewing and managing pending reservations.
 //
 
 import SwiftUI
@@ -625,10 +625,8 @@ struct ReservationRowView: View {
     var onSuccess: ((String) -> Void)?
     @State private var isConfirming = false
     @State private var isCancelling = false
-    @State private var isDeleting = false
     @State private var showConfirmAlert = false
     @State private var showCancelAlert = false
-    @State private var showDeleteAlert = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -666,7 +664,7 @@ struct ReservationRowView: View {
             Divider()
                 .background(Theme.modernCardSecondary)
 
-            // Actions: primary (Confirm/Cancel) then Call, Delete
+            // Actions: Confirm / Cancel (if pending), Call
             HStack(spacing: 10) {
                 if reservation.status == "pending" {
                     Button(action: { showConfirmAlert = true }) {
@@ -727,26 +725,6 @@ struct ReservationRowView: View {
                         }
                     }
                 }
-
-                Button(action: { showDeleteAlert = true }) {
-                    HStack(spacing: 5) {
-                        if isDeleting {
-                            ProgressView()
-                                .scaleEffect(0.75)
-                                .tint(.white)
-                        } else {
-                            Image(systemName: "trash.fill")
-                                .font(.system(size: 12))
-                            Text("Delete")
-                                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        }
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.energyRed))
-                }
-                .disabled(isConfirming || isCancelling || isDeleting)
             }
         }
         .padding(18)
@@ -785,21 +763,7 @@ struct ReservationRowView: View {
             }
             Button("Keep It", role: .cancel) {}
         } message: {
-            Text("Cancel \(reservation.customerName)'s reservation for \(reservation.formattedDate) at \(reservation.time)? The customer will be notified.")
-        }
-        .alert("Delete Reservation", isPresented: $showDeleteAlert) {
-            Button("Delete", role: .destructive) {
-                isDeleting = true
-                viewModel.deleteReservation(id: reservation.id) { success in
-                    isDeleting = false
-                    if success {
-                        onSuccess?("Reservation deleted — customer notified")
-                    }
-                }
-            }
-            Button("Go Back", role: .cancel) {}
-        } message: {
-            Text("Permanently delete this reservation? The customer can be notified.")
+            Text("Cancel \(reservation.customerName)'s reservation for \(reservation.formattedDate) at \(reservation.time)? The customer will be notified by push notification.")
         }
     }
 
@@ -831,10 +795,8 @@ struct AdminReservationDetailSheet: View {
     @Environment(\.dismiss) private var envDismiss
     @State private var isConfirming = false
     @State private var isCancelling = false
-    @State private var isDeleting = false
     @State private var showConfirmAlert = false
     @State private var showCancelAlert = false
-    @State private var showDeleteAlert = false
 
     var body: some View {
         NavigationStack {
@@ -891,22 +853,7 @@ struct AdminReservationDetailSheet: View {
                 }
                 Button("Keep It", role: .cancel) {}
             } message: {
-                Text("Cancel this reservation? The customer will be notified.")
-            }
-            .alert("Delete Reservation", isPresented: $showDeleteAlert) {
-                Button("Delete", role: .destructive) {
-                    isDeleting = true
-                    viewModel.deleteReservation(id: reservation.id) { success in
-                        isDeleting = false
-                        if success {
-                            onSuccess("Reservation deleted — customer notified")
-                            envDismiss()
-                        }
-                    }
-                }
-                Button("Go Back", role: .cancel) {}
-            } message: {
-                Text("Permanently delete this reservation? The customer can be notified.")
+                Text("Cancel this reservation? The customer will be notified by push notification.")
             }
         }
     }
@@ -1067,7 +1014,9 @@ struct AdminReservationDetailSheet: View {
                     .background(RoundedRectangle(cornerRadius: 16).fill(Theme.energyGreen))
                 }
                 .disabled(isConfirming || isCancelling)
+            }
 
+            if reservation.status == "pending" {
                 Button(action: { showCancelAlert = true }) {
                     HStack(spacing: 10) {
                         if isCancelling {
@@ -1104,26 +1053,6 @@ struct AdminReservationDetailSheet: View {
                     .background(RoundedRectangle(cornerRadius: 16).fill(Theme.energyBlue))
                 }
             }
-
-            Button(action: { showDeleteAlert = true }) {
-                HStack(spacing: 10) {
-                    if isDeleting {
-                        ProgressView()
-                            .scaleEffect(0.9)
-                            .tint(.white)
-                    } else {
-                        Image(systemName: "trash.fill")
-                            .font(.system(size: 16))
-                        Text("Delete reservation")
-                            .font(.system(size: 17, weight: .semibold, design: .rounded))
-                    }
-                }
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(RoundedRectangle(cornerRadius: 16).fill(Theme.energyRed))
-            }
-            .disabled(isConfirming || isCancelling || isDeleting)
         }
     }
 }

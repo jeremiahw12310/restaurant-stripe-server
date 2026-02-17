@@ -125,6 +125,10 @@ struct AdminOverviewView: View {
                     await viewModel.loadStats()
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .openAdminReservationsWithPendingFilter)) { _ in
+                openReservationsWithPendingFilter = true
+                showReservations = true
+            }
             .sheet(isPresented: $showUsersSection) {
                 AdminDetailView(initialTab: 0)
             }
