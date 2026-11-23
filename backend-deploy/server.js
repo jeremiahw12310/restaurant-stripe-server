@@ -6416,6 +6416,40 @@ IMPORTANT:
   }
 
   /**
+   * Reservation hours: Sun–Thu 11:30–9:00 PM, Fri–Sat 11:30–10:00 PM.
+   * Parses time string (e.g. "6:30 PM", "11:30 AM") to minutes since midnight.
+   * Returns { valid: boolean, error?: string }.
+   */
+  function validateReservationTime(dateStr, timeStr) {
+    const dateObj = new Date(dateStr.trim() + 'T12:00:00');
+    if (Number.isNaN(dateObj.getTime())) return { valid: false, error: 'Invalid date' };
+    const day = dateObj.getDay(); // 0=Sun, 6=Sat
+    const match = (timeStr || '').trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (!match) return { valid: false, error: 'Reservations are available 11:30 AM–9:00 PM Sun–Thu and 11:30 AM–10:00 PM Fri–Sat. Please choose a time in that range.' };
+    let hour = parseInt(match[1], 10);
+    const minute = parseInt(match[2], 10);
+    const ampm = (match[3] || '').toUpperCase();
+    if (ampm === 'PM' && hour !== 12) hour += 12;
+    if (ampm === 'AM' && hour === 12) hour = 0;
+    if (minute < 0 || minute > 59) return { valid: false, error: 'Invalid time.' };
+    const minutesSinceMidnight = hour * 60 + minute;
+    const openAt = 11 * 60 + 30; // 11:30
+    const closeSunThu = 21 * 60;   // 9:00 PM
+    const closeFriSat = 22 * 60;   // 10:00 PM
+    const closing = (day === 5 || day === 6) ? closeFriSat : closeSunThu;
+    if (minutesSinceMidnight < openAt) {
+      return { valid: false, error: 'We open at 11:30 AM. Please choose 11:30 AM or later.' };
+    }
+    if (minutesSinceMidnight >= closing) {
+      const msg = (day === 5 || day === 6)
+        ? 'On Friday and Saturday we close at 10:00 PM. Please choose a time before 10:00 PM.'
+        : 'We close at 9:00 PM Sunday–Thursday. Please choose a time before 9:00 PM.';
+      return { valid: false, error: msg };
+    }
+    return { valid: true };
+  }
+
+  /**
    * POST /reservations
    * Authenticated user. Create a reservation; all admins receive an in-app notification.
    * Body: customerName, phone, email?, date (YYYY-MM-DD), time, partySize, specialRequests?
@@ -6453,6 +6487,11 @@ IMPORTANT:
       today.setHours(0, 0, 0, 0);
       if (dateObj < today) {
         return res.status(400).json({ error: 'Reservation date must be today or in the future' });
+      }
+
+      const timeValidation = validateReservationTime(dateStr, time.trim());
+      if (!timeValidation.valid) {
+        return res.status(400).json({ error: timeValidation.error });
       }
 
       const db = admin.firestore();
@@ -7847,6 +7886,48 @@ IMPORTANT:
       // Delete userRiskScore if exists
       await db.collection('userRiskScores').doc(uid).delete().catch(() => {});
 
+      // Storage cleanup: profile photo + rewards card signature (same paths as /user/delete-account)
+      try {
+        const bucket = admin.storage().bucket();
+        const extractPath = (url) => {
+          if (!url || typeof url !== 'string') return null;
+          if (url.includes('firebasestorage.googleapis.com')) {
+            const match = url.match(/\/o\/(.+?)\?/);
+            if (match) return decodeURIComponent(match[1]);
+          } else if (url.startsWith('gs://')) {
+            return url.replace(/^gs:\/\/[^/]+\//, '');
+          }
+          return null;
+        };
+
+        const profilePhotoURL = userData.profilePhotoURL || null;
+        if (profilePhotoURL) {
+          try {
+            const filePath = extractPath(profilePhotoURL);
+            if (filePath) {
+              await bucket.file(filePath).delete();
+              logger.info(`✅ Deleted profile photo: ${filePath}`);
+            }
+          } catch (err) {
+            logger.info(`ℹ️ Profile photo deletion skipped: ${err.message}`);
+          }
+        }
+
+        const signaturePaths = new Set([`rewards_card_signatures/${uid}.png`]);
+        const sigFromURL = extractPath(userData.rewardsCardSignatureURL || null);
+        if (sigFromURL) signaturePaths.add(sigFromURL);
+        for (const filePath of signaturePaths) {
+          try {
+            await bucket.file(filePath).delete();
+            logger.info(`✅ Deleted rewards card signature: ${filePath}`);
+          } catch (err) {
+            logger.info(`ℹ️ Rewards card signature deletion skipped (${filePath}): ${err.message}`);
+          }
+        }
+      } catch (storageErr) {
+        logger.info(`ℹ️ Storage cleanup skipped: ${storageErr.message}`);
+      }
+
       // Delete the user document
       await db.collection('users').doc(uid).delete();
       logger.info(`✅ Deleted user document: ${uid}`);
@@ -7875,7 +7956,7 @@ IMPORTANT:
    * 1. Verifies user token and extracts UID
    * 2. Anonymizes PII in: receipts, redeemedRewards, giftedRewardClaims, posts, suspiciousFlags, bannedNumbers
    * 3. Deletes: pointsTransactions, referrals, notifications, receiptScanAttempts, user subcollections, userRiskScores
-   * 4. Deletes profile photo from Firebase Storage (if exists)
+   * 4. Deletes profile photo and rewards card signature from Firebase Storage (if exist)
    * 5. Deletes user document
    * 6. Deletes Firebase Auth user
    *
@@ -7913,6 +7994,7 @@ IMPORTANT:
       }
       const userData = userDoc.data();
       const profilePhotoURL = userData.profilePhotoURL || null;
+      const rewardsCardSignatureURL = userData.rewardsCardSignatureURL || null;
 
       // ========== PHASE 1: ANONYMIZATION ==========
       logger.info(`📝 Phase 1: Anonymizing PII for user ${uid}`);
@@ -8182,33 +8264,54 @@ IMPORTANT:
       await db.collection('userRiskScores').doc(uid).delete().catch(() => {});
       logger.info(`✅ Deleted userRiskScore (if existed)`);
 
-      // ========== PHASE 3: PROFILE PHOTO DELETION ==========
-      if (profilePhotoURL) {
-        try {
-          const storage = admin.storage();
-          const bucket = storage.bucket();
-          
-          // Extract file path from URL
-          // URL format: https://firebasestorage.googleapis.com/v0/b/BUCKET/o/PATH?token=...
-          // or gs://BUCKET/PATH
-          let filePath = null;
-          if (profilePhotoURL.includes('firebasestorage.googleapis.com')) {
-            const match = profilePhotoURL.match(/\/o\/(.+?)\?/);
-            if (match) {
-              filePath = decodeURIComponent(match[1]);
-            }
-          } else if (profilePhotoURL.startsWith('gs://')) {
-            filePath = profilePhotoURL.replace(/^gs:\/\/[^/]+\//, '');
-          }
-
-          if (filePath) {
-            await bucket.file(filePath).delete();
-            logger.info(`✅ Deleted profile photo: ${filePath}`);
-          }
-        } catch (storageErr) {
-          // Non-critical - photo may already be deleted or URL invalid
-          logger.info(`ℹ️ Profile photo deletion skipped: ${storageErr.message}`);
+      // ========== PHASE 3: STORAGE CLEANUP (profile photo + rewards card signature) ==========
+      const extractStoragePathFromURL = (url) => {
+        // URL format: https://firebasestorage.googleapis.com/v0/b/BUCKET/o/PATH?token=...
+        // or gs://BUCKET/PATH
+        if (!url || typeof url !== 'string') return null;
+        if (url.includes('firebasestorage.googleapis.com')) {
+          const match = url.match(/\/o\/(.+?)\?/);
+          if (match) return decodeURIComponent(match[1]);
+        } else if (url.startsWith('gs://')) {
+          return url.replace(/^gs:\/\/[^/]+\//, '');
         }
+        return null;
+      };
+
+      try {
+        const storage = admin.storage();
+        const bucket = storage.bucket();
+
+        // Profile photo (path from stored download URL)
+        if (profilePhotoURL) {
+          try {
+            const filePath = extractStoragePathFromURL(profilePhotoURL);
+            if (filePath) {
+              await bucket.file(filePath).delete();
+              logger.info(`✅ Deleted profile photo: ${filePath}`);
+            }
+          } catch (storageErr) {
+            // Non-critical - photo may already be deleted or URL invalid
+            logger.info(`ℹ️ Profile photo deletion skipped: ${storageErr.message}`);
+          }
+        }
+
+        // Rewards card signature — always at rewards_card_signatures/{uid}.png (also try URL if present)
+        const signaturePaths = new Set([`rewards_card_signatures/${uid}.png`]);
+        const signaturePathFromURL = extractStoragePathFromURL(rewardsCardSignatureURL);
+        if (signaturePathFromURL) signaturePaths.add(signaturePathFromURL);
+
+        for (const filePath of signaturePaths) {
+          try {
+            await bucket.file(filePath).delete();
+            logger.info(`✅ Deleted rewards card signature: ${filePath}`);
+          } catch (storageErr) {
+            // Non-critical — file may not exist (user skipped signature) or already deleted
+            logger.info(`ℹ️ Rewards card signature deletion skipped (${filePath}): ${storageErr.message}`);
+          }
+        }
+      } catch (storageInitErr) {
+        logger.info(`ℹ️ Storage cleanup skipped: ${storageInitErr.message}`);
       }
 
       // ========== PHASE 4: RECORD DELETION FOR RECREATE DETECTION ==========
@@ -8823,6 +8926,85 @@ IMPORTANT:
     } catch (error) {
       logger.error('❌ Error validating reward code:', error);
       return res.status(500).json({ error: 'Failed to validate reward code' });
+    }
+  });
+
+  // List pending rewards (redeemed, not yet used, not expired) with the customer's name.
+  // No mutation. Used by the v2 scanner to match the name on a customer's rewards card
+  // to their pending reward; confirmation still goes through /admin/rewards/consume.
+  app.get('/admin/rewards/pending', async (req, res) => {
+    try {
+      const staffContext = await requireStaff(req, res);
+      if (!staffContext) return;
+
+      const db = admin.firestore();
+      const snapshot = await db
+        .collection('redeemedRewards')
+        .where('isUsed', '==', false)
+        .where('isExpired', '==', false)
+        .orderBy('redeemedAt', 'desc')
+        .limit(50)
+        .get();
+
+      // Drop anything past its expiry time (isExpired may not be flagged yet) or without a usable code.
+      const pendingDocs = snapshot.docs.filter((doc) => {
+        const data = doc.data() || {};
+        return rewardStatusFromData(data) === 'ok' && /^\d{8}$/.test((data.redemptionCode || '').toString());
+      });
+
+      // Look up each customer once (name + current points, as shown on their card).
+      const userIds = [...new Set(pendingDocs.map((doc) => doc.get('userId')).filter(Boolean))];
+      const customers = {};
+      if (userIds.length > 0) {
+        const userDocs = await db.getAll(...userIds.map((uid) => db.collection('users').doc(uid)));
+        for (const userDoc of userDocs) {
+          if (!userDoc.exists) continue;
+          const userData = userDoc.data() || {};
+          customers[userDoc.id] = {
+            firstName: userData.firstName || null,
+            points: typeof userData.points === 'number' ? userData.points : null
+          };
+        }
+      }
+
+      const rewards = pendingDocs.map((doc) => {
+        const data = doc.data() || {};
+        const expiresAt = parseFirestoreDate(data.expiresAt);
+        const redeemedAt = parseFirestoreDate(data.redeemedAt);
+        const customer = customers[data.userId] || {};
+        return {
+          id: doc.id,
+          userId: data.userId || null,
+          customerName: customer.firstName || null,
+          customerPoints: typeof customer.points === 'number' ? customer.points : null,
+          rewardTitle: data.rewardTitle || null,
+          rewardDescription: data.rewardDescription || null,
+          rewardCategory: data.rewardCategory || null,
+          pointsRequired: typeof data.pointsRequired === 'number' ? data.pointsRequired : null,
+          redemptionCode: data.redemptionCode || null,
+          redeemedAt: redeemedAt ? redeemedAt.toISOString() : null,
+          expiresAt: expiresAt ? expiresAt.toISOString() : null,
+          isUsed: false,
+          isExpired: false,
+          selectedItemId: data.selectedItemId || null,
+          selectedItemName: data.selectedItemName || null,
+          selectedToppingId: data.selectedToppingId || null,
+          selectedToppingName: data.selectedToppingName || null,
+          selectedItemId2: data.selectedItemId2 || null,
+          selectedItemName2: data.selectedItemName2 || null,
+          cookingMethod: data.cookingMethod || null,
+          drinkType: data.drinkType || null,
+          selectedDrinkItemId: data.selectedDrinkItemId || null,
+          selectedDrinkItemName: data.selectedDrinkItemName || null,
+          iceLevel: data.iceLevel || null,
+          sugarLevel: data.sugarLevel || null
+        };
+      });
+
+      return res.json({ rewards });
+    } catch (error) {
+      logger.error('❌ Error listing pending rewards:', error);
+      return res.status(500).json({ error: 'Failed to list pending rewards' });
     }
   });
 
